@@ -8,6 +8,7 @@ let editingCombatant = null, editingContext, gridContext, playerSettingsContext,
 let toastTimer, textSubmit, draggingToken = false, animating = false, musicBusy = false, currentUpdate;
 let mapCamera = null, previewToken = null, pendingMapFrame = 0;
 let restoreMapCamera = false, cancelTokenDrag = null;
+let masterAutoFit = false, expandedMapMode = 'fill', boardLayout, boardProjection;
 let playerBlackout = false;
 let combatRoles = {}, conditionDefinitions = [], conditionEdit, initiativeContext;
 let reference = { tab: 'info', pages: {} };
@@ -36,19 +37,24 @@ function rollText(c) {
   if (!roll) return '';
   return `d20 ${roll.die} ${roll.bonus >= 0 ? '+' : '−'} ${Math.abs(roll.bonus)} = ${c.initiative}`;
 }
-function combatCard(c, draft, placed) {
-  const details = [combatRoles[c.role], `Инициатива ${c.initiative}`, rollText(c), state.turn === c.id && 'Ходит сейчас'].filter(Boolean);
+function combatCard(c, draft, placed, index, count) {
+  const details = [combatRoles[c.role], rollText(c), state.turn === c.id && 'Ходит сейчас',
+    state.acted.includes(c.id) && 'Ход завершён'].filter(Boolean);
   return `<article class="combat-card ${state.turn === c.id ? 'active-turn' : ''} ${c.hp === 0 ? 'dead' : ''}" data-id="${c.id}">
     <div class="combat-main">${combatPortrait(c)}<div class="combat-details">
       <strong class="combat-name">${escapeHTML(c.name)}</strong>
       <div class="combat-meta" title="${escapeHTML(details.join(' · '))}">${escapeHTML(details.join(' · '))}</div>
+    </div><div class="queue-arrows">
+      <button type="button" class="card-menu" data-order-id="${c.id}" data-order-delta="-1" aria-label="Выше в очереди: ${escapeHTML(c.name)}" ${index === 0 ? 'disabled' : ''}>↑</button>
+      <button type="button" class="card-menu" data-order-id="${c.id}" data-order-delta="1" aria-label="Ниже в очереди: ${escapeHTML(c.name)}" ${index + 1 === count ? 'disabled' : ''}>↓</button>
     </div><button type="button" class="hp-readout" data-edit="${c.id}" title="Изменить ХП">${c.hp}<small> / ${c.maxHp}</small></button></div>
     <div class="hp-bar"><div style="width:${c.hp / c.maxHp * 100}%"></div></div>
     <div class="combat-bottom">
       <form class="hp-form" data-id="${c.id}"><input aria-label="Изменение ХП ${escapeHTML(c.name)}" placeholder="−7 / +5" value="${escapeHTML(draft || '')}" maxlength="12"><button title="Применить ХП">↵</button></form>
       <button class="to-map" ${placed ? `data-token-focus="${c.id}" title="Показать жетон на карте"` : `data-token-add="${c.id}"`}>${placed ? '✓ На карте' : '◇ На карту'}</button>
       <button class="card-menu condition-button" data-conditions="${c.id}" title="Состояния" aria-label="Состояния ${escapeHTML(c.name)}">◆</button>
-      ${c.role !== 'player' ? `<button class="card-menu initiative-icon" data-roll-actor="${c.id}" title="Бросить инициативу" aria-label="Бросить инициативу ${escapeHTML(c.name)}">d20</button>` : ''}
+      <button class="card-menu initiative-value" data-initiative="${c.id}" title="Вписать инициативу" aria-label="Инициатива ${escapeHTML(c.name)}">${c.initiative ?? '—'}</button>
+      ${c.role === 'enemy' ? `<button class="card-menu initiative-icon" data-roll-actor="${c.id}" title="Бросить инициативу" aria-label="Бросить инициативу ${escapeHTML(c.name)}">d20</button>` : ''}
       <button class="card-menu" data-edit="${c.id}" title="Редактировать участника" aria-label="Редактировать участника">✎</button>
       <button class="card-menu" data-duplicate="${c.id}" title="Дублировать">⧉</button>
       <button class="card-menu" data-remove="${c.id}" title="Удалить">×</button>
@@ -58,22 +64,27 @@ function combatCard(c, draft, placed) {
 }
 function renderCombat() {
   $('combat-count').textContent = state.combatants.length;
-  $('round').textContent = `Раунд ${state.round}`;
+  $('round').textContent = `Раунд ${state.round} · ${state.acted.length}/${state.combatants.length}`;
+  $('round').title = 'Номер раунда и количество завершённых ходов';
   $('undo-hp').disabled = !state.history.length;
   $('next-turn').disabled = !state.combatants.length;
-  $('roll-initiative').disabled = !state.combatants.some(c => c.role !== 'player');
+  $('roll-initiative').disabled = !state.combatants.some(c => c.role === 'enemy');
+  $('reset-order').hidden = !state.manualOrder;
   // Preserve unfinished HP input across changes arriving from another window.
   const drafts = new Map([...document.querySelectorAll('.hp-form input')].map(el => [el.closest('form').dataset.id, el.value]));
   const focused = document.activeElement?.closest('.hp-form')?.dataset.id;
-  const order = [...state.combatants].sort((a, b) => b.initiative - a.initiative);
+  const byId = new Map(state.combatants.map(c => [c.id, c]));
+  const order = state.order.map(id => byId.get(id));
   const placed = new Set(state.tokens.map(t => t.combatantId));
   const empty = '<div class="empty-state"><span class="empty-symbol">⚔</span><strong>Бойцов пока нет</strong></div>';
-  $('combat-list').innerHTML = order.length ? order.map(c => combatCard(c, drafts.get(c.id), placed.has(c.id))).join('') : empty;
+  $('combat-list').innerHTML = order.length
+    ? order.map((c, index) => combatCard(c, drafts.get(c.id), placed.has(c.id), index, order.length)).join('')
+    : empty;
   if (focused) document.querySelector(`.hp-form[data-id="${focused}"] input`)?.focus();
   if ($('initiative-dialog').open) renderInitiative();
 }
 function renderMap() {
-  const m = state.map, zoom = mapDrawingZoom();
+  const m = state.map;
   const img = $('map-image');
   const src = m.image ? assetURL(m.image) : m.demo === false ? null : new URL('assets/demo-map.svg', location.href).href;
   if (src && img.src !== src) {
@@ -81,17 +92,26 @@ function renderMap() {
     img.src = src;
   } else if (!src && img.hasAttribute('src')) img.removeAttribute('src');
   img.hidden = !src;
+  const zoom = mapDrawingZoom();
   const width = (img.complete && img.naturalWidth) || 1600, height = (img.complete && img.naturalHeight) || 1100;
-  $('map-world').style.width = `${Math.max(width, ...state.tokens.map(t => (t.col + 2) * m.grid + m.offsetX)) * zoom}px`;
-  $('map-world').style.height = `${Math.max(height, ...state.tokens.map(t => (t.row + 2) * m.grid + m.offsetY)) * zoom}px`;
+  const mode = mapMode();
+  boardLayout = {
+    width: (mode === 'follow' ? Math.max(width, ...state.tokens.map(t => (t.col + 2) * m.grid + m.offsetX)) : width) * zoom,
+    height: (mode === 'follow' ? Math.max(height, ...state.tokens.map(t => (t.row + 2) * m.grid + m.offsetY)) : height) * zoom,
+    rotation: m.rotation ?? 0, mode, zoom
+  };
   img.style.width = `${width * zoom}px`; img.style.height = `${height * zoom}px`;
   const world = $('map-world');
+  world.style.width = `${boardLayout.width}px`;
+  world.style.height = `${boardLayout.height}px`;
+  world.style.setProperty('--token-orientation', `${-boardLayout.rotation}deg`);
   world.style.setProperty('--grid-size', m.grid * zoom + 'px'); world.style.setProperty('--grid-color', m.color);
   world.style.setProperty('--grid-x', m.offsetX * zoom + 'px'); world.style.setProperty('--grid-y', m.offsetY * zoom + 'px');
   world.style.setProperty('--grid-opacity', m.visible ? m.opacity : 0);
-  $('zoom-label').textContent = `${Math.round(zoom * 100)}%`;
+  $('zoom-label').textContent = mode === 'follow' ? `${Math.round(zoom * 100)}%` : 'Авто';
   $('token-count').textContent = state.tokens.length;
   $('player-settings').hidden = !!detachedPanel || !detached.includes('map');
+  layoutMap();
   if (draggingToken) return;
   const actors = new Map(state.mapCombatants.map(actor => [actor.id, actor]));
   $('map-tokens').innerHTML = state.tokens.map(t => {
@@ -99,8 +119,8 @@ function renderMap() {
     const hp = Number.isFinite(c.hp) ? `${c.hp}/${c.maxHp}` : '';
     const details = [c.name, hp && `${hp} ХП`, ...c.effects.map(effect => effect.name)].filter(Boolean).join(' · ');
     return `<button class="token ${c.hp === 0 ? 'dead' : ''} ${state.turn === c.id ? 'active-turn' : ''}" data-token="${c.id}" title="${escapeHTML(details)}" style="left:${(m.offsetX + t.col * m.grid) * zoom}px;top:${(m.offsetY + t.row * m.grid) * zoom}px">
-      ${avatar(c, 'token-body')}${hp ? `<span class="token-hp">${hp}</span>` : ''}
-      ${c.effects.length ? `<span class="token-conditions">${conditionChips(c, true)}</span>` : ''}
+      <span class="token-face">${avatar(c, 'token-body')}${hp ? `<span class="token-hp">${hp}</span>` : ''}
+      ${c.effects.length ? `<span class="token-conditions">${conditionChips(c, true)}</span>` : ''}</span>
     </button>`;
   }).join('');
   if (restoreMapCamera && img.complete) {
@@ -211,10 +231,13 @@ $('open-gemini').onclick = async () => {
 async function expandPanel(id) {
   if (detachedPanel) return result(api.fullscreen());
   const panel = document.querySelector(`[data-panel="${id}"]`), before = panel.getBoundingClientRect();
+  const wasMap = expanded === 'map';
   if (expanded && expanded !== id) document.querySelector(`[data-panel="${expanded}"]`).classList.remove('expanded');
   const opening = expanded !== id;
   expanded = opening ? id : null;
+  if (opening && id === 'map') expandedMapMode = 'fill';
   panel.classList.toggle('expanded', opening); $('workspace').classList.toggle('has-expanded', opening);
+  if (wasMap || expanded === 'map') renderMap();
   const after = panel.getBoundingClientRect(); animating = true; syncRemoteBounds();
   if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
     await panel.animate([{ transformOrigin: '0 0', transform: `translate(${before.x - after.x}px,${before.y - after.y}px) scale(${before.width / after.width},${before.height / after.height})`, opacity: 0.8 }, { transformOrigin: '0 0', transform: 'none', opacity: 1 }], { duration: 220, easing: 'cubic-bezier(.2,.75,.25,1)' }).finished.catch(() => {});
@@ -224,7 +247,10 @@ async function expandPanel(id) {
 async function loadMap(promise) {
   const context = currentContext();
   const r = await result(promise);
-  if (r?.asset && (await dispatch('map:image', { image: r.asset }, context))?.ok) toast('Карта загружена');
+  if (r?.asset && (await dispatch('map:image', { image: r.asset }, context))?.ok) {
+    if (context.expectedMapId === state.activeMapId) { masterAutoFit = true; renderMap(); }
+    toast('Карта загружена');
+  }
 }
 function askText(title, label, hint, callback, submit = 'Добавить', initialValue = '') {
   $('text-dialog-title').textContent = title; $('text-dialog-label').textContent = label;
@@ -309,6 +335,13 @@ document.addEventListener('click', async e => {
   }
   else if (button.dataset.removeBookmark) await result(api.referenceAction('remove-bookmark', button.dataset.removeBookmark));
   else if (button.dataset.conditions) openConditions(button.dataset.conditions);
+  else if (button.dataset.initiative) {
+    const actor = state.combatants.find(c => c.id === button.dataset.initiative);
+    const context = currentContext();
+    if (actor) askText('Инициатива', 'Результат броска', actor.name,
+      value => dispatch('combat:initiative', { id: actor.id, value }, context), 'Сохранить', String(actor.initiative ?? ''));
+  }
+  else if (button.dataset.orderId) await dispatch('combat:move', { id: button.dataset.orderId, delta: Number(button.dataset.orderDelta) });
   else if (button.dataset.rollActor) await dispatch('combat:roll-initiative', { id: button.dataset.rollActor });
   else if (button.dataset.rollRole) await dispatch('combat:roll-initiative', { role: button.dataset.rollRole }, initiativeContext);
   else if (button.dataset.previewPortrait) showImagePreview({ source: 'portrait', id: button.dataset.previewPortrait });
@@ -435,24 +468,33 @@ function openCombatantEditor(combatant) {
   portrait = combatant?.image ?? null;
   form.elements.role.value = combatant?.role ?? 'enemy';
   form.elements.initiativeBonus.value = combatant?.initiativeBonus ?? 0;
+  updateBonusField();
   $('editor-title').textContent = combatant ? 'Редактировать участника' : 'Добавить участника';
   $('editor-submit').textContent = combatant ? 'Сохранить' : 'Добавить в трекер';
   $('current-hp-field').hidden = !combatant;
   form.elements.hp.disabled = !combatant;
   form.elements.hp.required = !!combatant;
   if (combatant) {
-    for (const field of ['name', 'hp', 'maxHp', 'initiative']) form.elements[field].value = combatant[field];
+    for (const field of ['name', 'hp', 'maxHp']) form.elements[field].value = combatant[field];
   }
   $('portrait-preview').innerHTML = portrait ? `<img src="${assetURL(portrait)}" alt="Портрет">` : '＋';
   openDialog('editor');
 }
+function updateBonusField() {
+  const form = $('combatant-form');
+  const nonEnemy = form.elements.role.value !== 'enemy';
+  $('initiative-bonus-field').hidden = nonEnemy;
+  form.elements.initiativeBonus.disabled = nonEnemy;
+}
+$('combatant-role').onchange = updateBonusField;
 $('add-combatant').onclick = () => openCombatantEditor();
 $('choose-portrait').onclick = async () => { const r = await result(api.importFile('image')); if (r?.asset) { portrait = r.asset; $('portrait-preview').innerHTML = `<img src="${assetURL(portrait)}" alt="Портрет">`; } };
 $('combatant-form').onsubmit = async e => {
   e.preventDefault(); const f = new FormData(e.target);
   const payload = {
-    name: f.get('name'), maxHp: Number(f.get('maxHp')), initiative: Number(f.get('initiative')),
-    initiativeBonus: Number(f.get('initiativeBonus')), role: f.get('role'), image: portrait
+    name: f.get('name'), maxHp: Number(f.get('maxHp')),
+    ...(f.has('initiativeBonus') ? { initiativeBonus: Number(f.get('initiativeBonus')) } : {}),
+    role: f.get('role'), image: portrait
   };
   if (editingCombatant) Object.assign(payload, { id: editingCombatant, hp: Number(f.get('hp')) });
   const r = await dispatch(editingCombatant ? 'combatant:edit' : 'combatant:add', payload, editingContext);
@@ -465,6 +507,7 @@ $('combat-list').addEventListener('submit', async e => {
   if (!r?.ok) { input.value = expression; renderCombat(); }
 });
 $('next-turn').onclick = () => dispatch('combat:next');
+$('reset-order').onclick = () => dispatch('combat:sort');
 function renderInitiative() {
   for (const button of document.querySelectorAll('[data-roll-role]')) {
     button.disabled = !state.combatants.some(c => c.role === button.dataset.rollRole);
@@ -527,7 +570,7 @@ function queueMapCamera() {
   const mapId = state.activeMapId;
   pendingMapFrame = requestAnimationFrame(() => {
     pendingMapFrame = 0;
-    if (mapId !== state.activeMapId || !viewport.clientWidth || !viewport.clientHeight) return;
+    if (mapId !== state.activeMapId || mapMode() !== 'follow' || !viewport.clientWidth || !viewport.clientHeight) return;
     const zoom = state.map.zoom;
     mirrorMap({ camera: {
       x: (viewport.scrollLeft + viewport.clientWidth / 2) / zoom,
@@ -538,81 +581,96 @@ function queueMapCamera() {
 function paintPlayerMap() {
   if (!state) return;
   const zoom = mapDrawingZoom();
-  const fitted = fitPlayerMap();
-  if (!fitted && mapCamera) viewport.scrollTo(mapCamera.x * zoom - viewport.clientWidth / 2, mapCamera.y * zoom - viewport.clientHeight / 2);
+  layoutMap();
+  if (mapMode() === 'follow' && mapCamera) viewport.scrollTo(mapCamera.x * zoom - viewport.clientWidth / 2, mapCamera.y * zoom - viewport.clientHeight / 2);
   if (!previewToken) return;
   const token = [...$('map-tokens').children].find(button => button.dataset.token === previewToken.id);
   if (token) positionToken(token, state.map, previewToken.col, previewToken.row, zoom);
 }
 function mapDrawingZoom() {
-  const fitted = isPlayerMap && document.body.classList.contains('player-fullscreen') && state.map.playerFit !== 'follow';
-  return fitted ? 1 : state.map.zoom;
+  return mapMode() === 'follow' ? state.map.zoom : 1;
 }
-function fitPlayerMap() {
-  const img = $('map-image'), world = $('map-world');
-  const mode = state.map.playerFit ?? 'fit';
-  const enabled = document.body.classList.contains('player-fullscreen') &&
-    mode !== 'follow' && img.complete && img.naturalWidth > 0 && viewport.clientWidth > 0 && viewport.clientHeight > 0;
-  viewport.classList.toggle('fit-player-map', enabled);
-  if (!enabled) {
-    world.style.transform = '';
-    return false;
-  }
-  const width = img.naturalWidth, height = img.naturalHeight;
-  const x = viewport.clientWidth / width, y = viewport.clientHeight / height;
-  const uniform = Math.min(x, y);
-  const scaleX = mode === 'fill' ? x : uniform, scaleY = mode === 'fill' ? y : uniform;
-  const left = (viewport.clientWidth - width * scaleX) / 2;
-  const top = (viewport.clientHeight - height * scaleY) / 2;
-  world.style.setProperty('--fit-width', width + 'px');
-  world.style.setProperty('--fit-height', height + 'px');
-  world.style.transform = `translate(${left}px,${top}px) scale(${scaleX},${scaleY})`;
-  viewport.scrollTo(0, 0);
-  return true;
+function mapMode() {
+  const image = $('map-image');
+  if (!image.complete || !image.naturalWidth) return 'follow';
+  if (isPlayerMap) return state.map.playerFit ?? 'fill';
+  if (expanded === 'map') return expandedMapMode;
+  return masterAutoFit ? 'fit' : 'follow';
+}
+function layoutMap() {
+  if (!boardLayout || !viewport.clientWidth || !viewport.clientHeight) return;
+  const frame = $('map-frame');
+  boardProjection = MapGeometry.project({ ...boardLayout, viewportWidth: viewport.clientWidth, viewportHeight: viewport.clientHeight });
+  frame.style.width = boardProjection.width + 'px';
+  frame.style.height = boardProjection.height + 'px';
+  $('map-world').style.transform = `matrix(${boardProjection.matrix.join(',')})`;
+  const fitted = boardLayout.mode !== 'follow';
+  viewport.classList.toggle('fitted-map', fitted);
+  if (fitted) viewport.scrollTo(0, 0);
+}
+function mapPointAt(x, y) {
+  const frame = $('map-frame').getBoundingClientRect();
+  return MapGeometry.inverse(boardProjection.matrix, x - frame.left, y - frame.top);
 }
 function positionToken(token, map, col, row, zoom = map.zoom) {
   token.style.left = `${(map.offsetX + col * map.grid) * zoom}px`;
   token.style.top = `${(map.offsetY + row * map.grid) * zoom}px`;
 }
 viewport.addEventListener('scroll', queueMapCamera, { passive: true });
-new ResizeObserver(() => isPlayerMap ? paintPlayerMap() : queueMapCamera()).observe(viewport);
+new ResizeObserver(() => {
+  if (isPlayerMap) paintPlayerMap();
+  else { layoutMap(); queueMapCamera(); }
+}).observe(viewport);
 let zoomRequest = 0;
-async function setZoom(value, anchorX = viewport.clientWidth / 2, anchorY = viewport.clientHeight / 2) {
+async function changeZoom(factor, anchorX = viewport.clientWidth / 2, anchorY = viewport.clientHeight / 2) {
+  if (!boardProjection) return;
   const mapId = state.activeMapId;
-  const request = ++zoomRequest, old = state.map.zoom;
-  const x = (viewport.scrollLeft + anchorX) / old;
-  const y = (viewport.scrollTop + anchorY) / old;
-  const zoom = Math.max(0.01, Math.min(3, value));
+  const request = ++zoomRequest;
+  const viewportRect = viewport.getBoundingClientRect();
+  const original = mapPointAt(viewportRect.x + anchorX, viewportRect.y + anchorY);
+  const oldZoom = boardLayout.zoom;
+  const [a, b, c, d] = boardProjection.matrix;
+  const displayedZoom = Math.min(Math.hypot(a, b), Math.hypot(c, d)) * oldZoom;
+  const zoom = Math.max(0.01, Math.min(24, displayedZoom * factor));
+  masterAutoFit = false;
+  expandedMapMode = 'follow';
   const response = await dispatch('map:settings', { zoom });
   if (response?.ok && request === zoomRequest && mapId === state.activeMapId) {
-    viewport.scrollLeft = x * zoom - anchorX;
-    viewport.scrollTop = y * zoom - anchorY;
+    const [aa, bb, cc, dd, dx, dy] = boardProjection.matrix;
+    const x = original.x / oldZoom * zoom;
+    const y = original.y / oldZoom * zoom;
+    viewport.scrollLeft = aa * x + cc * y + dx - anchorX;
+    viewport.scrollTop = bb * x + dd * y + dy - anchorY;
     queueMapCamera();
   }
 }
-$('zoom-in').onclick = () => setZoom(state.map.zoom * 1.25);
-$('zoom-out').onclick = () => setZoom(state.map.zoom / 1.25);
-$('fit-map').onclick = async () => {
-  const mapId = state.activeMapId;
-  const image = $('map-image');
-  if (!image.naturalWidth) return;
-  const target = Math.min((viewport.clientWidth - 8) / image.naturalWidth, (viewport.clientHeight - 8) / image.naturalHeight, 3);
-  await setZoom(target, 0, 0);
-  if (mapId === state.activeMapId) viewport.scrollTo(0, 0);
+$('zoom-in').onclick = () => changeZoom(1.25);
+$('zoom-out').onclick = () => changeZoom(1 / 1.25);
+$('fit-map').onclick = () => {
+  if (expanded === 'map') expandedMapMode = 'fit';
+  else masterAutoFit = true;
+  renderMap();
 };
+function rotateMap(delta) {
+  const rotation = ((state.map.rotation ?? 0) + delta + 360) % 360;
+  dispatch('map:settings', { rotation });
+}
+$('rotate-map-left').onclick = () => rotateMap(-90);
+$('rotate-map-right').onclick = () => rotateMap(90);
 viewport.addEventListener('wheel', e => {
   if (isPlayerMap) { e.preventDefault(); return; }
   if (!e.ctrlKey) return;
   e.preventDefault();
   const rect = viewport.getBoundingClientRect();
-  setZoom(state.map.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX - rect.left, e.clientY - rect.top);
+  changeZoom(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - rect.left, e.clientY - rect.top);
 }, { passive: false });
 viewport.addEventListener('pointerdown', e => {
-  if (isPlayerMap || e.button !== 0 || e.target.closest('[data-token]') || e.target === viewport) return;
+  if (isPlayerMap || e.button !== 0 || e.target.closest('[data-token]') || e.target === viewport || !boardProjection) return;
   viewport.focus({ preventScroll: true });
   if (e.shiftKey && !detachedPanel) {
-    const box = $('map-world').getBoundingClientRect();
-    const ping = { x: (e.clientX - box.x) / state.map.zoom, y: (e.clientY - box.y) / state.map.zoom };
+    const point = mapPointAt(e.clientX, e.clientY);
+    const zoom = mapDrawingZoom();
+    const ping = { x: point.x / zoom, y: point.y / zoom };
     showMapPing(ping);
     mirrorMap({ ping });
     return;
@@ -643,7 +701,7 @@ $('player-settings').onclick = () => {
   playerSettingsContext = currentContext();
   $('toggle-player-health').checked = state.map.playerHealth !== false;
   $('toggle-player-blackout').checked = playerBlackout;
-  $('player-fit').value = state.map.playerFit ?? 'fit';
+  $('player-fit').value = state.map.playerFit ?? 'fill';
   openDialog('player-dialog');
 };
 $('toggle-player-health').onchange = e => dispatch('map:settings', { playerHealth: e.target.checked }, playerSettingsContext);
@@ -677,16 +735,17 @@ document.addEventListener('keydown', e => {
 });
 $('map-tokens').addEventListener('dblclick', e => { const token = e.target.closest('[data-token]'); if (token && !isPlayerMap) dispatch('token:remove', { id: token.dataset.token }); });
 $('map-tokens').addEventListener('pointerdown', e => {
-  const token = e.target.closest('[data-token]'); if (!token || isPlayerMap || e.button !== 0) return;
+  const token = e.target.closest('[data-token]'); if (!token || isPlayerMap || e.button !== 0 || !boardProjection) return;
   e.preventDefault(); draggingToken = true; token.classList.add('dragging'); token.setPointerCapture(e.pointerId);
-  const id = token.dataset.token, m = { ...state.map }, z = m.zoom, rect = $('map-world').getBoundingClientRect();
+  const id = token.dataset.token, m = { ...state.map }, z = mapDrawingZoom();
   const context = currentContext();
   let col = 0, row = 0, moved = false, previewFrame = 0;
   const move = event => {
     moved = true;
-    col = Math.max(0, Math.floor(((event.clientX - rect.left) / z - m.offsetX) / m.grid));
-    row = Math.max(0, Math.floor(((event.clientY - rect.top) / z - m.offsetY) / m.grid));
-    positionToken(token, m, col, row);
+    const point = mapPointAt(event.clientX, event.clientY);
+    col = Math.max(0, Math.floor((point.x / z - m.offsetX) / m.grid));
+    row = Math.max(0, Math.floor((point.y / z - m.offsetY) / m.grid));
+    positionToken(token, m, col, row, z);
     if (detached.includes('map') && !previewFrame) {
       previewFrame = requestAnimationFrame(() => {
         previewFrame = 0;
@@ -813,13 +872,16 @@ document.querySelectorAll('.resize-grip').forEach(el => el.addEventListener('poi
 new ResizeObserver(syncRemoteBounds).observe($('workspace'));
 window.addEventListener('resize', syncRemoteBounds);
 function readWindowState(value) {
-  if (state?.activeMapId !== value.state.activeMapId) {
+  const switched = state?.activeMapId !== value.state.activeMapId;
+  const rotated = !switched && (state?.map.rotation ?? 0) !== (value.state.map.rotation ?? 0);
+  if (switched || rotated) {
     cancelTokenDrag?.();
     cancelAnimationFrame(pendingMapFrame);
     pendingMapFrame = 0;
     previewToken = null;
     mapCamera = value.mapCamera;
     restoreMapCamera = true;
+    if (!isPlayerMap) masterAutoFit = rotated && expanded !== 'map';
     $('map-world').querySelector('.map-ping')?.remove();
   }
   state = value.state;

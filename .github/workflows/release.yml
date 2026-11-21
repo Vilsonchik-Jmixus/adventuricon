@@ -30,6 +30,8 @@ jobs:
         run: npm run tools
       - name: Verify desktop interaction and persistence
         run: node tests/desktop-smoke.cjs
+      - name: Verify map scaling and combat queue
+        run: node tests/map-window-smoke.cjs
       - name: Build and publish installer and update manifest
         run: npm run release
         env:

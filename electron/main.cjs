@@ -66,6 +66,7 @@ function commit(action) {
   fs.renameSync(`${store}.tmp`, store);
   state = next;
   if (action.type === 'map:remove') mapCameras.delete(action.payload.id);
+  if (action.type === 'map:settings' && 'rotation' in action.payload) mapCameras.delete(state.activeMapId);
   broadcast();
   return { ok: true };
 }
@@ -492,7 +493,7 @@ app.whenReady().then(async () => {
       let file;
       if (u.pathname.startsWith('/assets/') && !['/assets/demo-map.svg', '/assets/PressStart2P-Regular.ttf'].includes(u.pathname)) file = path.join(assets, assetName(decodeURIComponent(u.pathname.slice(8))));
       else {
-        const allowed = ['index.html', 'app.js', 'styles.css', 'tavern.css', 'tavern-art.js', 'assets/demo-map.svg', 'assets/PressStart2P-Regular.ttf'];
+        const allowed = ['index.html', 'app.js', 'map-geometry.js', 'styles.css', 'tavern.css', 'tavern-art.js', 'assets/demo-map.svg', 'assets/PressStart2P-Regular.ttf'];
         const relative = u.pathname.slice(1) || 'index.html';
         if (!allowed.includes(relative)) return new Response('Not found', { status: 404 });
         file = path.join(__dirname, '..', 'ui', relative);

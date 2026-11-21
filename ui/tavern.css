@@ -293,4 +293,11 @@ body.player-map.player-fullscreen { --panel-heading: 0px; }
 .token-conditions .condition-chip { padding: 0 2px; font-size: clamp(7px, calc(var(--grid-size) * .15), 11px); }
 .condition-legend { display: flex; flex-wrap: wrap; gap: 2px 8px; position: absolute; bottom: 4px; left: 4px; right: 4px; z-index: 7; width: max-content; max-width: calc(100% - 8px); padding: 3px 6px; background: #211611e8; color: #eddbca; border: 1px solid var(--line); font-size: 10px; pointer-events: none; }
 .condition-legend b { color: var(--mint); }
-.fit-player-map #map-world { width: var(--fit-width) !important; height: var(--fit-height) !important; min-width: 0; min-height: 0; overflow: hidden; }
+#map-frame { position: relative; overflow: clip; }
+#map-world { position: absolute; min-width: 0; min-height: 0; }
+.fitted-map { overflow: hidden; }
+.fitted-map #map-world { overflow: clip; }
+.token-face { width: 100%; height: 100%; position: relative; display: grid; place-items: center; transform: rotate(var(--token-orientation, 0deg)); }
+.queue-arrows { display: flex; flex: none; gap: 1px; }
+.queue-arrows button { padding: 1px 3px; font-size: 12px; }
+.initiative-value { border: 1px solid var(--line); padding: 2px 5px; font-size: 10px; color: var(--text); }

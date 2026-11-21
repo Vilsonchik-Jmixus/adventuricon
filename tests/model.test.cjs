@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { initialState, migrateState, activeView, reducer, hpValue, cellAt } = require('../electron/model.cjs');
 const { CONDITIONS, playerMapActors } = require('../electron/combat-rules.cjs');
 const { REFERENCE_LINKS, safeUrl, searchUrl } = require('../electron/reference.cjs');
+const MapGeometry = require('../ui/map-geometry.js');
 test('HP commands, bounds and invalid expressions', () => {
   assert.equal(hpValue(12, 20, '-7'), 5);
   assert.equal(hpValue(12, 20, '+99'), 20);
@@ -37,6 +38,8 @@ test('Rounds follow initiative and roll over at the end', () => {
   s = reducer(s, { type: 'combatant:add', payload: { name: 'A', initiative: 3 } });
   s = reducer(s, { type: 'combatant:add', payload: { name: 'B', initiative: 18 } });
   const [first, second] = activeView(s).combatants;
+  s = reducer(s, { type: 'combat:initiative', payload: { id: first.id, value: 3 } });
+  s = reducer(s, { type: 'combat:initiative', payload: { id: second.id, value: 18 } });
   s = reducer(s, { type: 'combat:next' }); assert.equal(activeView(s).turn, second.id);
   s = reducer(s, { type: 'combat:next' }); assert.equal(activeView(s).turn, first.id);
   s = reducer(s, { type: 'combat:next' }); assert.equal(activeView(s).round, 2);
@@ -109,22 +112,58 @@ test('Layout stays usable and music folder moves persist', () => {
   s = reducer(s, { type: 'music:move', payload: { id: s.music.tracks[0].id, folder: 'Атмосфера' } });
   assert.equal(s.music.tracks[0].folder, 'Атмосфера');
 });
-test('Group initiative rolls use the creature modifier and leave the other side and player results alone', () => {
+test('Only enemies roll initiative; player scores are entered after creation', () => {
   let s = initialState();
   const act = (type, payload) => { s = reducer(s, { type, payload }); return activeView(s); };
-  act('combatant:add', { role: 'player', initiative: 13 });
-  act('combatant:add', { role: 'ally', initiative: 5, initiativeBonus: -2 });
-  act('combatant:add', { initiative: 9, initiativeBonus: 4 });
-  let [player, ally, enemy] = act('combat:roll-initiative', { role: 'enemy' }).combatants;
+  const playerId = act('combatant:add', { role: 'player', initiative: 13 }).combatants[0].id;
+  assert.equal(activeView(s).combatants[0].initiative, null);
+  act('combat:initiative', { id: playerId, value: 13 });
+  const allyId = act('combatant:add', { role: 'ally', initiativeBonus: -2 }).combatants[1].id;
+  act('combat:initiative', { id: allyId, value: 5 });
+  act('combatant:add', { initiativeBonus: 4 });
+  const [player, ally, enemy] = act('combat:roll-initiative', { role: 'enemy' }).combatants;
   assert.equal(player.initiative, 13);
   assert.equal(ally.initiative, 5);
   assert.ok(enemy.initiativeRoll.die >= 1 && enemy.initiativeRoll.die <= 20);
   assert.equal(enemy.initiative, enemy.initiativeRoll.die + 4);
-  const lastEnemy = enemy.initiative;
-  [, ally, enemy] = act('combat:roll-initiative', { role: 'ally' }).combatants;
-  assert.equal(ally.initiative, ally.initiativeRoll.die - 2);
-  assert.equal(enemy.initiative, lastEnemy);
+  assert.throws(() => act('combat:roll-initiative', { role: 'ally' }), /только за противников/);
+  assert.throws(() => act('combat:roll-initiative', { id: ally.id }), /Нет участников/);
   assert.throws(() => act('combat:roll-initiative', { id: player.id }), /Нет участников/);
+});
+test('Manual queue and mid-round initiative changes preserve completed turns and round count', () => {
+  let s = initialState();
+  const act = (type, payload) => { s = reducer(s, { type, payload }); return activeView(s); };
+  for (const name of ['А', 'Б', 'В']) act('combatant:add', { name });
+  const [a, b, c] = activeView(s).combatants.map(item => item.id);
+  act('combat:initiative', { id: a, value: 18 });
+  act('combat:initiative', { id: b, value: 12 });
+  act('combat:initiative', { id: c, value: 3 });
+  assert.equal(act('combat:next').turn, a);
+  assert.equal(act('combat:next').turn, b);
+  assert.deepEqual(act('combat:move', { id: c, delta: -1 }).order, [a, c, b]);
+  assert.deepEqual(act('combat:initiative', { id: a, value: 0 }).order, [a, c, b]);
+  assert.deepEqual(act('combat:sort').order, [b, c, a]);
+  const third = act('combat:next');
+  assert.equal(third.turn, c);
+  assert.equal(third.round, 1);
+  assert.deepEqual(third.acted, [a, b]);
+  const nextRound = act('combat:next');
+  assert.equal(nextRound.round, 2);
+  assert.equal(nextRound.turn, b);
+  assert.deepEqual(nextRound.acted, []);
+});
+test('All quarter turns cover the viewport and preserve the inverse coordinate for a grid point', () => {
+  for (const rotation of [0, 90, 180, 270]) {
+    const { matrix: [a, b, c, d, e, f] } = MapGeometry.project({
+      width: 240, height: 350, rotation, viewportWidth: 1917, viewportHeight: 986, mode: 'fill'
+    });
+    const transform = (x, y) => [a * x + c * y + e, b * x + d * y + f];
+    const corners = [transform(0, 0), transform(240, 0), transform(240, 350), transform(0, 350)];
+    assert.deepEqual(corners.map(p => p.map(Math.round)).sort(), [[0, 0], [0, 986], [1917, 0], [1917, 986]].sort());
+    const [x, y] = transform(84, 156);
+    const restored = MapGeometry.inverse([a, b, c, d, e, f], x, y);
+    assert.ok(Math.abs(restored.x - 84) < 1e-8 && Math.abs(restored.y - 156) < 1e-8);
+  }
 });
 test('Hidden enemy HP stays outside the player projection and automatic unconscious clears on recovery', () => {
   assert.equal(CONDITIONS.length, 15);

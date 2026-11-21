@@ -4,7 +4,7 @@ const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
 const finite = (n, fallback) => Number.isFinite(Number(n)) ? Number(n) : fallback;
 const text = (v, max = 120) => String(v ?? '').trim().slice(0, max);
 function newBattle(title = 'Первый бой') {
-  return { id: randomUUID(), title, linkedMapId: null, combatants: [], round: 1, turn: null, history: [] };
+  return { id: randomUUID(), title, linkedMapId: null, combatants: [], round: 1, turn: null, acted: [], manualOrder: null, history: [] };
 }
 function newBoard(title = 'Первая карта', demo = false) {
   return {
@@ -29,18 +29,35 @@ function migrateState(saved) {
         !saved.boards.some(board => board.id === saved.activeMapId)) {
       throw new Error('Бои или карты повреждены');
     }
-    return { ...saved, bookmarks: Array.isArray(saved.bookmarks) ? saved.bookmarks : [] };
+    return { ...saved, battles: saved.battles.map(restoreRound), bookmarks: Array.isArray(saved.bookmarks) ? saved.bookmarks : [] };
   }
   if (saved.schema !== 1 || !Array.isArray(saved.combatants) || !Array.isArray(saved.tokens) || !saved.map) {
     throw new Error('Неверный формат сохранения');
   }
   const { combatants, tokens, map, round, turn, history, gallery, ...base } = saved;
-  const battle = { ...newBattle('Текущий бой'), combatants, round: round ?? 1, turn: turn ?? null, history: history ?? [] };
+  const battle = restoreRound({ ...newBattle('Текущий бой'), acted: undefined,
+    combatants, round: round ?? 1, turn: turn ?? null, history: history ?? [] });
   const board = { ...newBoard('Текущая карта'), map, tokens };
   return {
     ...base, schema: 2, gallery: gallery ?? [], bookmarks: [],
     battles: [battle], boards: [board], activeBattleId: battle.id, activeMapId: board.id
   };
+}
+function battleOrder({ combatants, manualOrder }) {
+  const byInitiative = [...combatants].sort((a, b) =>
+    (b.initiative ?? -Infinity) === (a.initiative ?? -Infinity) ? 0 : (b.initiative ?? -Infinity) - (a.initiative ?? -Infinity));
+  if (!manualOrder) return byInitiative;
+  const ranks = new Map(manualOrder.map((id, index) => [id, index]));
+  return byInitiative.sort((a, b) => {
+    const first = ranks.get(a.id) ?? Infinity, second = ranks.get(b.id) ?? Infinity;
+    return first === second ? 0 : first - second;
+  });
+}
+function restoreRound(battle) {
+  if (Array.isArray(battle.acted)) return battle;
+  const ordered = battleOrder(battle);
+  const current = ordered.findIndex(c => c.id === battle.turn);
+  return { ...battle, acted: current > 0 ? ordered.slice(0, current).map(c => c.id) : [], manualOrder: null };
 }
 function activeView(state) {
   const battle = state.battles.find(entry => entry.id === state.activeBattleId);
@@ -52,7 +69,8 @@ function activeView(state) {
     activeBattleId: battle.id, activeMapId: board.id,
     battleChoices: state.battles.map(({ id, title, linkedMapId }) => ({ id, title, linkedMapId })),
     mapChoices: state.boards.map(({ id, title }) => ({ id, title })),
-    combatants: battle.combatants.map(describe), round: battle.round, turn: battle.turn, history: battle.history,
+    combatants: battle.combatants.map(describe), order: battleOrder(battle).map(c => c.id), manualOrder: !!battle.manualOrder,
+    round: battle.round, turn: battle.turn, acted: battle.acted, history: battle.history,
     map: board.map, tokens: board.tokens,
     mapCombatants: state.battles.flatMap(entry => entry.combatants.filter(c => placed.has(c.id)).map(describe))
   };
@@ -158,7 +176,7 @@ function reducer(state, action) {
       const maxHp = clamp(Math.round(finite(p.maxHp, 10)), 1, 999999);
       battle.combatants.push({
         id: randomUUID(), name: text(p.name) || 'Безымянный', image: text(p.image, 100) || null,
-        maxHp, hp: maxHp, initiative: clamp(Math.round(finite(p.initiative, 0)), -100, 1000),
+        maxHp, hp: maxHp, initiative: null,
         role: roleOf(p.role), initiativeBonus: initiativeBonus(p.initiativeBonus), conditions: [], exhaustion: 0
       });
       break;
@@ -172,14 +190,12 @@ function reducer(state, action) {
       if (!c) throw new Error('Участник уже удалён');
       const maxHp = clamp(Math.round(finite(p.maxHp, c.maxHp)), 1, 999999);
       const hp = clamp(Math.round(finite(p.hp, c.hp)), 0, maxHp);
-      const initiative = clamp(Math.round(finite(p.initiative, c.initiative)), -100, 1000);
       const bonus = initiativeBonus(p.initiativeBonus, c.initiativeBonus ?? 0);
       if (hp !== c.hp || maxHp !== c.maxHp) rememberHealth(battle, c);
       Object.assign(c, {
         name: text(p.name) || c.name,
         image: 'image' in p ? text(p.image, 100) || null : c.image,
-        initiativeRoll: initiative === c.initiative && bonus === (c.initiativeBonus ?? 0) ? c.initiativeRoll : null,
-        initiative, initiativeBonus: bonus, role: 'role' in p ? roleOf(p.role) : roleOf(c.role),
+        initiativeBonus: bonus, role: 'role' in p ? roleOf(p.role) : roleOf(c.role),
         hp, maxHp
       });
       break;
@@ -188,6 +204,8 @@ function reducer(state, action) {
       battle.combatants = battle.combatants.filter(c => c.id !== p.id);
       for (const savedBoard of s.boards) savedBoard.tokens = savedBoard.tokens.filter(t => t.combatantId !== p.id);
       battle.history = battle.history.filter(entry => entry.id !== p.id);
+      battle.acted = battle.acted.filter(id => id !== p.id);
+      if (battle.manualOrder) battle.manualOrder = battle.manualOrder.filter(id => id !== p.id);
       if (battle.turn === p.id) battle.turn = null; break;
     case 'combatant:hp': {
       const c = battle.combatants.find(c => c.id === p.id); if (!c) break;
@@ -212,10 +230,8 @@ function reducer(state, action) {
       break;
     }
     case 'combat:roll-initiative': {
-      const candidates = battle.combatants.filter(c => {
-        const role = roleOf(c.role);
-        return role !== 'player' && (p.id ? c.id === p.id : p.role === role);
-      });
+      if (p.role && p.role !== 'enemy') throw new Error('Бросок доступен только за противников');
+      const candidates = battle.combatants.filter(c => roleOf(c.role) === 'enemy' && (!p.id || c.id === p.id));
       if (!candidates.length) throw new Error('Нет участников для броска');
       for (const c of candidates) {
         const die = randomInt(1, 21), bonus = c.initiativeBonus ?? 0;
@@ -224,12 +240,42 @@ function reducer(state, action) {
       }
       break;
     }
+    case 'combat:initiative': {
+      const c = battle.combatants.find(c => c.id === p.id);
+      if (!c) throw new Error('Участник не найден');
+      const number = p.value === null ? null : Number(p.value);
+      if (number !== null && (!Number.isInteger(number) || number < -100 || number > 1000)) {
+        throw new Error('Введите целое число от −100 до 1000');
+      }
+      c.initiative = number;
+      c.initiativeRoll = null;
+      break;
+    }
+    case 'combat:move': {
+      const ids = battleOrder(battle).map(c => c.id);
+      const index = ids.indexOf(p.id);
+      if (index === -1 || ![-1, 1].includes(p.delta)) break;
+      const position = index + p.delta;
+      if (position < 0 || position >= ids.length) break;
+      [ids[index], ids[position]] = [ids[position], ids[index]];
+      battle.manualOrder = ids;
+      break;
+    }
+    case 'combat:sort':
+      battle.manualOrder = null;
+      break;
     case 'combat:next': {
-      const order = [...battle.combatants].sort((a, b) => b.initiative - a.initiative);
+      const order = battleOrder(battle).map(c => c.id);
       if (!order.length) break;
-      const idx = order.findIndex(c => c.id === battle.turn);
-      if (idx === order.length - 1) battle.round++;
-      battle.turn = order[(idx + 1) % order.length].id; break;
+      if (battle.turn && !battle.acted.includes(battle.turn)) battle.acted.push(battle.turn);
+      const next = order.find(id => !battle.acted.includes(id));
+      if (next) battle.turn = next;
+      else {
+        battle.round++;
+        battle.acted = [];
+        battle.turn = order[0];
+      }
+      break;
     }
     case 'token:add': {
       if (!battle.combatants.some(c => c.id === p.id) || board.tokens.some(t => t.combatantId === p.id)) break;
@@ -243,11 +289,12 @@ function reducer(state, action) {
     }
     case 'token:remove': board.tokens = board.tokens.filter(t => t.combatantId !== p.id); break;
     case 'map:settings':
-      for (const [key, min, max] of [['grid', 16, 256], ['offsetX', -512, 512], ['offsetY', -512, 512], ['opacity', 0, 1], ['zoom', 0.01, 3]])
+      for (const [key, min, max] of [['grid', 16, 256], ['offsetX', -512, 512], ['offsetY', -512, 512], ['opacity', 0, 1], ['zoom', 0.01, 24]])
         if (key in p) board.map[key] = clamp(finite(p[key], board.map[key]), min, max);
       if (typeof p.visible === 'boolean') board.map.visible = p.visible;
       if (typeof p.playerHealth === 'boolean') board.map.playerHealth = p.playerHealth;
       if (['fit', 'fill', 'follow'].includes(p.playerFit)) board.map.playerFit = p.playerFit;
+      if ([0, 90, 180, 270].includes(p.rotation)) board.map.rotation = p.rotation;
       if (/^#[0-9a-f]{6}$/i.test(p.color)) board.map.color = p.color;
       break;
     case 'map:image': board.map.image = text(p.image, 100) || null; break;
