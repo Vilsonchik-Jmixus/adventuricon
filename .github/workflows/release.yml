@@ -86,6 +86,7 @@ jobs:
         shell: bash
         env:
           DEBUG: pw:browser
+          DM_SCREEN_TEST_NO_NATIVE_FULLSCREEN: ${{ matrix.arch == 'x64' && '1' || '0' }}
         run: |
           app="$(find "$PWD/dist" -maxdepth 2 -type d -name '*.app' -print -quit)"
           codesign --verify --deep --strict "$app"
@@ -93,6 +94,7 @@ jobs:
           test -x "$DM_SCREEN_EXECUTABLE"
           node tests/welcome-smoke.cjs
           node tests/map-window-smoke.cjs
+          node tests/story-smoke.cjs
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}

@@ -54,12 +54,26 @@ let app;
     window.show();
     window.focus();
   });
-  // macOS can handle F11 at the system level. Exercise the on-screen control there.
-  if (process.platform === 'darwin') await player.locator('[data-expand="map"]').click();
-  else await player.keyboard.press('F11');
+  const nativeFullscreen = process.env.DM_SCREEN_TEST_NO_NATIVE_FULLSCREEN !== '1';
+  const reportFullscreen = active => app.evaluate(({ BrowserWindow }, active) => {
+    const window = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().includes('?panel=map'));
+    window.webContents.send('status', { scope: 'player-fullscreen', active });
+  }, active);
+  if (!nativeFullscreen) {
+    // Hosted Intel macOS can hang during the AppKit Space transition.
+    // Drive the renderer event here; the other runners exercise the native transition.
+    console.log('Testing fullscreen renderer layout without the native AppKit Space transition.');
+    await reportFullscreen(true);
+  } else if (process.platform === 'darwin') {
+    // macOS can handle F11 at the system level. Exercise the on-screen control there.
+    await player.locator('[data-expand="map"]').click();
+  } else {
+    await player.keyboard.press('F11');
+  }
   await expect(player.locator('body')).toHaveClass(/player-fullscreen/, { timeout: 15_000 });
   await expect.poll(() => gaps(player)).toBeLessThan(3);
-  await player.keyboard.press('Escape');
+  if (nativeFullscreen) await player.keyboard.press('Escape');
+  else await reportFullscreen(false);
   await expect(player.locator('body')).not.toHaveClass(/player-fullscreen/, { timeout: 15_000 });
   await master.click('#rotate-map-right');
   await expect.poll(() => player.locator('#map-image').evaluate(img => getComputedStyle(img.parentElement).transform)).toMatch(/^matrix\(0, /);
@@ -94,7 +108,11 @@ let app;
   console.log('PASS: portrait map at 20% fills/resizes in separate screen and master expansion, rotates, draggable grid stays aligned, manual order advances rounds.');
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => {
   if (!app) return;
-  const timeout = setTimeout(() => app.process().kill(), 8000);
+  const timeout = setTimeout(() => {
+    console.error('Electron did not close within eight seconds.');
+    app.process().kill('SIGKILL');
+    process.exit(1);
+  }, 8000);
   try { await app.close(); }
   finally { clearTimeout(timeout); }
 });
