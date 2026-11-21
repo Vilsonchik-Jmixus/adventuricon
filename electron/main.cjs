@@ -1,14 +1,17 @@
 const { app, BrowserWindow, WebContentsView, ipcMain, protocol, net, dialog, clipboard, session, shell, screen, Menu } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
-const { pathToFileURL } = require('node:url');
+const { fileURLToPath, pathToFileURL } = require('node:url');
 const { randomUUID } = require('node:crypto');
-const { beginMusicImport } = require('./music-import.cjs');
+const { beginMusicImport, mediaTools } = require('./music-import.cjs');
 const { initialState, migrateState, activeView, reducer } = require('./model.cjs');
 const { ROLES, CONDITIONS, playerMapActors } = require('./combat-rules.cjs');
 const { DND_HOME, WEB_HOME, GEMINI, REFERENCE_LINKS, safeUrl, searchUrl } = require('./reference.cjs');
 const { autoUpdater } = require('electron-updater');
 const TEST = process.env.DM_SCREEN_TEST === '1';
+const mac = process.platform === 'darwin';
+const canAutoUpdate = process.platform === 'win32' || (process.platform === 'linux' && !!process.env.APPIMAGE);
+const releasesUrl = 'https://github.com/Vilsonchik-Jmixus/interactive-dm-screen/releases/latest';
 if (process.env.DM_SCREEN_DATA) app.setPath('userData', process.env.DM_SCREEN_DATA);
 protocol.registerSchemesAsPrivileged([{ scheme: 'dm', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 const PANELS = ['combat', 'music', 'map', 'info', 'characters'];
@@ -18,7 +21,9 @@ const remotePanelFor = id => id === 'web' ? 'info' : id;
 let referenceTab = 'info';
 const windows = new Map(), remotes = new Map();
 let mainWindow, state, store, assets, quitting = false, downloadProcess = null;
-let updateStatus = { scope: 'update', phase: 'idle', text: 'Обновления' };
+let updateStatus = app.isPackaged && !canAutoUpdate
+  ? { scope: 'update', phase: 'releases', text: 'Версии на GitHub ↗' }
+  : { scope: 'update', phase: 'idle', text: 'Обновления' };
 let musicStatus = { scope: 'music', phase: 'idle', text: '' };
 const mapCameras = new Map();
 let playerBlackout = false;
@@ -90,6 +95,12 @@ function importAsset(file, kind) {
   fs.copyFileSync(file, path.join(assets, name));
   return { ok: true, asset: name, title: path.basename(file, ext) };
 }
+function pasteImageBytes(bytes, ext) {
+  if (bytes.length > 40 * 1024 * 1024) throw new Error('Изображение больше 40 МБ');
+  const asset = randomUUID() + ext;
+  fs.writeFileSync(path.join(assets, asset), bytes);
+  return { ok: true, asset };
+}
 function boundsOnScreen(bounds, defaults) {
   if (!bounds || ![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)) return defaults;
   const displays = screen.getAllDisplays();
@@ -98,7 +109,8 @@ function boundsOnScreen(bounds, defaults) {
   return { x: bounds.x, y: bounds.y, width: Math.max(360, Math.min(bounds.width, 7680)), height: Math.max(300, Math.min(bounds.height, 4320)) };
 }
 function secureWindow(options = {}, showInactive = false) {
-  const w = new BrowserWindow({ width: 1500, height: 950, minWidth: 940, minHeight: 640, backgroundColor: '#221711', show: false, icon: path.join(__dirname, '..', 'ui', 'assets', 'icon.ico'), ...options,
+  const icon = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
+  const w = new BrowserWindow({ width: 1500, height: 950, minWidth: 940, minHeight: 640, backgroundColor: '#221711', show: false, icon: path.join(__dirname, '..', 'ui', 'assets', icon), ...options,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required' } });
   w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   w.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('dm://app/')) e.preventDefault(); });
@@ -283,7 +295,7 @@ function detach(id, focus = true) {
 function setupIPC() {
   handle('init', event => ({ ...windowState(event.sender), version: app.getVersion(), updateStatus, musicStatus,
     playerBlackout, conditionDefinitions: CONDITIONS, combatRoles: ROLES, referenceLinks: REFERENCE_LINKS,
-    reference: referenceState(), test: TEST, welcomeAtStart: !TEST || process.env.DM_SCREEN_WELCOME_TEST === '1' }));
+    reference: referenceState(), test: TEST, mac, welcomeAtStart: !TEST || process.env.DM_SCREEN_WELCOME_TEST === '1' }));
   handle('dispatch', (event, action) => {
     if (event.sender === windows.get('map')?.webContents) throw new Error('Экраном управляет мастер');
     if (!action || typeof action.type !== 'string' || JSON.stringify(action).length > 10000) throw new Error('Неверная команда');
@@ -305,14 +317,13 @@ function setupIPC() {
   });
   handle('import-drop', (_, { path: file, kind }) => importAsset(file, kind));
   handle('paste-image', async () => {
-    const items = await clipboard.read();
+    const items = await clipboard.read().catch(() => []);
     for (const item of items) {
       const type = item.types.find(t => ['image/png', 'image/jpeg', 'image/webp'].includes(t));
       if (type) {
         const bytes = Buffer.from(await (await item.getType(type)).arrayBuffer());
-        if (bytes.length > 40 * 1024 * 1024) throw new Error('Изображение больше 40 МБ');
         const ext = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp' }[type];
-        const asset = randomUUID() + ext; fs.writeFileSync(path.join(assets, asset), bytes); return { ok: true, asset };
+        return pasteImageBytes(bytes, ext);
       }
       // Windows Explorer puts a copied image file's path in FileNameW.
       const fileType = item.types.find(t => t.includes('osclipboard') && t.includes('FileNameW'));
@@ -321,6 +332,14 @@ function setupIPC() {
         const file = bytes.toString('utf16le').split('\0')[0];
         if (path.isAbsolute(file)) return importAsset(file, 'image');
       }
+    }
+    const image = clipboard.readImage();
+    if (!image.isEmpty()) return pasteImageBytes(image.toPNG(), '.png');
+    const formats = clipboard.availableFormats();
+    for (const format of ['public.file-url', 'text/uri-list', 'x-special/gnome-copied-files']) {
+      if (!formats.includes(format)) continue;
+      const uri = clipboard.readBuffer(format).toString('utf8').split(/[\r\n\0]+/).find(line => line.startsWith('file://'));
+      if (uri) return importAsset(fileURLToPath(uri), 'image');
     }
     throw new Error('В буфере обмена нет изображения');
   });
@@ -405,6 +424,10 @@ function setupIPC() {
   });
   handle('update', async (_, action) => {
     if (!app.isPackaged || TEST) return { ok: false, error: 'Обновления доступны в установленной версии. Сборки — на GitHub Releases.' };
+    if (!canAutoUpdate) {
+      if (action === 'check') await shell.openExternal(releasesUrl);
+      return { ok: true };
+    }
     if (action === 'check') await autoUpdater.checkForUpdates();
     else if (action === 'download' && updateStatus.phase === 'available') await autoUpdater.downloadUpdate();
     else if (action === 'install' && updateStatus.phase === 'downloaded') { autoUpdater.quitAndInstall(false, true); }
@@ -446,14 +469,20 @@ async function downloadMusic({ url, folder }) {
   }
   const tools = app.isPackaged ? path.join(process.resourcesPath, 'media') : path.join(__dirname, '..', '.tools', 'media');
   const cached = available[0];
-  if (!cached && !fs.existsSync(path.join(tools, 'yt-dlp.exe'))) throw new Error('Не найден загрузчик YouTube');
-  if (!fs.existsSync(path.join(tools, 'ffmpeg', 'ffmpeg.exe'))) throw new Error('Не найден конвертер MP3');
-  const job = beginMusicImport({ assets, tools, source, cached, nodePath: process.execPath, report: reportMusic, save });
+  const { downloader, ffmpeg } = mediaTools(tools);
+  if (!cached && !downloader) throw new Error('Не найден загрузчик YouTube');
+  if (!ffmpeg) {
+    throw new Error(mac ? 'Для импорта с YouTube установите FFmpeg (brew install ffmpeg).'
+      : process.platform === 'linux' ? 'Для импорта с YouTube установите пакет ffmpeg через менеджер пакетов.'
+      : 'Не найден конвертер MP3');
+  }
+  const job = beginMusicImport({ assets, downloader, ffmpeg, source, cached, nodePath: process.execPath, report: reportMusic, save });
   downloadProcess = job;
   try { return await job.done; }
   finally { downloadProcess = null; }
 }
 function setupUpdater() {
+  if (!canAutoUpdate) return;
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
   const status = (phase, text, extra = {}) => { updateStatus = { scope: 'update', phase, text, ...extra }; sendAll('status', updateStatus); };
@@ -512,7 +541,11 @@ app.whenReady().then(async () => {
     browserSession.setPermissionCheckHandler(() => false);
     if (id === 'web') browserSession.on('will-download', event => event.preventDefault());
   }
-  Menu.setApplicationMenu(null);
+  Menu.setApplicationMenu(mac ? Menu.buildFromTemplate([
+    { role: 'appMenu' },
+    { label: 'Правка', submenu: ['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'].map(role => ({ role })) },
+    { label: 'Окно', submenu: [{ role: 'minimize' }, { role: 'close' }, { role: 'togglefullscreen' }] },
+  ]) : null);
   setupIPC(); setupUpdater();
   mainWindow = secureWindow({ title: 'Интерактивная ширма мастера' });
   mainWindow.on('close', () => { quitting = true; for (const w of windows.values()) w.close(); });

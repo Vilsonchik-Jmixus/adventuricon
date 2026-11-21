@@ -791,7 +791,7 @@ $('audio').onended = () => { if (!state.music.loop) dispatch('music:settings', {
 $('audio').onerror = () => { if (state?.music.playing) { toast('Аудиофайл недоступен или имеет неподдерживаемый формат'); dispatch('music:settings', { playing: false }); } };
 $('help').onclick = () => openDialog('help-dialog');
 document.querySelectorAll('dialog').forEach(d => { d.addEventListener('close', syncRemoteBounds); d.addEventListener('click', e => { if (e.target === d) { const r = d.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeDialog(d); } }); });
-function updateUI(status) { currentUpdate = status; $('updates').textContent = status.phase === 'available' ? `↓ Версия ${status.version}` : status.phase === 'downloaded' ? '↻ Установить обновление' : ['checking', 'downloading'].includes(status.phase) ? status.text : '↻ Обновления'; }
+function updateUI(status) { currentUpdate = status; $('updates').textContent = status.phase === 'available' ? `↓ Версия ${status.version}` : status.phase === 'downloaded' ? '↻ Установить обновление' : ['checking', 'downloading', 'releases'].includes(status.phase) ? status.text : '↻ Обновления'; }
 function updateMusicStatus(status) {
   musicBusy = ['loading', 'stopping'].includes(status.phase);
   $('music-transfer').hidden = !status.text;
@@ -895,6 +895,9 @@ function readWindowState(value) {
 api.onState(value => { readWindowState(value); renderAll(); });
 (async () => {
   const initial = await api.init(); readWindowState(initial); updateUI(initial.updateStatus); updateMusicStatus(initial.musicStatus);
+  if (initial.mac) {
+    document.querySelectorAll('[data-paste-shortcut]').forEach(label => { label.textContent = '⌘V'; });
+  }
   combatRoles = initial.combatRoles;
   conditionDefinitions = initial.conditionDefinitions;
   reference = initial.reference;

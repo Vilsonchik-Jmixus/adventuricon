@@ -5,6 +5,13 @@ const { execFileSync } = require('node:child_process');
 const ffmpegRelease = 'autobuild-2026-11-20-12-40';
 const ffmpegArchive = 'ffmpeg-n9.0.2-61-gd59078794d-win64-lgpl-shared-9.0.zip';
 const ffmpegHash = '4bb5e4c160463533d2e020bdc9b8429e9d1b8cdff1cddafa264db09a25f56069';
+const ytDlpAssets = {
+  'win32-x64': 'yt-dlp.exe',
+  'darwin-x64': 'yt-dlp_macos',
+  'darwin-arm64': 'yt-dlp_macos',
+  'linux-x64': 'yt-dlp_linux',
+  'linux-arm64': 'yt-dlp_linux_aarch64',
+};
 async function get(url) {
   const response = await fetch(url, {
     headers: { 'User-Agent': 'DM-Screen-Build' },
@@ -14,20 +21,26 @@ async function get(url) {
   return response;
 }
 async function prepareYtDlp(dir) {
+  const platform = `${process.platform}-${process.arch}`;
+  const assetName = ytDlpAssets[platform];
+  if (!assetName) throw new Error(`Нет сборки yt-dlp для ${platform}`);
   const release = await (await get('https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest')).json();
-  const executable = release.assets.find(a => a.name === 'yt-dlp.exe');
+  const executable = release.assets.find(a => a.name === assetName);
   const checksums = release.assets.find(a => a.name === 'SHA2-256SUMS');
   if (!executable || !checksums) throw new Error('Не найдены файлы yt-dlp');
   const sums = await (await get(checksums.browser_download_url)).text();
-  const expected = sums.split('\n').find(line => /\s+\*?yt-dlp\.exe\s*$/.test(line))?.split(/\s+/)[0];
+  const rows = sums.trim().split(/\r?\n/).map(line => line.trim().split(/\s+/));
+  const expected = rows.find(([, name]) => name?.replace(/^\*/, '') === assetName)?.[0];
   const bytes = Buffer.from(await (await get(executable.browser_download_url)).arrayBuffer());
   const actual = createHash('sha256').update(bytes).digest('hex');
   if (!expected || actual !== expected) throw new Error('Контрольная сумма yt-dlp не совпала');
-  await fs.writeFile(path.join(dir, 'yt-dlp.exe'), bytes);
+  const destination = path.join(dir, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+  await fs.writeFile(destination, bytes);
+  if (process.platform !== 'win32') await fs.chmod(destination, 0o755);
   await fs.writeFile(path.join(dir, 'VERSION.txt'), `${release.tag_name}\nSHA256 ${actual}\nhttps://github.com/yt-dlp/yt-dlp\n`);
   const license = await (await get(`https://raw.githubusercontent.com/yt-dlp/yt-dlp/${release.tag_name}/LICENSE`)).text();
   await fs.writeFile(path.join(dir, 'yt-dlp-LICENSE.txt'), license);
-  await fs.writeFile(path.join(dir, 'SOURCE.txt'), `Unmodified official yt-dlp Windows binary.\nCorresponding source for version ${release.tag_name}:\nhttps://github.com/yt-dlp/yt-dlp/archive/refs/tags/${release.tag_name}.tar.gz\nWindows build and dependencies: https://github.com/yt-dlp/yt-dlp/tree/${release.tag_name}/bundle\nLicense details: https://github.com/yt-dlp/yt-dlp/tree/${release.tag_name}#license\n`);
+  await fs.writeFile(path.join(dir, 'SOURCE.txt'), `Unmodified official yt-dlp binary (${assetName}).\nCorresponding source for version ${release.tag_name}:\nhttps://github.com/yt-dlp/yt-dlp/archive/refs/tags/${release.tag_name}.tar.gz\nBuild and dependencies: https://github.com/yt-dlp/yt-dlp/tree/${release.tag_name}/bundle\nLicense details: https://github.com/yt-dlp/yt-dlp/tree/${release.tag_name}#license\n`);
   console.log(`yt-dlp ${release.tag_name}: SHA256 verified`);
 }
 async function prepareFfmpeg(dir) {
@@ -64,5 +77,5 @@ async function prepareFfmpeg(dir) {
 (async () => {
   const dir = path.resolve(__dirname, '..', '.tools', 'media');
   await fs.mkdir(dir, { recursive: true });
-  await Promise.all([prepareYtDlp(dir), prepareFfmpeg(dir)]);
+  await Promise.all([prepareYtDlp(dir), process.platform === 'win32' && prepareFfmpeg(dir)]);
 })().catch(e => { console.error(e.message); process.exit(1); });

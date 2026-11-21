@@ -1,15 +1,38 @@
 const fs = require('node:fs/promises');
+const { constants, accessSync } = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { createInterface } = require('node:readline');
 
 const CANCELLED = 'Загрузка отменена';
+const windows = process.platform === 'win32';
+
+function executable(file) {
+  try { accessSync(file, constants.X_OK); return file; }
+  catch { return null; }
+}
+
+function mediaTools(dir) {
+  if (windows) {
+    return {
+      downloader: executable(path.join(dir, 'yt-dlp.exe')),
+      ffmpeg: executable(path.join(dir, 'ffmpeg', 'ffmpeg.exe')),
+    };
+  }
+  // GUI launches on macOS may omit Homebrew and MacPorts from PATH.
+  const search = [...(process.env.PATH || '').split(path.delimiter),
+    '/opt/homebrew/bin', '/opt/local/bin', '/usr/local/bin', '/usr/bin'];
+  const ffmpeg = search.filter(p => path.isAbsolute(p))
+    .map(p => path.join(p, 'ffmpeg')).find(executable);
+  return { downloader: executable(path.join(dir, 'yt-dlp')), ffmpeg };
+}
 
 function killTree(child) {
   if (!child.pid || child.exitCode !== null) return;
-  if (process.platform !== 'win32') {
-    child.kill();
+  if (!windows) {
+    try { process.kill(-child.pid, 'SIGKILL'); }
+    catch (error) { if (error.code !== 'ESRCH') child.kill(); }
     return;
   }
   const exe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe');
@@ -18,7 +41,7 @@ function killTree(child) {
   killer.once('close', code => { if (code !== 0 && child.exitCode === null) child.kill(); });
 }
 
-function beginMusicImport({ assets, tools, source, cached, nodePath, report, save }) {
+function beginMusicImport({ assets, downloader, ffmpeg, source, cached, nodePath, report, save }) {
   const id = randomUUID(), asset = id + '.mp3', prefix = id + '.youtube.';
   const output = path.join(assets, asset);
   let child, inactivity, reason;
@@ -33,7 +56,7 @@ function beginMusicImport({ assets, tools, source, cached, nodePath, report, sav
 
   function run(exe, args, onLine, timeoutMessage, env = process.env) {
     if (reason) throw new Error(reason);
-    const processHandle = spawn(exe, args, { windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const processHandle = spawn(exe, args, { windowsHide: true, detached: !windows, env, stdio: ['ignore', 'pipe', 'pipe'] });
     child = processHandle;
     const resetTimer = () => {
       clearTimeout(inactivity);
@@ -60,13 +83,13 @@ function beginMusicImport({ assets, tools, source, cached, nodePath, report, sav
   async function download() {
     report('loading', 'Подключение к YouTube…');
     let title, lastBytes = -1;
-    const result = await run(path.join(tools, 'yt-dlp.exe'), [
+    const result = await run(downloader, [
       '--ignore-config', '--no-playlist', '--no-warnings', '--no-simulate',
       '--socket-timeout', '10', '--retries', '2', '--fragment-retries', '2',
       '--extractor-retries', '1', '--concurrent-fragments', '4', '--abort-on-unavailable-fragments',
       '--progress', '--newline', '--color', 'never', '--progress-delta', '0.5',
       '--progress-template', 'download:DM_PROGRESS %(progress.downloaded_bytes)s %(progress._percent_str)s',
-      '--max-filesize', '1G', '--js-runtimes', `node:${nodePath}`,
+      '--max-filesize', '1G', '--js-runtimes', `node:${nodePath}`, '--ffmpeg-location', ffmpeg,
       '-f', 'bestaudio[protocol=https]/bestaudio', '--print', 'after_move:DM_TITLE %(title)j',
       '-o', path.join(assets, prefix + '%(ext)s'), '--', source
     ], line => {
@@ -100,7 +123,7 @@ function beginMusicImport({ assets, tools, source, cached, nodePath, report, sav
         await fs.rename(path.join(assets, file), output);
       } else {
         report('loading', 'Конвертация в MP3…');
-        const result = await run(path.join(tools, 'ffmpeg', 'ffmpeg.exe'), [
+        const result = await run(ffmpeg, [
           '-hide_banner', '-loglevel', 'error', '-nostdin', '-progress', 'pipe:1',
           '-protocol_whitelist', 'file', '-i', path.join(assets, file),
           '-map', '0:a:0', '-c:a', 'libmp3lame', '-q:a', '3', '-n', output
@@ -127,4 +150,4 @@ function beginMusicImport({ assets, tools, source, cached, nodePath, report, sav
   return { stop, done };
 }
 
-module.exports = { beginMusicImport };
+module.exports = { beginMusicImport, mediaTools };

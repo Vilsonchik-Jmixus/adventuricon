@@ -5,6 +5,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const { activeView } = require('../electron/model.cjs');
+const { mediaTools } = require('../electron/music-import.cjs');
 const root = path.resolve(__dirname, '..');
 const version = require('../package.json').version;
 const data = path.join(root, 'test-results', `campaign-${Date.now()}`);
@@ -120,7 +121,7 @@ let application;
   assert.equal(response.status, 200); assert.ok(response.bytes > 0);
   // Gallery imports are private until the master deliberately shares an image.
   await page.click('#show-gallery');
-  await page.keyboard.press('Control+v');
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+v' : 'Control+v');
   await expect(page.locator('#gallery-list .gallery-tile')).toHaveCount(1);
   assert.equal((await page.evaluate(() => window.dm.init())).presentation, null);
   await page.click('#rename-gallery');
@@ -242,7 +243,7 @@ let application;
   assert.equal(library.length, 1);
   assert.match(library[0].asset, /\.mp3$/);
   const mp3 = path.join(data, 'assets', library[0].asset);
-  execFileSync(path.join(root, '.tools', 'media', 'ffmpeg', 'ffmpeg.exe'),
+  execFileSync(mediaTools(path.join(root, '.tools', 'media')).ffmpeg,
     ['-hide_banner', '-loglevel', 'error', '-f', 'mp3', '-i', mp3, '-f', 'null', '-'], { windowsHide: true });
   await page.click('#import-youtube');
   await page.fill('#text-dialog-input', 'https://youtu.be/jNQXAC9IVRw');
