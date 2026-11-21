@@ -1,11 +1,14 @@
 {
   "name": "interactive-dm-screen",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Интерактивная ширма мастера — рабочий стол ведущего D&D",
   "main": "electron/main.cjs",
   "author": "Vilsonchik-Jmixus",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/Vilsonchik-Jmixus/interactive-dm-screen.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Vilsonchik-Jmixus/interactive-dm-screen.git"
+  },
   "scripts": {
     "start": "electron .",
     "test": "node --test tests/*.test.cjs",
@@ -13,18 +16,55 @@
     "build": "electron-builder --win nsis --x64 --publish never",
     "release": "electron-builder --win nsis --x64 --publish always"
   },
-  "dependencies": { "electron-updater": "6.6.2" },
-  "devDependencies": { "electron": "45.4.1", "electron-builder": "26.0.12", "@playwright/test": "1.58.2", "rcedit": "5.0.2" },
+  "dependencies": {
+    "electron-updater": "6.6.2"
+  },
+  "devDependencies": {
+    "electron": "45.4.1",
+    "electron-builder": "26.0.12",
+    "@playwright/test": "1.58.2",
+    "rcedit": "5.0.2"
+  },
   "build": {
     "appId": "app.dm-screen.desktop",
     "productName": "Интерактивная ширма мастера",
     "artifactName": "DM-Screen-Setup-${version}.${ext}",
-    "directories": { "output": "dist" },
-    "files": ["electron/**", "ui/**", "package.json", "LICENSE"],
-    "extraResources": [{ "from": ".tools/media", "to": "media" }],
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**",
+      "ui/**",
+      "package.json",
+      "LICENSE"
+    ],
+    "extraResources": [
+      {
+        "from": ".tools/media",
+        "to": "media"
+      }
+    ],
     "afterPack": "scripts/after-pack.cjs",
-    "win": { "target": ["nsis"], "icon": "ui/assets/icon.ico", "signAndEditExecutable": false },
-    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "deleteAppDataOnUninstall": false },
-    "publish": [{ "provider": "github", "owner": "Vilsonchik-Jmixus", "repo": "interactive-dm-screen", "releaseType": "release" }]
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "ui/assets/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Vilsonchik-Jmixus",
+        "repo": "interactive-dm-screen",
+        "releaseType": "release"
+      }
+    ]
   }
 }

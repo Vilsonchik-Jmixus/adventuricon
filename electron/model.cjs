@@ -20,6 +20,10 @@ function hpValue(current, max, expression) {
 function cellAt(map, x, y) {
   return { col: Math.max(0, Math.floor((x - map.offsetX) / map.grid)), row: Math.max(0, Math.floor((y - map.offsetY) / map.grid)) };
 }
+function rememberHealth(state, combatant) {
+  state.history.push({ id: combatant.id, hp: combatant.hp, maxHp: combatant.maxHp });
+  state.history = state.history.slice(-50);
+}
 function reducer(state, action) {
   const s = structuredClone(state), p = action.payload || {};
   switch (action.type) {
@@ -32,16 +36,38 @@ function reducer(state, action) {
       const c = s.combatants.find(c => c.id === p.id); if (!c) break;
       s.combatants.push({ ...c, id: randomUUID(), name: `${c.name} · копия`, hp: c.maxHp }); break;
     }
+    case 'combatant:edit': {
+      const c = s.combatants.find(c => c.id === p.id);
+      if (!c) throw new Error('Участник уже удалён');
+      const maxHp = clamp(Math.round(finite(p.maxHp, c.maxHp)), 1, 999999);
+      const hp = clamp(Math.round(finite(p.hp, c.hp)), 0, maxHp);
+      if (hp !== c.hp || maxHp !== c.maxHp) rememberHealth(s, c);
+      Object.assign(c, {
+        name: text(p.name) || c.name,
+        image: 'image' in p ? text(p.image, 100) || null : c.image,
+        initiative: clamp(Math.round(finite(p.initiative, c.initiative)), -100, 1000),
+        hp, maxHp
+      });
+      break;
+    }
     case 'combatant:remove':
       s.combatants = s.combatants.filter(c => c.id !== p.id); s.tokens = s.tokens.filter(t => t.combatantId !== p.id);
+      s.history = s.history.filter(entry => entry.id !== p.id);
       if (s.turn === p.id) s.turn = null; break;
     case 'combatant:hp': {
       const c = s.combatants.find(c => c.id === p.id); if (!c) break;
       const next = hpValue(c.hp, c.maxHp, p.expression);
-      s.history.push({ id: c.id, hp: c.hp }); s.history = s.history.slice(-50); c.hp = next; break;
+      if (next !== c.hp) { rememberHealth(s, c); c.hp = next; }
+      break;
     }
     case 'combatant:undo': {
-      const previous = s.history.pop(); const c = previous && s.combatants.find(c => c.id === previous.id); if (c) c.hp = previous.hp; break;
+      const previous = s.history.pop();
+      const c = previous && s.combatants.find(c => c.id === previous.id);
+      if (c) {
+        c.maxHp = previous.maxHp ?? c.maxHp;
+        c.hp = clamp(previous.hp, 0, c.maxHp);
+      }
+      break;
     }
     case 'combat:next': {
       const order = [...s.combatants].sort((a, b) => b.initiative - a.initiative);
@@ -62,7 +88,7 @@ function reducer(state, action) {
     }
     case 'token:remove': s.tokens = s.tokens.filter(t => t.combatantId !== p.id); break;
     case 'map:settings':
-      for (const [key, min, max] of [['grid', 16, 256], ['offsetX', -512, 512], ['offsetY', -512, 512], ['opacity', 0, 1], ['zoom', 0.2, 3]])
+      for (const [key, min, max] of [['grid', 16, 256], ['offsetX', -512, 512], ['offsetY', -512, 512], ['opacity', 0, 1], ['zoom', 0.01, 3]])
         if (key in p) s.map[key] = clamp(finite(p[key], s.map[key]), min, max);
       if (typeof p.visible === 'boolean') s.map.visible = p.visible;
       if (/^#[0-9a-f]{6}$/i.test(p.color)) s.map.color = p.color;

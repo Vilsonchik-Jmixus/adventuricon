@@ -2,7 +2,8 @@
 const $ = id => document.getElementById(id);
 const api = window.dm;
 const detachedPanel = new URLSearchParams(location.search).get('panel');
-let state, detached = [], currentFolder = 'Общее', portrait = null, expanded = null, testMode = false;
+let state, detached = [], currentFolder = 'Общее', portrait = null, expanded = null;
+let editingCombatant = null;
 let toastTimer, textSubmit, draggingToken = false, animating = false, musicBusy = false, currentUpdate;
 const assetURL = name => `dm://app/assets/${encodeURIComponent(name)}`;
 const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -21,7 +22,7 @@ function renderCombat() {
   const drafts = new Map([...document.querySelectorAll('.hp-form input')].map(el => [el.closest('form').dataset.id, el.value]));
   const focused = document.activeElement?.closest('.hp-form')?.dataset.id;
   const order = [...state.combatants].sort((a, b) => b.initiative - a.initiative);
-  $('combat-list').innerHTML = order.length ? order.map(c => `<article class="combat-card ${state.turn === c.id ? 'active-turn' : ''} ${c.hp === 0 ? 'dead' : ''}" data-id="${c.id}"><div class="combat-main">${avatar(c)}<div class="combat-details"><strong class="combat-name">${escapeHTML(c.name)}</strong><div class="combat-meta">Инициатива ${c.initiative}${state.turn === c.id ? ' · Ходит сейчас' : ''}</div></div><div class="hp-readout">${c.hp}<small> / ${c.maxHp}</small></div></div><div class="hp-bar"><div style="width:${c.hp / c.maxHp * 100}%"></div></div><div class="combat-bottom"><form class="hp-form" data-id="${c.id}"><input aria-label="Изменение ХП ${escapeHTML(c.name)}" placeholder="−7 / +5" value="${escapeHTML(drafts.get(c.id) || '')}" maxlength="12"><button title="Применить ХП">↵</button></form><button class="to-map" data-token-add="${c.id}" ${state.tokens.some(t => t.combatantId === c.id) ? 'disabled' : ''}>${state.tokens.some(t => t.combatantId === c.id) ? '✓ На карте' : '◇ На карту'}</button><button class="card-menu" data-duplicate="${c.id}" title="Дублировать">⧉</button><button class="card-menu" data-remove="${c.id}" title="Удалить">×</button></div></article>`).join('') : '<div class="empty-state"><span class="empty-symbol">⚔</span><strong>История начинается здесь</strong><span>Добавьте героев и противников.<br>Здоровье, ходы и карта будут связаны.</span></div>';
+  $('combat-list').innerHTML = order.length ? order.map(c => `<article class="combat-card ${state.turn === c.id ? 'active-turn' : ''} ${c.hp === 0 ? 'dead' : ''}" data-id="${c.id}"><div class="combat-main">${avatar(c)}<div class="combat-details"><strong class="combat-name">${escapeHTML(c.name)}</strong><div class="combat-meta">Инициатива ${c.initiative}${state.turn === c.id ? ' · Ходит сейчас' : ''}</div></div><button type="button" class="hp-readout" data-edit="${c.id}" title="Изменить текущие и максимальные ХП">${c.hp}<small> / ${c.maxHp}</small></button></div><div class="hp-bar"><div style="width:${c.hp / c.maxHp * 100}%"></div></div><div class="combat-bottom"><form class="hp-form" data-id="${c.id}"><input aria-label="Изменение ХП ${escapeHTML(c.name)}" placeholder="−7 / +5" value="${escapeHTML(drafts.get(c.id) || '')}" maxlength="12"><button title="Применить ХП">↵</button></form><button class="to-map" ${state.tokens.some(t => t.combatantId === c.id) ? `data-token-focus="${c.id}" title="Показать жетон на карте"` : `data-token-add="${c.id}"`}>${state.tokens.some(t => t.combatantId === c.id) ? '✓ На карте' : '◇ На карту'}</button><button class="card-menu" data-edit="${c.id}" title="Редактировать участника" aria-label="Редактировать участника">✎</button><button class="card-menu" data-duplicate="${c.id}" title="Дублировать">⧉</button><button class="card-menu" data-remove="${c.id}" title="Удалить">×</button></div></article>`).join('') : '<div class="empty-state"><span class="empty-symbol">⚔</span><strong>Бойцов пока нет</strong></div>';
   if (focused) document.querySelector(`.hp-form[data-id="${focused}"] input`)?.focus();
 }
 function renderMap() {
@@ -49,7 +50,7 @@ function renderMusic() {
   if (!state.music.folders.includes(currentFolder)) currentFolder = state.music.folders[0];
   $('folders').innerHTML = state.music.folders.map(f => `<button class="folder ${f === currentFolder ? 'selected' : ''}" data-folder="${escapeHTML(f)}">${escapeHTML(f)}</button>`).join('');
   const tracks = state.music.tracks.filter(t => t.folder === currentFolder);
-  $('track-list').innerHTML = tracks.length ? tracks.map(t => `<div class="track ${state.music.current === t.id ? 'current' : ''}"><button class="track-play" data-play="${t.id}" title="Воспроизвести">▶</button><span class="track-title" title="${escapeHTML(t.title)}">${escapeHTML(t.title)}</span><select data-move-track="${t.id}" aria-label="Папка трека">${state.music.folders.map(f => `<option ${t.folder === f ? 'selected' : ''}>${escapeHTML(f)}</option>`).join('')}</select><button class="track-delete" data-delete-track="${t.id}" title="Удалить трек">×</button></div>`).join('') : '<div class="empty-state"><span class="empty-symbol">♫</span><strong>Задайте настроение</strong><span>Добавьте музыку или звуки.<br>Каждой сцене — своя атмосфера.</span></div>';
+  $('track-list').innerHTML = tracks.length ? tracks.map(t => `<div class="track ${state.music.current === t.id ? 'current' : ''}"><button class="track-play" data-play="${t.id}" title="Воспроизвести">▶</button><span class="track-title" title="${escapeHTML(t.title)}">${escapeHTML(t.title)}</span><select data-move-track="${t.id}" aria-label="Папка трека">${state.music.folders.map(f => `<option ${t.folder === f ? 'selected' : ''}>${escapeHTML(f)}</option>`).join('')}</select><button class="track-delete" data-delete-track="${t.id}" title="Удалить трек">×</button></div>`).join('') : '<div class="empty-state"><span class="empty-symbol">♫</span><strong>В этой папке пока нет треков</strong></div>';
   const current = state.music.tracks.find(t => t.id === state.music.current);
   $('current-title').textContent = current?.title || 'Выберите трек';
   $('play-pause').textContent = state.music.playing ? 'Ⅱ' : '▶';
@@ -110,17 +111,37 @@ document.addEventListener('click', async e => {
   else if (button.dataset.expand) await expandPanel(button.dataset.expand);
   else if (button.dataset.remote) { const [id, action] = button.dataset.remote.split(':'); await result(api.remoteAction(id, action)); }
   else if (button.dataset.tokenAdd) { await dispatch('token:add', { id: button.dataset.tokenAdd }); toast('Боец добавлен на карту'); }
+  else if (button.dataset.tokenFocus) await result(api.showToken(button.dataset.tokenFocus));
+  else if (button.dataset.edit) openCombatantEditor(state.combatants.find(c => c.id === button.dataset.edit));
   else if (button.dataset.duplicate) await dispatch('combatant:duplicate', { id: button.dataset.duplicate });
   else if (button.dataset.remove) await dispatch('combatant:remove', { id: button.dataset.remove });
   else if (button.dataset.folder) { currentFolder = button.dataset.folder; renderMusic(); }
   else if (button.dataset.play) await dispatch('music:play', { id: button.dataset.play });
   else if (button.dataset.deleteTrack) await dispatch('music:remove', { id: button.dataset.deleteTrack });
 });
-$('add-combatant').onclick = () => { $('combatant-form').reset(); portrait = null; $('portrait-preview').textContent = '＋'; openDialog('editor'); };
+function openCombatantEditor(combatant) {
+  const form = $('combatant-form');
+  form.reset();
+  editingCombatant = combatant?.id ?? null;
+  portrait = combatant?.image ?? null;
+  $('editor-title').textContent = combatant ? 'Редактировать участника' : 'Добавить участника';
+  $('editor-submit').textContent = combatant ? 'Сохранить' : 'Добавить в трекер';
+  $('current-hp-field').hidden = !combatant;
+  form.elements.hp.disabled = !combatant;
+  form.elements.hp.required = !!combatant;
+  if (combatant) {
+    for (const field of ['name', 'hp', 'maxHp', 'initiative']) form.elements[field].value = combatant[field];
+  }
+  $('portrait-preview').innerHTML = portrait ? `<img src="${assetURL(portrait)}" alt="Портрет">` : '＋';
+  openDialog('editor');
+}
+$('add-combatant').onclick = () => openCombatantEditor();
 $('choose-portrait').onclick = async () => { const r = await result(api.importFile('image')); if (r?.asset) { portrait = r.asset; $('portrait-preview').innerHTML = `<img src="${assetURL(portrait)}" alt="Портрет">`; } };
 $('combatant-form').onsubmit = async e => {
   e.preventDefault(); const f = new FormData(e.target);
-  const r = await dispatch('combatant:add', { name: f.get('name'), maxHp: Number(f.get('maxHp')), initiative: Number(f.get('initiative')), image: portrait });
+  const payload = { name: f.get('name'), maxHp: Number(f.get('maxHp')), initiative: Number(f.get('initiative')), image: portrait };
+  if (editingCombatant) Object.assign(payload, { id: editingCombatant, hp: Number(f.get('hp')) });
+  const r = await dispatch(editingCombatant ? 'combatant:edit' : 'combatant:add', payload);
   if (r?.ok) closeDialog($('editor'));
 };
 $('combat-list').addEventListener('submit', async e => {
@@ -143,9 +164,47 @@ $('grid-form').onsubmit = e => {
   e.preventDefault(); const f = e.target;
   dispatch('map:settings', { grid: Number(f.elements.grid.value), offsetX: Number(f.elements.offsetX.value), offsetY: Number(f.elements.offsetY.value), opacity: Number(f.elements.opacity.value), color: f.elements.color.value, visible: f.elements.visible.checked }); closeDialog($('grid-dialog'));
 };
-function zoom(amount) { dispatch('map:settings', { zoom: Math.round((state.map.zoom + amount) * 10) / 10 }); }
-$('zoom-in').onclick = () => zoom(0.1); $('zoom-out').onclick = () => zoom(-0.1);
-$('map-viewport').addEventListener('wheel', e => { if (e.ctrlKey) { e.preventDefault(); zoom(e.deltaY < 0 ? 0.1 : -0.1); } }, { passive: false });
+const viewport = $('map-viewport');
+let zoomRequest = 0;
+async function setZoom(value, anchorX = viewport.clientWidth / 2, anchorY = viewport.clientHeight / 2) {
+  const request = ++zoomRequest, old = state.map.zoom;
+  const x = (viewport.scrollLeft + anchorX) / old;
+  const y = (viewport.scrollTop + anchorY) / old;
+  const zoom = Math.max(0.01, Math.min(3, value));
+  const response = await dispatch('map:settings', { zoom });
+  if (response?.ok && request === zoomRequest) {
+    viewport.scrollLeft = x * zoom - anchorX;
+    viewport.scrollTop = y * zoom - anchorY;
+  }
+}
+$('zoom-in').onclick = () => setZoom(state.map.zoom * 1.25);
+$('zoom-out').onclick = () => setZoom(state.map.zoom / 1.25);
+$('fit-map').onclick = async () => {
+  const image = $('map-image');
+  if (!image.naturalWidth) return;
+  const target = Math.min((viewport.clientWidth - 8) / image.naturalWidth, (viewport.clientHeight - 8) / image.naturalHeight, 3);
+  await setZoom(target, 0, 0);
+  viewport.scrollTo(0, 0);
+};
+viewport.addEventListener('wheel', e => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  const rect = viewport.getBoundingClientRect();
+  setZoom(state.map.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX - rect.left, e.clientY - rect.top);
+}, { passive: false });
+viewport.addEventListener('pointerdown', e => {
+  if (e.button !== 0 || e.target.closest('[data-token]') || e.target === viewport) return;
+  const { scrollLeft, scrollTop } = viewport;
+  const startX = e.clientX, startY = e.clientY;
+  viewport.classList.add('panning');
+  viewport.setPointerCapture(e.pointerId);
+  const move = event => viewport.scrollTo(scrollLeft - event.clientX + startX, scrollTop - event.clientY + startY);
+  viewport.addEventListener('pointermove', move);
+  viewport.addEventListener('lostpointercapture', () => {
+    viewport.removeEventListener('pointermove', move);
+    viewport.classList.remove('panning');
+  }, { once: true });
+});
 $('map-viewport').addEventListener('dragover', e => { e.preventDefault(); });
 $('map-viewport').addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer.files[0]) loadMap(api.importDrop(e.dataTransfer.files[0], 'image')); });
 document.addEventListener('keydown', e => {
@@ -177,12 +236,10 @@ $('import-audio').onclick = async () => { const r = await result(api.importFile(
 $('add-folder').onclick = () => askText('Новая папка', 'Название папки', '', async name => { await dispatch('music:folder', { name }); currentFolder = name; renderMusic(); });
 $('import-youtube').onclick = () => {
   if (musicBusy) return toast('Трек уже загружается');
-  askText('Аудио с YouTube', 'Ссылка на видео', 'Аудио будет сохранено в текущую папку. Загрузка зависит от доступности видео и YouTube.', async url => {
-    musicBusy = true; $('import-youtube').disabled = true;
-    try { await result(api.downloadMusic(url, currentFolder)); }
-    finally { musicBusy = false; $('import-youtube').disabled = false; }
-  }, 'Загрузить аудио');
+  askText('Аудио с YouTube', 'Ссылка на видео', `Трек сохранится в папке «${currentFolder}».`,
+    url => result(api.downloadMusic(url, currentFolder)), 'Загрузить аудио');
 };
+$('cancel-music').onclick = () => result(api.cancelMusic());
 $('text-form').onsubmit = e => { e.preventDefault(); const value = $('text-dialog-input').value.trim(); if (value) { const cb = textSubmit; closeDialog($('text-dialog')); Promise.resolve(cb(value)).catch(err => toast(err.message)); } };
 $('track-list').addEventListener('change', e => { if (e.target.dataset.moveTrack) dispatch('music:move', { id: e.target.dataset.moveTrack, folder: e.target.value }); });
 $('play-pause').onclick = () => {
@@ -198,10 +255,30 @@ $('audio').onerror = () => { if (state?.music.playing) { toast('Аудиофай
 $('help').onclick = () => openDialog('help-dialog');
 document.querySelectorAll('dialog').forEach(d => { d.addEventListener('close', syncRemoteBounds); d.addEventListener('click', e => { if (e.target === d) { const r = d.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeDialog(d); } }); });
 function updateUI(status) { currentUpdate = status; $('updates').textContent = status.phase === 'available' ? `↓ Версия ${status.version}` : status.phase === 'downloaded' ? '↻ Установить обновление' : ['checking', 'downloading'].includes(status.phase) ? status.text : '↻ Обновления'; }
+function updateMusicStatus(status) {
+  musicBusy = ['loading', 'stopping'].includes(status.phase);
+  $('music-transfer').hidden = !status.text;
+  $('music-status').textContent = status.text;
+  $('cancel-music').hidden = status.phase !== 'loading';
+  $('import-youtube').disabled = musicBusy;
+  const progress = $('music-progress');
+  progress.hidden = !musicBusy;
+  if (Number.isFinite(status.percent)) progress.value = status.percent;
+  else progress.removeAttribute('value');
+}
+async function focusToken(id) {
+  if (detachedPanel && detachedPanel !== 'map' || !detachedPanel && detached.includes('map')) return;
+  if (expanded && expanded !== 'map') await expandPanel(expanded);
+  const token = [...$('map-tokens').children].find(button => button.dataset.token === id);
+  if (!token) return;
+  token.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  token.focus({ preventScroll: true });
+}
 $('updates').onclick = () => result(api.update(currentUpdate?.phase === 'available' ? 'download' : currentUpdate?.phase === 'downloaded' ? 'install' : 'check'));
 api.onStatus(status => {
   if (status.scope === 'update') { updateUI(status); if (['available', 'downloaded', 'error', 'latest'].includes(status.phase)) toast(status.text); }
-  else if (status.scope === 'music') { $('music-status').textContent = status.text; if (status.phase !== 'loading') toast(status.text); }
+  else if (status.scope === 'music') updateMusicStatus(status);
+  else if (status.scope === 'map-focus') focusToken(status.id);
   else toast(status.text);
 });
 function beginResize(e, kind, panel) {
@@ -242,7 +319,7 @@ new ResizeObserver(syncRemoteBounds).observe($('workspace'));
 window.addEventListener('resize', syncRemoteBounds);
 api.onState(value => { state = value.state; detached = value.detached; renderAll(); });
 (async () => {
-  const initial = await api.init(); state = initial.state; detached = initial.detached; testMode = initial.test; updateUI(initial.updateStatus);
+  const initial = await api.init(); state = initial.state; detached = initial.detached; updateUI(initial.updateStatus); updateMusicStatus(initial.musicStatus);
   $('version').textContent = `v${initial.version}`;
   if (detachedPanel) {
     document.body.classList.add('detached');

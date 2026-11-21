@@ -1,11 +1,55 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1100" viewBox="0 0 1600 1100">
-<defs><pattern id="floor" width="64" height="64" patternUnits="userSpaceOnUse"><rect width="64" height="64" fill="#303d30"/><path d="M0 0H64V64" fill="none" stroke="#445140" stroke-width="2"/><path d="M5 5H59V59H5Z" fill="none" stroke="#394735"/></pattern><pattern id="ground" width="40" height="40" patternUnits="userSpaceOnUse"><rect width="40" height="40" fill="#1e2b24"/><path d="M4 10l3-3m23 20l4 1m-20 8l2-4" stroke="#30402d" stroke-width="2"/></pattern><filter id="shadow"><feDropShadow dx="0" dy="10" stdDeviation="12" flood-opacity=".45"/></filter></defs>
-<rect width="1600" height="1100" fill="url(#ground)"/>
-<g fill="#293b2b" stroke="#34482f" stroke-width="3"><ellipse cx="70" cy="100" rx="100" ry="140"/><ellipse cx="710" cy="70" rx="160" ry="110"/><ellipse cx="1220" cy="800" rx="180" ry="130"/><ellipse cx="80" cy="780" rx="120" ry="170"/><ellipse cx="1430" cy="250" rx="160" ry="150"/></g>
-<g filter="url(#shadow)" stroke="#64705a" stroke-width="16" stroke-linejoin="round"><path d="M128 128H576V320H768V128H1152V576H960V768H576V960H128V576H320V448H128Z" fill="url(#floor)"/></g>
-<g fill="none" stroke="#667158" stroke-width="12"><path d="M320 128V320M128 320H256M384 320H576M576 128V256M768 320H896M1024 320H1152M960 128V256M320 448V576M128 768H256M384 768H576M576 576H768M768 448V576M768 704V768M960 448V576"/></g>
-<g fill="#46513b" stroke="#9a9d74" stroke-width="3"><rect x="184" y="184" width="76" height="58" rx="5"/><rect x="408" y="184" width="76" height="58" rx="5"/><circle cx="862" cy="218" r="27"/><circle cx="1056" cy="218" r="27"/><circle cx="862" cy="480" r="27"/><circle cx="1056" cy="480" r="27"/><rect x="198" y="824" width="180" height="50" rx="5"/><rect x="640" y="630" width="66" height="66" rx="5"/></g>
-<g fill="#b1a170"><circle cx="340" cy="345" r="6"/><circle cx="803" cy="350" r="6"/><circle cx="543" cy="800" r="6"/></g>
-<path d="M1152 455Q1360 440 1400 630T1600 900" fill="none" stroke="#52614b" stroke-width="72" opacity=".35"/>
-<text x="1300" y="1000" fill="#6c8063" font-family="Georgia,serif" font-size="17" letter-spacing="6">СТАРАЯ КРЕПОСТЬ</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1100" viewBox="0 0 1600 1100" shape-rendering="crispEdges">
+  <defs>
+    <pattern id="planks" width="128" height="48" patternUnits="userSpaceOnUse">
+      <path fill="#5a3a28" d="M0 0h128v48H0z"/>
+      <path fill="#68442c" d="M0 0h128v23H0z"/>
+      <path fill="#38241b" d="M0 23h128v3H0zM0 46h128v2H0zM126 0h2v23h-2zM62 26h2v20h-2z"/>
+      <path fill="#7c5033" d="M7 5h38v2H7zM78 12h31v2H78zM69 30h24v2H69zM20 38h20v2H20z"/>
+    </pattern>
+    <pattern id="yard" width="128" height="128" patternUnits="userSpaceOnUse">
+      <rect width="128" height="128" fill="#322920"/>
+      <path fill="#45382a" d="M6 14h13v4H6zM86 42h10v6H86zM51 105h10v6H51zM26 72h15v3H26z"/>
+    </pattern>
+    <pattern id="rug" width="32" height="32" patternUnits="userSpaceOnUse">
+      <rect width="32" height="32" fill="#6d3e32"/>
+      <path fill="#935b43" d="M12 8h8v4h4v8h-4v4h-8v-4H8v-8h4z"/>
+    </pattern>
+    <g id="table">
+      <path fill="#301d16" d="M-9 0h154v102H-9z"/>
+      <path fill="#815638" d="M0 0h132v87H0z"/>
+      <path fill="#a3734a" d="M5 5h122v5H5zM7 31h119v3H7zM7 60h119v3H7z"/>
+      <path fill="#432a1c" d="M22 -25h35v21H22zM78 -25h35v21H78zM22 93h35v23H22zM78 93h35v23H78z"/>
+      <path fill="#b29574" d="M72 20h13v13H72zM43 56h12v12H43z"/>
+      <path fill="#d9a867" d="M105 49h7v10h-7z"/>
+    </g>
+    <g id="barrel">
+      <path fill="#291d17" d="M4 0h28v4h4v29h-4v4H4v-4H0V4h4z"/>
+      <path fill="#865734" d="M5 5h26v27H5z"/>
+      <path fill="#493326" d="M5 12h26v3H5zM5 24h26v3H5zM17 5h3v27h-3z"/>
+    </g>
+  </defs>
+  <rect width="1600" height="1100" fill="url(#yard)"/>
+  <path fill="#463728" d="M608 865h256v235H608z"/>
+  <path fill="#281a14" d="M140 101h1320v822H140z"/>
+  <path fill="#88674c" d="M140 101h1320v33H140zM140 134h32v759h-32zM1428 134h32v759h-32zM140 890h528v33H140zM812 890h648v33H812z"/>
+  <path fill="#ae8864" d="M145 104h1310v7H145zM145 892h520v6H145zM816 892h639v6H816z"/>
+  <path fill="url(#planks)" d="M173 135h1254v754H173zM668 889h144v34H668z"/>
+  <path fill="#42291e" d="M990 135h31v278h-31zM1021 385h276v28h-276zM1380 385h48v28h-48z"/>
+  <path fill="#4a2921" d="M635 580h208v258H635z"/>
+  <path fill="#a66f48" d="M642 588h194v242H642z"/>
+  <path fill="url(#rug)" d="M651 597h176v224H651z"/>
+  <path fill="#1d1512" d="M634 136h213v151H634z"/>
+  <path fill="#765743" d="M641 140h199v21H641zM641 163h26v115h-26zM814 163h26v115h-26zM641 278h199v13H641z"/>
+  <path fill="#57382a" d="M686 235h113v28H686z"/>
+  <path fill="#a76542" d="M698 222h87v15h-87zM714 207h51v17h-51z"/>
+  <path fill="#d79a5f" d="M729 196h15v37h-15zM751 214h12v18h-12z"/>
+  <path fill="#44291c" d="M208 178h354v79H208zM208 257h64v90h-64z"/>
+  <path fill="#93613c" d="M215 185h342v62H215zM215 247h52v93h-52z"/>
+  <path fill="#b38255" d="M218 190h333v5H218zM220 208h5v127h-5z"/>
+  <use href="#table" x="346" y="376"/><use href="#table" x="686" y="390"/>
+  <use href="#table" x="1085" y="505"/><use href="#table" x="345" y="647"/>
+  <use href="#table" x="1104" y="731"/>
+  <use href="#barrel" x="1045" y="151"/><use href="#barrel" x="1090" y="151"/><use href="#barrel" x="1135" y="151"/>
+  <use href="#barrel" x="1334" y="322"/><use href="#barrel" x="1383" y="322"/>
+  <use href="#barrel" x="186" y="795"/><use href="#barrel" x="229" y="795"/>
 </svg>
