@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="tavern.css">
   <link rel="stylesheet" href="ambience.css">
   <link rel="stylesheet" href="scene.css">
+  <link rel="stylesheet" href="story.css">
 </head>
 <body>
   <header class="appbar">
@@ -98,7 +99,7 @@
       <div id="map-condition-legend" class="condition-legend" aria-label="Обозначения состояний" hidden></div><div id="player-art" hidden><img id="presented-image" alt=""></div><div id="player-blackout" hidden></div><button class="resize-grip" title="Потяните для изменения размера"></button>
     </section>
     <section class="panel characters" data-panel="characters">
-      <header class="panel-head"><div class="panel-title"><div class="work-tabs" aria-label="Правая панель"><button id="show-sheets" aria-pressed="true">Листы</button><button id="show-gallery" aria-pressed="false">Галерея</button></div></div><div class="panel-tools"><button data-detach="characters" title="В отдельное окно">↗</button><button data-expand="characters" title="Развернуть панель">⛶</button></div></header>
+      <header class="panel-head"><div class="panel-title"><div class="work-tabs" aria-label="Правая панель"><button id="show-sheets" aria-pressed="true">Листы</button><button id="show-gallery" aria-pressed="false">Галерея</button><button id="show-notes" aria-pressed="false">Заметки</button></div></div><div class="panel-tools"><button data-detach="characters" title="В отдельное окно">↗</button><button data-expand="characters" title="Развернуть панель">⛶</button></div></header>
       <div id="sheet-content" class="panel-content site-content"><div class="browser-toolbar"><button data-remote="characters:back" title="Назад">←</button><button data-remote="characters:reload" title="Обновить">↻</button><span>Long Story Short</span><button data-remote="characters:external" title="Открыть в браузере">↗</button></div><div class="remote-surface" data-remote-surface="characters"><div class="site-empty"><div class="lss-monogram">LSS</div><h2>Ваша партия.<br>В одной ширме.</h2><p>Войдите в Long Story Short,<br>чтобы открыть листы персонажей.</p><button data-remote="characters:home">Открыть Long Story Short ↗</button><small>Вход сохраняется между запусками</small></div></div></div>
       <div id="gallery" class="panel-content gallery" hidden>
         <div class="gallery-tools">
@@ -121,12 +122,45 @@
           <div id="gallery-recent" class="gallery-list"></div>
         </div>
       </div>
+      <div id="story" class="panel-content story" hidden>
+        <div class="story-tools">
+          <button id="story-add" type="button" class="small-button">＋ Заметка</button>
+          <div class="story-modes" role="group" aria-label="Инструменты сюжетной доски">
+            <button type="button" data-story-tool="move" aria-pressed="true" title="Двигать и связывать карточки">Карточки</button>
+            <button type="button" data-story-tool="pen" aria-pressed="false">Карандаш</button>
+            <button type="button" data-story-tool="eraser" aria-pressed="false">Ластик</button>
+          </div>
+          <div id="story-pen-options" hidden>
+            <input type="color" id="story-color" value="#dfad77" title="Цвет карандаша" aria-label="Цвет карандаша">
+            <select id="story-width" title="Толщина штриха" aria-label="Толщина штриха">
+              <option value="2">Тонкий</option><option value="4" selected>Средний</option><option value="9">Толстый</option>
+            </select>
+          </div>
+        </div>
+        <div id="story-viewport" tabindex="0" aria-label="Поле сюжетных заметок">
+          <div id="story-world">
+            <svg id="story-paper" aria-hidden="true"><g id="story-strokes"></g><g id="story-ropes"></g><path id="story-draft"></path></svg>
+            <div id="story-cards"></div>
+            <p id="story-empty">Добавь заметку с репликой или сценой. Чтобы связать карточки, потяни за точку на краю.</p>
+          </div>
+        </div>
+        <div id="story-instruction" role="status" hidden></div>
+      </div>
       <div class="detached-placeholder"><span>↗</span><p>Персонажи в отдельном окне</p><button data-focus="characters">Показать окно</button></div><button class="resize-grip" title="Потяните для изменения размера"></button>
     </section>
     <div class="splitter vertical split-one" data-split="left"></div><div class="splitter vertical split-two" data-split="middle"></div><div class="splitter horizontal" data-split="top"></div>
   </main>
   <footer class="statusbar"><span><i class="status-dot"></i> Локальная кампания</span><span id="version">v0.1.0</span></footer>
   <div id="toast" class="toast" role="status"></div>
+  <dialog id="story-dialog" aria-labelledby="story-dialog-title">
+    <form id="story-form">
+      <div class="dialog-heading"><h2 id="story-dialog-title">Сюжетная заметка</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть">×</button></div>
+      <label>Заголовок<input id="story-title" maxlength="120" placeholder="Например, встреча у моста" autofocus></label>
+      <label>Реплики и заметки<textarea id="story-body" rows="8" maxlength="20000"></textarea></label>
+      <div id="story-links" aria-label="Связанные заметки" hidden></div>
+      <div class="scene-confirm"><button type="button" id="story-delete" class="quiet" hidden>Удалить заметку</button><button type="submit" class="primary-button">Сохранить</button></div>
+    </form>
+  </dialog>
   <dialog id="image-dialog" class="image-dialog">
     <div class="dialog-heading"><h2 id="image-dialog-title"></h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть">×</button></div>
     <img id="image-dialog-preview" alt="">
@@ -221,6 +255,7 @@
   <script src="map-geometry.js"></script>
   <script src="map-terrain.js"></script>
   <script src="ambience.js"></script>
+  <script src="story.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

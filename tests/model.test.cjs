@@ -6,6 +6,27 @@ const { REFERENCE_LINKS, safeUrl, searchUrl } = require('../electron/reference.c
 const MapGeometry = require('../ui/map-geometry.js');
 const { readCharacter } = require('../electron/lss-import.cjs');
 const { publicDndUrl } = require('../electron/dnd-import.cjs');
+test('Story cards, connections and drawings survive reload while deleting a card removes its links', () => {
+  let s = migrateState({ ...initialState(), story: undefined });
+  const act = (type, payload) => { s = reducer(s, { type, payload }); return activeView(s).story; };
+  const first = act('story:save', { title: 'У ворот', body: '— Кто там?\n— Свои.', x: 20, y: 30 }).notes[0];
+  const second = act('story:save', { title: 'Пароль', body: 'Три стука.', x: 300, y: 50 }).notes[1];
+  act('story:link', { from: first.id, to: second.id });
+  assert.equal(act('story:link', { from: second.id, to: first.id }).links.length, 1);
+  act('story:move', { id: first.id, x: 83, y: 146 });
+  act('story:save', { id: second.id, title: 'Знак', body: second.body });
+  act('story:draw', { points: [[20, 40], [55, 74]], color: '#cc4422', width: 4 });
+  s = migrateState(JSON.parse(JSON.stringify(s)));
+  const story = activeView(s).story;
+  assert.deepEqual(story.notes[0], { ...first, x: 83, y: 146 });
+  assert.equal(story.notes[1].title, 'Знак');
+  assert.equal(story.notes[1].x, 300);
+  assert.equal(story.links[0].to, second.id);
+  assert.deepEqual(story.strokes[0].points, [[20, 40], [55, 74]]);
+  assert.equal(act('story:erase', { ids: [story.strokes[0].id] }).strokes.length, 0);
+  assert.equal(act('story:remove', { id: first.id }).links.length, 0);
+  assert.equal(activeView(s).story.notes[0].id, second.id);
+});
 test('HP commands, bounds and invalid expressions', () => {
   assert.equal(hpValue(12, 20, '-7'), 5);
   assert.equal(hpValue(12, 20, '+99'), 20);

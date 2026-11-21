@@ -55,10 +55,13 @@ jobs:
         run: npm run tools
       - name: Verify Windows desktop interaction and persistence
         if: runner.os == 'Windows'
+        run: node tests/desktop-smoke.cjs
+      - name: Verify Windows map and story boards
+        if: runner.os == 'Windows'
         run: |
-          node tests/desktop-smoke.cjs
           node tests/map-window-smoke.cjs
           node tests/scene-smoke.cjs
+          node tests/story-smoke.cjs
           node tests/welcome-smoke.cjs
       - name: Install native Debian packager
         if: matrix.platform == 'linux' && matrix.arch == 'arm64'

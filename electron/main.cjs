@@ -304,7 +304,9 @@ function setupIPC() {
     reference: referenceState(), test: TEST, mac, welcomeAtStart: !TEST || process.env.DM_SCREEN_WELCOME_TEST === '1' }));
   handle('dispatch', (event, action) => {
     if (event.sender === windows.get('map')?.webContents) throw new Error('Экраном управляет мастер');
-    if (!action || typeof action.type !== 'string' || JSON.stringify(action).length > 10000) throw new Error('Неверная команда');
+    if (!action || typeof action.type !== 'string') throw new Error('Неверная команда');
+    const limit = ['story:save', 'story:draw'].includes(action.type) ? 125000 : 10000;
+    if (JSON.stringify(action).length > limit) throw new Error('Неверная команда');
     if (['map:image', 'combatant:add', 'combatant:edit', 'library:save', 'terrain:add', 'terrain:edit-item'].includes(action.type) && action.payload?.image) assetName(action.payload.image);
     if (action.type === 'music:add') assetName(action.payload?.asset);
     if (action.type === 'gallery:add') {
@@ -575,7 +577,7 @@ app.whenReady().then(async () => {
       const bundledAssets = ['/assets/demo-map.svg', '/assets/PressStart2P-Regular.ttf', '/assets/welcome-tavern.webp', '/assets/welcome-jingle.wav'];
       if (u.pathname.startsWith('/assets/') && !bundledAssets.includes(u.pathname)) file = path.join(assets, assetName(decodeURIComponent(u.pathname.slice(8))));
       else {
-        const allowed = ['index.html', 'app.js', 'map-geometry.js', 'map-terrain.js', 'styles.css', 'tavern.css', 'tavern-art.js', 'ambience.css', 'ambience.js', 'scene.css', ...bundledAssets.map(asset => asset.slice(1))];
+        const allowed = ['index.html', 'app.js', 'map-geometry.js', 'map-terrain.js', 'styles.css', 'tavern.css', 'tavern-art.js', 'ambience.css', 'ambience.js', 'scene.css', 'story.js', 'story.css', ...bundledAssets.map(asset => asset.slice(1))];
         const relative = u.pathname.slice(1) || 'index.html';
         if (!allowed.includes(relative)) return new Response('Not found', { status: 404 });
         file = path.join(__dirname, '..', 'ui', relative);

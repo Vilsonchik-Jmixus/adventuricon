@@ -15,7 +15,7 @@ let mapItemDraft = null;
 const tokenDragType = 'application/x-dm-screen-token';
 let combatRoles = {}, conditionDefinitions = [], conditionEdit, initiativeContext;
 let reference = { tab: 'info', pages: {} };
-let presentation = null, recentImages = [], galleryOpen = false, selectedImage = null, previewImage = null;
+let presentation = null, recentImages = [], charactersTab = 'sheets', selectedImage = null, previewImage = null;
 const assetURL = name => `dm://app/assets/${encodeURIComponent(name)}`;
 const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 function toast(message) { $('toast').textContent = message; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 4500); }
@@ -178,7 +178,7 @@ function renderLayout() {
   const w = $('workspace'); w.style.setProperty('--left', state.layout.left + '%'); w.style.setProperty('--middle', state.layout.middle + '%'); w.style.setProperty('--top', state.layout.top + '%');
   document.querySelectorAll('[data-panel]').forEach(panel =>
     panel.classList.toggle('is-detached', !detachedPanel && panel.dataset.panel !== 'map' &&
-      !(panel.dataset.panel === 'characters' && galleryOpen) && detached.includes(panel.dataset.panel)));
+      !(panel.dataset.panel === 'characters' && charactersTab !== 'sheets') && detached.includes(panel.dataset.panel)));
 }
 function renderAll() {
   if (isPlayerMap) {
@@ -189,7 +189,8 @@ function renderAll() {
   renderLayout(); renderSlots(); renderCombat(); renderMap(); renderMusic(); renderPresentation();
   if ($('bookmarks-dialog').open) renderBookmarks();
   if ($('library-dialog').open) renderLibrary();
-  if (galleryOpen) renderGallery();
+  if (charactersTab === 'gallery') renderGallery();
+  if (charactersTab === 'notes') storyBoard.render();
   requestAnimationFrame(syncRemoteBounds);
 }
 function syncRemoteBounds() {
@@ -405,14 +406,17 @@ document.addEventListener('click', async e => {
   else if (button.dataset.play) await dispatch('music:play', { id: button.dataset.play });
   else if (button.dataset.deleteTrack) await dispatch('music:remove', { id: button.dataset.deleteTrack });
 });
-function selectGallery(open) {
-  galleryOpen = open;
-  $('show-gallery').setAttribute('aria-pressed', String(open));
-  $('show-sheets').setAttribute('aria-pressed', String(!open));
-  $('gallery').hidden = !open;
-  $('sheet-content').hidden = open;
+const storyBoard = createStoryBoard({ getStory: () => state?.story, dispatch, openDialog, closeDialog });
+function selectCharacters(tab) {
+  charactersTab = tab;
+  for (const [id, panel] of [['sheets', 'sheet-content'], ['gallery', 'gallery'], ['notes', 'story']]) {
+    const selected = id === tab;
+    $(`show-${id}`).setAttribute('aria-pressed', String(selected));
+    $(panel).hidden = !selected;
+  }
   renderLayout();
-  if (open) renderGallery();
+  if (tab === 'gallery') renderGallery();
+  if (tab === 'notes') storyBoard.render();
   syncRemoteBounds();
 }
 function selectedGalleryImage() {
@@ -479,11 +483,12 @@ async function importGallery(promise) {
   const saved = await dispatch('gallery:add', { image: image.asset, title: image.title });
   if (saved?.id) {
     selectedImage = saved.id;
-    if (galleryOpen) renderGallery();
+    if (charactersTab === 'gallery') renderGallery();
   }
 }
-$('show-sheets').onclick = () => selectGallery(false);
-$('show-gallery').onclick = () => selectGallery(true);
+$('show-sheets').onclick = () => selectCharacters('sheets');
+$('show-gallery').onclick = () => selectCharacters('gallery');
+$('show-notes').onclick = () => selectCharacters('notes');
 $('import-gallery').onclick = () => importGallery(api.importFile('image'));
 $('paste-gallery').onclick = () => importGallery(api.pasteImage());
 $('gallery').addEventListener('dragover', e => e.preventDefault());
@@ -1052,7 +1057,8 @@ document.addEventListener('keydown', e => {
   if (e.key === 'F11') { e.preventDefault(); result(api.fullscreen()); }
   if (!isPlayerMap && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) && !document.querySelector('dialog[open]')) {
     e.preventDefault();
-    if (galleryOpen && (!expanded || expanded === 'characters') && !document.activeElement?.closest('[data-panel="map"]')) {
+    if (charactersTab === 'notes' && document.activeElement?.closest('#story')) return;
+    if (charactersTab === 'gallery' && (!expanded || expanded === 'characters') && !document.activeElement?.closest('[data-panel="map"]')) {
       importGallery(api.pasteImage());
     } else loadMap(api.pasteImage());
   }

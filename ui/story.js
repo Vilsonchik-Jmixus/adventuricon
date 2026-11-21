@@ -1,0 +1,298 @@
+function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
+  const get = id => document.getElementById(id);
+  const viewport = get('story-viewport'), world = get('story-world');
+  const cards = get('story-cards'), ropes = get('story-ropes'), strokes = get('story-strokes');
+  const draftPath = get('story-draft'), message = get('story-instruction');
+  const dialog = get('story-dialog');
+  const width = 214, height = 132;
+  let tool = 'move', source = null, gesture, ignoreClick = false;
+  let editing, newPosition, lastRender;
+
+  const cardFor = id => cards.querySelector(`[data-story-note="${CSS.escape(id)}"]`);
+  const coordinate = n => Math.max(0, Math.min(12000, Math.round(n)));
+  const pointAt = event => {
+    const bounds = world.getBoundingClientRect();
+    return { x: coordinate(event.clientX - bounds.left), y: coordinate(event.clientY - bounds.top) };
+  };
+  function pathElement(d, className) {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('class', className);
+    return path;
+  }
+  function drawStroke(points) {
+    if (points.length === 1) return `M ${points[0].join(' ')} h .1`;
+    return 'M ' + points.map(point => point.join(' ')).join(' L ');
+  }
+  function center(note) { return { x: note.x + width / 2, y: note.y + height / 2 }; }
+  function edgeOf(note, target) {
+    const origin = center(note), dx = target.x - origin.x, dy = target.y - origin.y;
+    if (dx === 0 && dy === 0) return origin;
+    const ratio = Math.min(width / (2 * Math.abs(dx)), height / (2 * Math.abs(dy)));
+    return { x: origin.x + dx * ratio, y: origin.y + dy * ratio };
+  }
+  function ropePath(a, b) {
+    const sag = Math.min(28, Math.hypot(a.x - b.x, a.y - b.y) / 7);
+    return `M ${a.x} ${a.y} Q ${(a.x + b.x) / 2} ${(a.y + b.y) / 2 + sag} ${b.x} ${b.y}`;
+  }
+  function drawRopes() {
+    const { notes, links } = getStory();
+    const nodes = new Map(notes.map(note => [note.id, note]));
+    if (gesture?.kind === 'move' && gesture.position) nodes.set(gesture.id, gesture.position);
+    ropes.replaceChildren(...links.flatMap(link => {
+      const a = nodes.get(link.from), b = nodes.get(link.to);
+      return a && b ? [pathElement(ropePath(edgeOf(a, center(b)), edgeOf(b, center(a))), 'story-rope')] : [];
+    }));
+  }
+  function resizeWorld() {
+    const { notes, strokes: marks } = getStory();
+    let right = 0, bottom = 0;
+    for (const stored of notes) {
+      const note = gesture?.kind === 'move' && gesture.id === stored.id && gesture.position ? gesture.position : stored;
+      right = Math.max(right, note.x + width);
+      bottom = Math.max(bottom, note.y + height);
+    }
+    for (const mark of marks) for (const [x, y] of mark.points) {
+      right = Math.max(right, x + mark.width);
+      bottom = Math.max(bottom, y + mark.width);
+    }
+    world.style.width = Math.max(viewport.clientWidth, right + 34) + 'px';
+    world.style.height = Math.max(viewport.clientHeight, bottom + 34) + 'px';
+  }
+  function updateControls() {
+    viewport.dataset.tool = tool;
+    get('story-pen-options').hidden = tool !== 'pen';
+    document.querySelectorAll('[data-story-tool]').forEach(button => {
+      button.setAttribute('aria-pressed', String(button.dataset.storyTool === tool));
+    });
+    message.hidden = !source;
+    message.textContent = source ? 'Выбери вторую карточку. Esc отменяет связь.' : '';
+    for (const card of cards.children) card.classList.toggle('connecting', card.dataset.storyNote === source);
+  }
+  function fillLinks() {
+    const { notes, links } = getStory(), list = get('story-links');
+    const related = links.filter(link => link.from === editing || link.to === editing);
+    list.hidden = !related.length;
+    list.replaceChildren(...related.flatMap(link => {
+      const other = notes.find(note => note.id === (link.from === editing ? link.to : link.from));
+      if (!other) return [];
+      const row = document.createElement('div'), name = document.createElement('span'), remove = document.createElement('button');
+      name.textContent = other.title;
+      remove.type = 'button';
+      remove.textContent = '×';
+      remove.dataset.storyUnlink = link.id;
+      remove.setAttribute('aria-label', 'Убрать связь с заметкой «' + other.title + '»');
+      row.append(name, remove);
+      return [row];
+    }));
+  }
+  function placeCard(card, note) {
+    card.style.left = note.x + 'px';
+    card.style.top = note.y + 'px';
+  }
+  function render() {
+    if (gesture) return;
+    const story = getStory();
+    if (!story) return;
+    const signature = JSON.stringify(story);
+    if (lastRender === signature) { resizeWorld(); return; }
+    lastRender = signature;
+    const focused = document.activeElement?.closest('[data-story-note]')?.dataset.storyNote;
+    cards.replaceChildren(...story.notes.map(note => {
+      const card = document.createElement('article'), title = document.createElement('button');
+      const body = document.createElement('p'), pin = document.createElement('button');
+      card.className = 'story-note';
+      card.dataset.storyNote = note.id;
+      placeCard(card, note);
+      title.type = 'button';
+      title.className = 'story-note-title';
+      title.title = 'Щёлкни для редактирования, потяни для перемещения';
+      title.textContent = note.title;
+      body.className = 'story-note-body';
+      body.textContent = note.body;
+      pin.type = 'button';
+      pin.className = 'story-pin';
+      pin.title = 'Потяни к другой карточке, чтобы связать';
+      pin.setAttribute('aria-label', 'Связать заметку «' + note.title + '»');
+      card.append(title, body, pin);
+      return card;
+    }));
+    strokes.replaceChildren(...story.strokes.flatMap(mark => {
+      const d = drawStroke(mark.points), path = pathElement(d, 'story-mark'), hit = pathElement(d, 'story-hit');
+      path.style.stroke = mark.color;
+      path.style.strokeWidth = mark.width;
+      hit.style.strokeWidth = Math.max(15, mark.width);
+      hit.dataset.storyStroke = mark.id;
+      return [path, hit];
+    }));
+    get('story-empty').hidden = !!story.notes.length || !!story.strokes.length;
+    if (source && !story.notes.some(note => note.id === source)) source = null;
+    drawRopes();
+    resizeWorld();
+    updateControls();
+    if (focused) cardFor(focused)?.querySelector('.story-note-title').focus({ preventScroll: true });
+    if (dialog.open) fillLinks();
+  }
+  function firstFreePosition() {
+    const left = viewport.scrollLeft + 16, top = viewport.scrollTop + 16;
+    const columns = Math.max(1, Math.floor(viewport.clientWidth / (width + 20)));
+    const all = getStory().notes;
+    let index = 0, x, y;
+    do {
+      x = left + index % columns * (width + 20);
+      y = top + Math.floor(index / columns) * (height + 20);
+      index++;
+    } while (all.some(note => Math.abs(note.x - x) < width + 8 && Math.abs(note.y - y) < height + 8));
+    return { x, y };
+  }
+  function edit(note, position) {
+    editing = note?.id ?? null;
+    newPosition = position ?? (note ? null : firstFreePosition());
+    get('story-title').value = note?.title ?? '';
+    get('story-body').value = note?.body ?? '';
+    get('story-delete').hidden = !note;
+    fillLinks();
+    openDialog(dialog.id);
+  }
+  async function connect(from, to) {
+    source = null;
+    updateControls();
+    if (from !== to) await dispatch('story:link', { from, to });
+  }
+  get('story-add').onclick = () => edit();
+  get('story-form').onsubmit = async event => {
+    event.preventDefault();
+    const response = await dispatch('story:save', {
+      id: editing, ...newPosition, title: get('story-title').value, body: get('story-body').value,
+    });
+    if (response?.ok) closeDialog(dialog);
+  };
+  get('story-delete').onclick = async () => {
+    if (confirm('Удалить заметку и её связи?') && (await dispatch('story:remove', { id: editing }))?.ok) closeDialog(dialog);
+  };
+  get('story-links').onclick = event => {
+    const id = event.target.closest('[data-story-unlink]')?.dataset.storyUnlink;
+    if (id) dispatch('story:unlink', { id });
+  };
+  document.querySelectorAll('[data-story-tool]').forEach(button => {
+    button.onclick = () => { tool = button.dataset.storyTool; source = null; updateControls(); };
+  });
+  cards.onclick = event => {
+    if (ignoreClick || tool !== 'move') return;
+    const card = event.target.closest('[data-story-note]');
+    if (!card) return;
+    const id = card.dataset.storyNote;
+    if (source) {
+      if (source === id) { source = null; updateControls(); }
+      else connect(source, id);
+    } else if (event.target.closest('.story-pin')) {
+      source = id;
+      updateControls();
+    } else if (event.target.closest('.story-note-title')) {
+      const note = getStory().notes.find(item => item.id === id);
+      if (note) edit(note);
+    }
+  };
+  viewport.addEventListener('dblclick', event => {
+    if (tool === 'move' && !event.target.closest('[data-story-note]')) edit(null, pointAt(event));
+  });
+  function eraseAt(event) {
+    const hit = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-story-stroke]');
+    if (!hit) return;
+    gesture.removed.add(hit.dataset.storyStroke);
+    hit.previousElementSibling.style.visibility = 'hidden';
+    hit.style.visibility = 'hidden';
+  }
+  function move(event) {
+    if (!gesture || event.pointerId !== gesture.pointerId) return;
+    const point = pointAt(event);
+    const dx = event.clientX - gesture.clientX, dy = event.clientY - gesture.clientY;
+    gesture.moved ||= Math.hypot(dx, dy) > 3;
+    if (gesture.kind === 'link' && gesture.moved) {
+      draftPath.setAttribute('class', 'story-rope-preview');
+      draftPath.setAttribute('d', ropePath(edgeOf(gesture.note, point), point));
+    }
+    if (gesture.kind === 'move' && gesture.moved) {
+      const { note, offset, card } = gesture;
+      gesture.position = { id: note.id, x: coordinate(point.x - offset.x), y: coordinate(point.y - offset.y) };
+      placeCard(card, gesture.position);
+      resizeWorld();
+      drawRopes();
+    }
+    if (gesture.kind === 'pan') viewport.scrollTo(gesture.left - dx, gesture.top - dy);
+    if (gesture.kind === 'pen' && gesture.points.length < 2000) {
+      const [lastX, lastY] = gesture.points.at(-1);
+      if (Math.hypot(point.x - lastX, point.y - lastY) >= 2) gesture.points.push([point.x, point.y]);
+      draftPath.setAttribute('d', drawStroke(gesture.points));
+    }
+    if (gesture.kind === 'eraser') eraseAt(event);
+  }
+  function finish(event, apply) {
+    if (!gesture || (event && event.pointerId !== gesture.pointerId)) return false;
+    const completed = gesture;
+    gesture = null;
+    completed.card?.classList.remove('moving');
+    if (completed.capture.hasPointerCapture(completed.pointerId)) completed.capture.releasePointerCapture(completed.pointerId);
+    draftPath.removeAttribute('d');
+    draftPath.removeAttribute('style');
+    draftPath.removeAttribute('class');
+    ignoreClick = completed.moved;
+    setTimeout(() => { ignoreClick = false; }, 0);
+    if (!apply) { lastRender = null; render(); return true; }
+    if (completed.kind === 'move' && completed.position) dispatch('story:move', completed.position).then(restoreOnFailure);
+    if (completed.kind === 'link' && completed.moved) {
+      const id = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-story-note]')?.dataset.storyNote;
+      if (id) connect(completed.id, id);
+    }
+    if (completed.kind === 'pen') dispatch('story:draw', { points: completed.points, width: completed.width, color: completed.color });
+    if (completed.kind === 'eraser' && completed.removed.size) dispatch('story:erase', { ids: [...completed.removed] }).then(restoreOnFailure);
+    render();
+    return true;
+  }
+  function restoreOnFailure(response) {
+    if (!response?.ok) { lastRender = null; render(); }
+  }
+  viewport.addEventListener('pointerdown', event => {
+    if (event.button !== 0 && event.button !== 1) return;
+    const card = event.target.closest('[data-story-note]');
+    const note = card && getStory().notes.find(item => item.id === card.dataset.storyNote);
+    if (event.button === 0 && card && (tool !== 'move' || (!event.target.closest('.story-pin, .story-note-title')))) return;
+    const point = pointAt(event);
+    const capture = card ? event.target : viewport;
+    const input = { capture, clientX: event.clientX, clientY: event.clientY, pointerId: event.pointerId, moved: false };
+    if (event.button === 1 || (tool === 'move' && !note)) {
+      gesture = { ...input, kind: 'pan', left: viewport.scrollLeft, top: viewport.scrollTop };
+    } else if (note) {
+      const kind = event.target.closest('.story-pin') ? 'link' : 'move';
+      gesture = { ...input, kind, id: note.id, note, card, offset: { x: point.x - note.x, y: point.y - note.y } };
+      if (kind === 'move') card.classList.add('moving');
+    } else if (tool === 'pen') {
+      const color = get('story-color').value, width = Number(get('story-width').value);
+      gesture = { ...input, kind: 'pen', points: [[point.x, point.y]], width, color };
+      draftPath.style.stroke = color;
+      draftPath.style.strokeWidth = width;
+      draftPath.setAttribute('d', drawStroke(gesture.points));
+    } else {
+      gesture = { ...input, kind: 'eraser', removed: new Set() };
+      eraseAt(event);
+    }
+    capture.setPointerCapture(event.pointerId);
+    if (!card) { event.preventDefault(); viewport.focus({ preventScroll: true }); }
+  });
+  viewport.addEventListener('pointermove', move);
+  viewport.addEventListener('pointerup', event => finish(event, true));
+  viewport.addEventListener('pointercancel', event => finish(event, false));
+  viewport.addEventListener('lostpointercapture', event => finish(event, false));
+  viewport.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    const canceled = finish(null, false) || !!source;
+    if (canceled) {
+      source = null;
+      event.stopPropagation();
+      event.preventDefault();
+      updateControls();
+    }
+  });
+  new ResizeObserver(() => { if (getStory() && viewport.clientWidth) resizeWorld(); }).observe(viewport);
+  return { render };
+}

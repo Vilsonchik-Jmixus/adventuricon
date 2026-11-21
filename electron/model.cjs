@@ -5,6 +5,8 @@ const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
 const finite = (n, fallback) => Number.isFinite(Number(n)) ? Number(n) : fallback;
 const text = (v, max = 120) => String(v ?? '').trim().slice(0, max);
 const newFog = (enabled = false) => ({ enabled, explored: [] });
+const newStory = () => ({ notes: [], links: [], strokes: [] });
+const storyCoordinate = n => clamp(Math.round(finite(n, 0)), 0, 12000);
 function newBattle(title = 'Первый бой') {
   return { id: randomUUID(), title, linkedMapId: null, combatants: [], round: 1, turn: null, acted: [], manualOrder: null, history: [] };
 }
@@ -18,7 +20,7 @@ function initialState() {
   const battle = newBattle(), board = newBoard(undefined, true);
   return {
     schema: 2, revision: 0, battles: [battle], boards: [board],
-    activeBattleId: battle.id, activeMapId: board.id, gallery: [], bookmarks: [], library: [],
+    activeBattleId: battle.id, activeMapId: board.id, gallery: [], bookmarks: [], library: [], story: newStory(),
     music: { folders: ['Общее', 'Бой', 'Атмосфера'], tracks: [], current: null, playing: false, volume: 0.55, loop: true },
     layout: { left: 32, middle: 34, top: 52, windows: {} }
   };
@@ -33,6 +35,7 @@ function migrateState(saved) {
     }
     return { ...saved, battles: saved.battles.map(restoreRound), bookmarks: Array.isArray(saved.bookmarks) ? saved.bookmarks : [],
       library: Array.isArray(saved.library) ? saved.library : [],
+      story: { ...newStory(), ...saved.story },
       boards: saved.boards.map(board => ({ terrain: [], fog: newFog(), ...board })) };
   }
   if (saved.schema !== 1 || !Array.isArray(saved.combatants) || !Array.isArray(saved.tokens) || !saved.map) {
@@ -43,7 +46,7 @@ function migrateState(saved) {
     combatants, round: round ?? 1, turn: turn ?? null, history: history ?? [] });
   const board = { ...newBoard('Текущая карта'), map, tokens };
   return {
-    ...base, schema: 2, gallery: gallery ?? [], bookmarks: [], library: [],
+    ...base, schema: 2, gallery: gallery ?? [], bookmarks: [], library: [], story: newStory(),
     battles: [battle], boards: [board], activeBattleId: battle.id, activeMapId: board.id
   };
 }
@@ -69,7 +72,7 @@ function activeView(state) {
   const placed = new Set(board.tokens.map(token => token.combatantId));
   const describe = c => ({ ...c, role: roleOf(c.role), initiativeBonus: c.initiativeBonus ?? 0, effects: effectsFor(c) });
   return {
-    revision: state.revision, music: state.music, layout: state.layout, gallery: state.gallery, bookmarks: state.bookmarks, library: state.library,
+    revision: state.revision, music: state.music, layout: state.layout, gallery: state.gallery, bookmarks: state.bookmarks, library: state.library, story: state.story,
     activeBattleId: battle.id, activeMapId: board.id,
     battleChoices: state.battles.map(({ id, title, linkedMapId }) => ({ id, title, linkedMapId })),
     mapChoices: state.boards.map(({ id, title }) => ({ id, title })),
@@ -417,6 +420,52 @@ function reducer(state, action) {
     case 'gallery:remove':
       s.gallery = s.gallery.filter(item => item.id !== p.id);
       break;
+    case 'story:save': {
+      const fields = { title: text(p.title) || 'Без названия', body: String(p.body ?? '').slice(0, 20000) };
+      if (p.id) {
+        const note = s.story.notes.find(item => item.id === p.id);
+        if (!note) throw new Error('Заметка уже удалена');
+        Object.assign(note, fields);
+      } else {
+        s.story.notes.push({ id: randomUUID(), ...fields, x: storyCoordinate(p.x), y: storyCoordinate(p.y) });
+      }
+      break;
+    }
+    case 'story:move': {
+      const note = s.story.notes.find(item => item.id === p.id);
+      if (note) Object.assign(note, { x: storyCoordinate(p.x), y: storyCoordinate(p.y) });
+      break;
+    }
+    case 'story:remove':
+      s.story.notes = s.story.notes.filter(note => note.id !== p.id);
+      s.story.links = s.story.links.filter(link => link.from !== p.id && link.to !== p.id);
+      break;
+    case 'story:link': {
+      const { from, to } = p;
+      if (from === to || !s.story.notes.some(note => note.id === from) || !s.story.notes.some(note => note.id === to)) {
+        throw new Error('Выбери две разные заметки');
+      }
+      if (!s.story.links.some(link => link.from === from && link.to === to || link.from === to && link.to === from)) {
+        s.story.links.push({ id: randomUUID(), from, to });
+      }
+      break;
+    }
+    case 'story:unlink':
+      s.story.links = s.story.links.filter(link => link.id !== p.id);
+      break;
+    case 'story:draw': {
+      const points = Array.isArray(p.points) ? p.points.slice(0, 2000)
+        .filter(point => Array.isArray(point) && point.length === 2 && point.every(Number.isFinite))
+        .map(point => point.map(storyCoordinate)) : [];
+      if (points.length) s.story.strokes.push({ id: randomUUID(), points,
+        color: /^#[a-f0-9]{6}$/i.test(p.color) ? p.color : '#dfad77', width: clamp(finite(p.width, 3), 1, 18) });
+      break;
+    }
+    case 'story:erase': {
+      const ids = new Set(Array.isArray(p.ids) ? p.ids : []);
+      s.story.strokes = s.story.strokes.filter(stroke => !ids.has(stroke.id));
+      break;
+    }
     case 'bookmark:add':
       if (!s.bookmarks.some(item => item.url === p.url)) {
         s.bookmarks.unshift({ id: randomUUID(), title: text(p.title) || p.url, url: p.url, tab: p.tab });
