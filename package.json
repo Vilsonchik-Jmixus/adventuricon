@@ -72,6 +72,12 @@
       "maintainer": "Vilsonchik-Jmixus",
       "icon": "ui/assets/icon.png"
     },
+    "appImage": {
+      "executableArgs": ["--disable-setuid-sandbox"]
+    },
+    "deb": {
+      "recommends": ["ffmpeg"]
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,

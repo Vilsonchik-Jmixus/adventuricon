@@ -54,6 +54,13 @@ jobs:
           node tests/desktop-smoke.cjs
           node tests/map-window-smoke.cjs
           node tests/welcome-smoke.cjs
+      - name: Install native Debian packager
+        if: matrix.platform == 'linux' && matrix.arch == 'arm64'
+        shell: bash
+        run: |
+          sudo gem install fpm --version 1.17.0 --no-document
+          command -v fpm
+          echo 'USE_SYSTEM_FPM=true' >> "$GITHUB_ENV"
       - name: Build installers
         run: npm run build -- --${{ matrix.platform }} --${{ matrix.arch }}
       - name: Verify packaged Linux desktop
@@ -72,6 +79,8 @@ jobs:
       - name: Verify packaged macOS desktop
         if: runner.os == 'macOS'
         shell: bash
+        env:
+          DEBUG: pw:browser
         run: |
           app="$(find "$PWD/dist" -maxdepth 2 -type d -name '*.app' -print -quit)"
           codesign --verify --deep --strict "$app"

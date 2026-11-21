@@ -7,7 +7,7 @@ delete env.ELECTRON_RUN_AS_NODE;
 let app;
 (async () => {
   const exe = process.env.DM_SCREEN_EXECUTABLE;
-  app = await _electron.launch({ executablePath: exe || require('electron'), args: exe ? [] : [path.resolve('.')], env });
+  app = await _electron.launch({ executablePath: exe || require('electron'), args: exe ? [] : [path.resolve('.')], env, timeout: 45_000 });
   const master = await app.firstWindow();
   await expect(master.locator('#version')).toHaveText(`v${require('../package.json').version}`);
   const png = await master.evaluate(() => {

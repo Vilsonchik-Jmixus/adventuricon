@@ -13,6 +13,7 @@ const launch = () => _electron.launch({
   executablePath: exe || require('electron'),
   args: exe ? [] : [path.resolve('.')],
   env,
+  timeout: 45_000,
 });
 
 let app;

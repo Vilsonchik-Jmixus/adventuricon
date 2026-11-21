@@ -10,8 +10,10 @@ const { DND_HOME, WEB_HOME, GEMINI, REFERENCE_LINKS, safeUrl, searchUrl } = requ
 const { autoUpdater } = require('electron-updater');
 const TEST = process.env.DM_SCREEN_TEST === '1';
 const mac = process.platform === 'darwin';
-const canAutoUpdate = process.platform === 'win32' || (process.platform === 'linux' && !!process.env.APPIMAGE);
+const appImage = process.platform === 'linux' && !!process.env.APPIMAGE;
+const canAutoUpdate = process.platform === 'win32' || appImage;
 const releasesUrl = 'https://github.com/Vilsonchik-Jmixus/interactive-dm-screen/releases/latest';
+if (appImage) app.commandLine.appendSwitch('disable-setuid-sandbox');
 if (process.env.DM_SCREEN_DATA) app.setPath('userData', process.env.DM_SCREEN_DATA);
 protocol.registerSchemesAsPrivileged([{ scheme: 'dm', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 const PANELS = ['combat', 'music', 'map', 'info', 'characters'];
