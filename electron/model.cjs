@@ -1,4 +1,5 @@
-const { randomUUID } = require('node:crypto');
+const { randomUUID, randomInt } = require('node:crypto');
+const { roleOf, effectsFor, MANUAL_IDS } = require('./combat-rules.cjs');
 const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
 const finite = (n, fallback) => Number.isFinite(Number(n)) ? Number(n) : fallback;
 const text = (v, max = 120) => String(v ?? '').trim().slice(0, max);
@@ -15,7 +16,7 @@ function initialState() {
   const battle = newBattle(), board = newBoard(undefined, true);
   return {
     schema: 2, revision: 0, battles: [battle], boards: [board],
-    activeBattleId: battle.id, activeMapId: board.id, gallery: [],
+    activeBattleId: battle.id, activeMapId: board.id, gallery: [], bookmarks: [],
     music: { folders: ['Общее', 'Бой', 'Атмосфера'], tracks: [], current: null, playing: false, volume: 0.55, loop: true },
     layout: { left: 32, middle: 34, top: 52, windows: {} }
   };
@@ -28,7 +29,7 @@ function migrateState(saved) {
         !saved.boards.some(board => board.id === saved.activeMapId)) {
       throw new Error('Бои или карты повреждены');
     }
-    return saved;
+    return { ...saved, bookmarks: Array.isArray(saved.bookmarks) ? saved.bookmarks : [] };
   }
   if (saved.schema !== 1 || !Array.isArray(saved.combatants) || !Array.isArray(saved.tokens) || !saved.map) {
     throw new Error('Неверный формат сохранения');
@@ -37,7 +38,7 @@ function migrateState(saved) {
   const battle = { ...newBattle('Текущий бой'), combatants, round: round ?? 1, turn: turn ?? null, history: history ?? [] };
   const board = { ...newBoard('Текущая карта'), map, tokens };
   return {
-    ...base, schema: 2, gallery: gallery ?? [],
+    ...base, schema: 2, gallery: gallery ?? [], bookmarks: [],
     battles: [battle], boards: [board], activeBattleId: battle.id, activeMapId: board.id
   };
 }
@@ -45,14 +46,15 @@ function activeView(state) {
   const battle = state.battles.find(entry => entry.id === state.activeBattleId);
   const board = state.boards.find(entry => entry.id === state.activeMapId);
   const placed = new Set(board.tokens.map(token => token.combatantId));
+  const describe = c => ({ ...c, role: roleOf(c.role), initiativeBonus: c.initiativeBonus ?? 0, effects: effectsFor(c) });
   return {
-    revision: state.revision, music: state.music, layout: state.layout, gallery: state.gallery,
+    revision: state.revision, music: state.music, layout: state.layout, gallery: state.gallery, bookmarks: state.bookmarks,
     activeBattleId: battle.id, activeMapId: board.id,
     battleChoices: state.battles.map(({ id, title, linkedMapId }) => ({ id, title, linkedMapId })),
     mapChoices: state.boards.map(({ id, title }) => ({ id, title })),
-    combatants: battle.combatants, round: battle.round, turn: battle.turn, history: battle.history,
+    combatants: battle.combatants.map(describe), round: battle.round, turn: battle.turn, history: battle.history,
     map: board.map, tokens: board.tokens,
-    mapCombatants: state.battles.flatMap(entry => entry.combatants.filter(c => placed.has(c.id)))
+    mapCombatants: state.battles.flatMap(entry => entry.combatants.filter(c => placed.has(c.id)).map(describe))
   };
 }
 function hpValue(current, max, expression) {
@@ -68,6 +70,10 @@ function cellAt(map, x, y) {
 function rememberHealth(battle, combatant) {
   battle.history.push({ id: combatant.id, hp: combatant.hp, maxHp: combatant.maxHp });
   battle.history = battle.history.slice(-50);
+}
+const initiativeBonus = (value, fallback = 0) => clamp(Math.round(finite(value, fallback)), -50, 50);
+function copyCombatant(c, name = c.name) {
+  return { ...c, id: randomUUID(), name, hp: c.maxHp, conditions: [], exhaustion: 0, initiativeRoll: null };
 }
 function reducer(state, action) {
   const s = structuredClone(state), p = action.payload || {};
@@ -102,7 +108,7 @@ function reducer(state, action) {
     case 'battle:duplicate': {
       const next = newBattle(text(p.title) || (battle.title + ' · копия'));
       next.linkedMapId = battle.linkedMapId;
-      next.combatants = battle.combatants.map(c => ({ ...c, id: randomUUID(), hp: c.maxHp }));
+      next.combatants = battle.combatants.map(c => copyCombatant(c));
       s.battles.push(next);
       s.activeBattleId = next.id;
       if (next.linkedMapId) s.activeMapId = next.linkedMapId;
@@ -150,23 +156,30 @@ function reducer(state, action) {
     }
     case 'combatant:add': {
       const maxHp = clamp(Math.round(finite(p.maxHp, 10)), 1, 999999);
-      battle.combatants.push({ id: randomUUID(), name: text(p.name) || 'Безымянный', image: text(p.image, 100) || null, maxHp, hp: maxHp, initiative: clamp(Math.round(finite(p.initiative, 0)), -100, 1000) });
+      battle.combatants.push({
+        id: randomUUID(), name: text(p.name) || 'Безымянный', image: text(p.image, 100) || null,
+        maxHp, hp: maxHp, initiative: clamp(Math.round(finite(p.initiative, 0)), -100, 1000),
+        role: roleOf(p.role), initiativeBonus: initiativeBonus(p.initiativeBonus), conditions: [], exhaustion: 0
+      });
       break;
     }
     case 'combatant:duplicate': {
       const c = battle.combatants.find(c => c.id === p.id); if (!c) break;
-      battle.combatants.push({ ...c, id: randomUUID(), name: `${c.name} · копия`, hp: c.maxHp }); break;
+      battle.combatants.push(copyCombatant(c, `${c.name} · копия`)); break;
     }
     case 'combatant:edit': {
       const c = battle.combatants.find(c => c.id === p.id);
       if (!c) throw new Error('Участник уже удалён');
       const maxHp = clamp(Math.round(finite(p.maxHp, c.maxHp)), 1, 999999);
       const hp = clamp(Math.round(finite(p.hp, c.hp)), 0, maxHp);
+      const initiative = clamp(Math.round(finite(p.initiative, c.initiative)), -100, 1000);
+      const bonus = initiativeBonus(p.initiativeBonus, c.initiativeBonus ?? 0);
       if (hp !== c.hp || maxHp !== c.maxHp) rememberHealth(battle, c);
       Object.assign(c, {
         name: text(p.name) || c.name,
         image: 'image' in p ? text(p.image, 100) || null : c.image,
-        initiative: clamp(Math.round(finite(p.initiative, c.initiative)), -100, 1000),
+        initiativeRoll: initiative === c.initiative && bonus === (c.initiativeBonus ?? 0) ? c.initiativeRoll : null,
+        initiative, initiativeBonus: bonus, role: 'role' in p ? roleOf(p.role) : roleOf(c.role),
         hp, maxHp
       });
       break;
@@ -188,6 +201,26 @@ function reducer(state, action) {
       if (c) {
         c.maxHp = previous.maxHp ?? c.maxHp;
         c.hp = clamp(previous.hp, 0, c.maxHp);
+      }
+      break;
+    }
+    case 'combatant:conditions': {
+      const c = battle.combatants.find(c => c.id === p.id);
+      if (!c) throw new Error('Участник уже удалён');
+      c.conditions = [...new Set(Array.isArray(p.conditions) ? p.conditions.filter(id => MANUAL_IDS.has(id)) : [])];
+      c.exhaustion = clamp(Math.round(finite(p.exhaustion, 0)), 0, 6);
+      break;
+    }
+    case 'combat:roll-initiative': {
+      const candidates = battle.combatants.filter(c => {
+        const role = roleOf(c.role);
+        return role !== 'player' && (p.id ? c.id === p.id : p.role === role);
+      });
+      if (!candidates.length) throw new Error('Нет участников для броска');
+      for (const c of candidates) {
+        const die = randomInt(1, 21), bonus = c.initiativeBonus ?? 0;
+        c.initiative = die + bonus;
+        c.initiativeRoll = { die, bonus };
       }
       break;
     }
@@ -214,6 +247,7 @@ function reducer(state, action) {
         if (key in p) board.map[key] = clamp(finite(p[key], board.map[key]), min, max);
       if (typeof p.visible === 'boolean') board.map.visible = p.visible;
       if (typeof p.playerHealth === 'boolean') board.map.playerHealth = p.playerHealth;
+      if (['fit', 'fill', 'follow'].includes(p.playerFit)) board.map.playerFit = p.playerFit;
       if (/^#[0-9a-f]{6}$/i.test(p.color)) board.map.color = p.color;
       break;
     case 'map:image': board.map.image = text(p.image, 100) || null; break;
@@ -227,6 +261,15 @@ function reducer(state, action) {
     }
     case 'gallery:remove':
       s.gallery = s.gallery.filter(item => item.id !== p.id);
+      break;
+    case 'bookmark:add':
+      if (!s.bookmarks.some(item => item.url === p.url)) {
+        s.bookmarks.unshift({ id: randomUUID(), title: text(p.title) || p.url, url: p.url, tab: p.tab });
+        s.bookmarks = s.bookmarks.slice(0, 150);
+      }
+      break;
+    case 'bookmark:remove':
+      s.bookmarks = s.bookmarks.filter(item => item.id !== p.id);
       break;
     case 'music:folder': {
       const name = text(p.name, 50); if (name && !s.music.folders.includes(name)) s.music.folders.push(name); break;

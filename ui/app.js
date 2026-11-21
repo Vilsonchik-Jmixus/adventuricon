@@ -9,6 +9,8 @@ let toastTimer, textSubmit, draggingToken = false, animating = false, musicBusy 
 let mapCamera = null, previewToken = null, pendingMapFrame = 0;
 let restoreMapCamera = false, cancelTokenDrag = null;
 let playerBlackout = false;
+let combatRoles = {}, conditionDefinitions = [], conditionEdit, initiativeContext;
+let reference = { tab: 'info', pages: {} };
 let presentation = null, recentImages = [], galleryOpen = false, selectedImage = null, previewImage = null;
 const assetURL = name => `dm://app/assets/${encodeURIComponent(name)}`;
 const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -24,20 +26,54 @@ function combatPortrait(c) {
   if (!c.image) return avatar(c);
   return `<button class="portrait-button" data-preview-portrait="${c.id}" title="Открыть портрет" aria-label="Открыть портрет: ${escapeHTML(c.name)}">${avatar(c)}</button>`;
 }
+function conditionChips(actor, compact = false) {
+  return actor.effects.map(effect => `<span class="condition-chip" data-condition="${effect.id}" title="${escapeHTML(effect.name)}">
+    ${escapeHTML(compact ? effect.badge : effect.name)}
+  </span>`).join('');
+}
+function rollText(c) {
+  const roll = c.initiativeRoll;
+  if (!roll) return '';
+  return `d20 ${roll.die} ${roll.bonus >= 0 ? '+' : '−'} ${Math.abs(roll.bonus)} = ${c.initiative}`;
+}
+function combatCard(c, draft, placed) {
+  const details = [combatRoles[c.role], `Инициатива ${c.initiative}`, rollText(c), state.turn === c.id && 'Ходит сейчас'].filter(Boolean);
+  return `<article class="combat-card ${state.turn === c.id ? 'active-turn' : ''} ${c.hp === 0 ? 'dead' : ''}" data-id="${c.id}">
+    <div class="combat-main">${combatPortrait(c)}<div class="combat-details">
+      <strong class="combat-name">${escapeHTML(c.name)}</strong>
+      <div class="combat-meta" title="${escapeHTML(details.join(' · '))}">${escapeHTML(details.join(' · '))}</div>
+    </div><button type="button" class="hp-readout" data-edit="${c.id}" title="Изменить ХП">${c.hp}<small> / ${c.maxHp}</small></button></div>
+    <div class="hp-bar"><div style="width:${c.hp / c.maxHp * 100}%"></div></div>
+    <div class="combat-bottom">
+      <form class="hp-form" data-id="${c.id}"><input aria-label="Изменение ХП ${escapeHTML(c.name)}" placeholder="−7 / +5" value="${escapeHTML(draft || '')}" maxlength="12"><button title="Применить ХП">↵</button></form>
+      <button class="to-map" ${placed ? `data-token-focus="${c.id}" title="Показать жетон на карте"` : `data-token-add="${c.id}"`}>${placed ? '✓ На карте' : '◇ На карту'}</button>
+      <button class="card-menu condition-button" data-conditions="${c.id}" title="Состояния" aria-label="Состояния ${escapeHTML(c.name)}">◆</button>
+      ${c.role !== 'player' ? `<button class="card-menu initiative-icon" data-roll-actor="${c.id}" title="Бросить инициативу" aria-label="Бросить инициативу ${escapeHTML(c.name)}">d20</button>` : ''}
+      <button class="card-menu" data-edit="${c.id}" title="Редактировать участника" aria-label="Редактировать участника">✎</button>
+      <button class="card-menu" data-duplicate="${c.id}" title="Дублировать">⧉</button>
+      <button class="card-menu" data-remove="${c.id}" title="Удалить">×</button>
+    </div>
+    ${c.effects.length ? `<div class="card-conditions">${conditionChips(c)}</div>` : ''}
+  </article>`;
+}
 function renderCombat() {
   $('combat-count').textContent = state.combatants.length;
   $('round').textContent = `Раунд ${state.round}`;
   $('undo-hp').disabled = !state.history.length;
   $('next-turn').disabled = !state.combatants.length;
+  $('roll-initiative').disabled = !state.combatants.some(c => c.role !== 'player');
   // Preserve unfinished HP input across changes arriving from another window.
   const drafts = new Map([...document.querySelectorAll('.hp-form input')].map(el => [el.closest('form').dataset.id, el.value]));
   const focused = document.activeElement?.closest('.hp-form')?.dataset.id;
   const order = [...state.combatants].sort((a, b) => b.initiative - a.initiative);
-  $('combat-list').innerHTML = order.length ? order.map(c => `<article class="combat-card ${state.turn === c.id ? 'active-turn' : ''} ${c.hp === 0 ? 'dead' : ''}" data-id="${c.id}"><div class="combat-main">${combatPortrait(c)}<div class="combat-details"><strong class="combat-name">${escapeHTML(c.name)}</strong><div class="combat-meta">Инициатива ${c.initiative}${state.turn === c.id ? ' · Ходит сейчас' : ''}</div></div><button type="button" class="hp-readout" data-edit="${c.id}" title="Изменить текущие и максимальные ХП">${c.hp}<small> / ${c.maxHp}</small></button></div><div class="hp-bar"><div style="width:${c.hp / c.maxHp * 100}%"></div></div><div class="combat-bottom"><form class="hp-form" data-id="${c.id}"><input aria-label="Изменение ХП ${escapeHTML(c.name)}" placeholder="−7 / +5" value="${escapeHTML(drafts.get(c.id) || '')}" maxlength="12"><button title="Применить ХП">↵</button></form><button class="to-map" ${state.tokens.some(t => t.combatantId === c.id) ? `data-token-focus="${c.id}" title="Показать жетон на карте"` : `data-token-add="${c.id}"`}>${state.tokens.some(t => t.combatantId === c.id) ? '✓ На карте' : '◇ На карту'}</button><button class="card-menu" data-edit="${c.id}" title="Редактировать участника" aria-label="Редактировать участника">✎</button><button class="card-menu" data-duplicate="${c.id}" title="Дублировать">⧉</button><button class="card-menu" data-remove="${c.id}" title="Удалить">×</button></div></article>`).join('') : '<div class="empty-state"><span class="empty-symbol">⚔</span><strong>Бойцов пока нет</strong></div>';
+  const placed = new Set(state.tokens.map(t => t.combatantId));
+  const empty = '<div class="empty-state"><span class="empty-symbol">⚔</span><strong>Бойцов пока нет</strong></div>';
+  $('combat-list').innerHTML = order.length ? order.map(c => combatCard(c, drafts.get(c.id), placed.has(c.id))).join('') : empty;
   if (focused) document.querySelector(`.hp-form[data-id="${focused}"] input`)?.focus();
+  if ($('initiative-dialog').open) renderInitiative();
 }
 function renderMap() {
-  const m = state.map, zoom = m.zoom;
+  const m = state.map, zoom = mapDrawingZoom();
   const img = $('map-image');
   const src = m.image ? assetURL(m.image) : m.demo === false ? null : new URL('assets/demo-map.svg', location.href).href;
   if (src && img.src !== src) {
@@ -55,13 +91,17 @@ function renderMap() {
   world.style.setProperty('--grid-opacity', m.visible ? m.opacity : 0);
   $('zoom-label').textContent = `${Math.round(zoom * 100)}%`;
   $('token-count').textContent = state.tokens.length;
-  document.body.classList.toggle('players-see-health', !!m.playerHealth);
   $('player-settings').hidden = !!detachedPanel || !detached.includes('map');
   if (draggingToken) return;
   const actors = new Map(state.mapCombatants.map(actor => [actor.id, actor]));
   $('map-tokens').innerHTML = state.tokens.map(t => {
     const c = actors.get(t.combatantId); if (!c) return '';
-    return `<button class="token ${c.hp === 0 ? 'dead' : ''} ${state.turn === c.id ? 'active-turn' : ''}" data-token="${c.id}" title="${escapeHTML(c.name)} · ${c.hp}/${c.maxHp} ХП. Двойное нажатие: убрать" style="left:${(m.offsetX + t.col * m.grid) * zoom}px;top:${(m.offsetY + t.row * m.grid) * zoom}px">${avatar(c, 'token-body')}<span class="token-hp">${c.hp}/${c.maxHp}</span></button>`;
+    const hp = Number.isFinite(c.hp) ? `${c.hp}/${c.maxHp}` : '';
+    const details = [c.name, hp && `${hp} ХП`, ...c.effects.map(effect => effect.name)].filter(Boolean).join(' · ');
+    return `<button class="token ${c.hp === 0 ? 'dead' : ''} ${state.turn === c.id ? 'active-turn' : ''}" data-token="${c.id}" title="${escapeHTML(details)}" style="left:${(m.offsetX + t.col * m.grid) * zoom}px;top:${(m.offsetY + t.row * m.grid) * zoom}px">
+      ${avatar(c, 'token-body')}${hp ? `<span class="token-hp">${hp}</span>` : ''}
+      ${c.effects.length ? `<span class="token-conditions">${conditionChips(c, true)}</span>` : ''}
+    </button>`;
   }).join('');
   if (restoreMapCamera && img.complete) {
     restoreMapCamera = false;
@@ -71,7 +111,15 @@ function renderMap() {
     );
     if (!isPlayerMap) queueMapCamera();
   }
-  if (isPlayerMap) paintPlayerMap();
+  if (isPlayerMap) {
+    const unique = new Map(state.mapCombatants.flatMap(c => c.effects.map(effect => [effect.badge, effect.name])));
+    const legend = $('map-condition-legend');
+    const content = [...unique].filter(([badge, name]) => badge !== name)
+      .map(([badge, name]) => `<span><b>${escapeHTML(badge)}</b> ${escapeHTML(name)}</span>`).join('');
+    legend.hidden = !content;
+    legend.innerHTML = content;
+    paintPlayerMap();
+  }
 }
 function renderMusic() {
   if (!state.music.folders.includes(currentFolder)) currentFolder = state.music.folders[0];
@@ -108,6 +156,7 @@ function renderAll() {
     return;
   }
   renderLayout(); renderSlots(); renderCombat(); renderMap(); renderMusic(); renderPresentation();
+  if ($('bookmarks-dialog').open) renderBookmarks();
   if (galleryOpen) renderGallery();
   requestAnimationFrame(syncRemoteBounds);
 }
@@ -115,11 +164,50 @@ function syncRemoteBounds() {
   const modal = !!document.querySelector('dialog[open]');
   document.querySelectorAll('[data-remote-surface]').forEach(el => {
     const panel = el.closest('.panel'); const rect = el.getBoundingClientRect();
-    const visible = !modal && !animating && !el.closest('[hidden]') && !panel.classList.contains('is-detached') &&
+    const failed = reference.pages[el.dataset.remoteSurface]?.failed;
+    const visible = !failed && !modal && !animating && !el.closest('[hidden]') && !panel.classList.contains('is-detached') &&
       (!expanded || panel.dataset.panel === expanded);
     api.remoteBounds(el.dataset.remoteSurface, visible ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null);
   });
 }
+function renderReference() {
+  const { tab, pages } = reference;
+  for (const button of document.querySelectorAll('[data-reference-tab]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.referenceTab === tab));
+  }
+  $('rules-surface').hidden = tab !== 'info';
+  $('web-surface').hidden = tab !== 'web';
+  $('reference-links').hidden = tab !== 'info';
+  $('reference-query').placeholder = tab === 'info' ? 'Поиск по dnd.su' : 'Веб-поиск или HTTPS-адрес';
+  const page = pages[tab];
+  document.querySelector('[data-reference-nav="back"]').disabled = !page?.canBack;
+  document.querySelector('[data-reference-nav="forward"]').disabled = !page?.canForward;
+  $('reference-query').title = page?.url || '';
+  const message = document.querySelector(`[data-reference-message="${tab}"]`);
+  message.textContent = page?.failed ? 'Страница недоступна. Обнови её или открой в браузере.' : tab === 'info' ? 'Справочник dnd.su' : 'Поиск в интернете';
+  $('save-bookmark').disabled = !page?.bookmarkable;
+  syncRemoteBounds();
+}
+function renderBookmarks() {
+  $('bookmarks-empty').hidden = !!state.bookmarks.length;
+  $('bookmarks-list').innerHTML = state.bookmarks.map(item => `<div class="bookmark-row">
+    <button type="button" class="quiet" data-bookmark="${item.id}" title="${escapeHTML(item.url)}">${escapeHTML(item.title)}</button>
+    <button type="button" class="quiet" data-remove-bookmark="${item.id}" aria-label="Удалить закладку: ${escapeHTML(item.title)}">×</button>
+  </div>`).join('');
+}
+$('reference-form').onsubmit = async event => {
+  event.preventDefault();
+  const field = $('reference-query');
+  if (field.value.trim()) await result(api.referenceAction('search', field.value));
+};
+$('open-bookmarks').onclick = () => { renderBookmarks(); openDialog('bookmarks-dialog'); };
+$('save-bookmark').onclick = async () => {
+  if ((await result(api.referenceAction('save-bookmark')))?.ok) toast('Страница в закладках');
+};
+$('open-gemini').onclick = async () => {
+  const response = await result(api.referenceAction('gemini', $('reference-query').value));
+  if (response?.copied) toast('Вопрос скопирован. Вставь его в Gemini.');
+};
 async function expandPanel(id) {
   if (detachedPanel) return result(api.fullscreen());
   const panel = document.querySelector(`[data-panel="${id}"]`), before = panel.getBoundingClientRect();
@@ -212,6 +300,17 @@ document.addEventListener('click', async e => {
   else if (button.dataset.focus) await result(api.detach(button.dataset.focus));
   else if (button.dataset.expand) await expandPanel(button.dataset.expand);
   else if (button.dataset.remote) { const [id, action] = button.dataset.remote.split(':'); await result(api.remoteAction(id, action)); }
+  else if (button.dataset.referenceNav) await result(api.referenceAction(button.dataset.referenceNav));
+  else if (button.dataset.referenceTab) await result(api.referenceAction('tab', button.dataset.referenceTab));
+  else if (button.dataset.referenceLink) await result(api.referenceAction('shortcut', button.dataset.referenceLink));
+  else if (button.dataset.bookmark) {
+    closeDialog($('bookmarks-dialog'));
+    await result(api.referenceAction('bookmark', button.dataset.bookmark));
+  }
+  else if (button.dataset.removeBookmark) await result(api.referenceAction('remove-bookmark', button.dataset.removeBookmark));
+  else if (button.dataset.conditions) openConditions(button.dataset.conditions);
+  else if (button.dataset.rollActor) await dispatch('combat:roll-initiative', { id: button.dataset.rollActor });
+  else if (button.dataset.rollRole) await dispatch('combat:roll-initiative', { role: button.dataset.rollRole }, initiativeContext);
   else if (button.dataset.previewPortrait) showImagePreview({ source: 'portrait', id: button.dataset.previewPortrait });
   else if (button.dataset.galleryId !== undefined) {
     selectedImage = button.dataset.galleryId; renderGallery();
@@ -334,6 +433,8 @@ function openCombatantEditor(combatant) {
   editingCombatant = combatant?.id ?? null;
   editingContext = currentContext();
   portrait = combatant?.image ?? null;
+  form.elements.role.value = combatant?.role ?? 'enemy';
+  form.elements.initiativeBonus.value = combatant?.initiativeBonus ?? 0;
   $('editor-title').textContent = combatant ? 'Редактировать участника' : 'Добавить участника';
   $('editor-submit').textContent = combatant ? 'Сохранить' : 'Добавить в трекер';
   $('current-hp-field').hidden = !combatant;
@@ -349,7 +450,10 @@ $('add-combatant').onclick = () => openCombatantEditor();
 $('choose-portrait').onclick = async () => { const r = await result(api.importFile('image')); if (r?.asset) { portrait = r.asset; $('portrait-preview').innerHTML = `<img src="${assetURL(portrait)}" alt="Портрет">`; } };
 $('combatant-form').onsubmit = async e => {
   e.preventDefault(); const f = new FormData(e.target);
-  const payload = { name: f.get('name'), maxHp: Number(f.get('maxHp')), initiative: Number(f.get('initiative')), image: portrait };
+  const payload = {
+    name: f.get('name'), maxHp: Number(f.get('maxHp')), initiative: Number(f.get('initiative')),
+    initiativeBonus: Number(f.get('initiativeBonus')), role: f.get('role'), image: portrait
+  };
   if (editingCombatant) Object.assign(payload, { id: editingCombatant, hp: Number(f.get('hp')) });
   const r = await dispatch(editingCombatant ? 'combatant:edit' : 'combatant:add', payload, editingContext);
   if (r?.ok) closeDialog($('editor'));
@@ -361,6 +465,47 @@ $('combat-list').addEventListener('submit', async e => {
   if (!r?.ok) { input.value = expression; renderCombat(); }
 });
 $('next-turn').onclick = () => dispatch('combat:next');
+function renderInitiative() {
+  for (const button of document.querySelectorAll('[data-roll-role]')) {
+    button.disabled = !state.combatants.some(c => c.role === button.dataset.rollRole);
+  }
+  $('initiative-results').innerHTML = state.combatants
+    .filter(c => c.initiativeRoll)
+    .sort((a, b) => b.initiative - a.initiative)
+    .map(c => `<div><strong>${escapeHTML(c.name)}</strong><span>${escapeHTML(rollText(c))}</span></div>`).join('');
+}
+$('roll-initiative').onclick = () => {
+  initiativeContext = currentContext();
+  renderInitiative();
+  openDialog('initiative-dialog');
+};
+function openConditions(id) {
+  const actor = state.combatants.find(c => c.id === id);
+  if (!actor) return;
+  conditionEdit = { id, context: currentContext() };
+  $('condition-actor').textContent = actor.name;
+  $('auto-unconscious').hidden = actor.hp !== 0;
+  $('exhaustion-level').value = actor.exhaustion ?? 0;
+  const selected = new Set(actor.conditions ?? []);
+  $('condition-list').innerHTML = conditionDefinitions.filter(effect => effect.id !== 'exhaustion').map(effect =>
+    `<label class="checkbox-label"><input type="checkbox" name="condition" value="${effect.id}" ${selected.has(effect.id) ? 'checked' : ''}> ${escapeHTML(effect.name)}</label>`
+  ).join('');
+  openDialog('condition-dialog');
+}
+$('condition-form').onsubmit = async event => {
+  event.preventDefault();
+  const data = new FormData(event.target);
+  const response = await dispatch('combatant:conditions', {
+    id: conditionEdit.id, conditions: data.getAll('condition'), exhaustion: Number($('exhaustion-level').value)
+  }, conditionEdit.context);
+  if (response?.ok) closeDialog($('condition-dialog'));
+};
+$('map-tokens').addEventListener('contextmenu', event => {
+  const token = event.target.closest('[data-token]');
+  if (isPlayerMap || !token) return;
+  event.preventDefault();
+  openConditions(token.dataset.token);
+});
 $('undo-hp').onclick = () => dispatch('combatant:undo');
 $('import-map').onclick = () => loadMap(api.importFile('image'));
 $('paste-map').onclick = () => loadMap(api.pasteImage());
@@ -392,15 +537,42 @@ function queueMapCamera() {
 }
 function paintPlayerMap() {
   if (!state) return;
-  const zoom = state.map.zoom;
-  if (mapCamera) viewport.scrollTo(mapCamera.x * zoom - viewport.clientWidth / 2, mapCamera.y * zoom - viewport.clientHeight / 2);
+  const zoom = mapDrawingZoom();
+  const fitted = fitPlayerMap();
+  if (!fitted && mapCamera) viewport.scrollTo(mapCamera.x * zoom - viewport.clientWidth / 2, mapCamera.y * zoom - viewport.clientHeight / 2);
   if (!previewToken) return;
   const token = [...$('map-tokens').children].find(button => button.dataset.token === previewToken.id);
-  if (token) positionToken(token, state.map, previewToken.col, previewToken.row);
+  if (token) positionToken(token, state.map, previewToken.col, previewToken.row, zoom);
 }
-function positionToken(token, map, col, row) {
-  token.style.left = `${(map.offsetX + col * map.grid) * map.zoom}px`;
-  token.style.top = `${(map.offsetY + row * map.grid) * map.zoom}px`;
+function mapDrawingZoom() {
+  const fitted = isPlayerMap && document.body.classList.contains('player-fullscreen') && state.map.playerFit !== 'follow';
+  return fitted ? 1 : state.map.zoom;
+}
+function fitPlayerMap() {
+  const img = $('map-image'), world = $('map-world');
+  const mode = state.map.playerFit ?? 'fit';
+  const enabled = document.body.classList.contains('player-fullscreen') &&
+    mode !== 'follow' && img.complete && img.naturalWidth > 0 && viewport.clientWidth > 0 && viewport.clientHeight > 0;
+  viewport.classList.toggle('fit-player-map', enabled);
+  if (!enabled) {
+    world.style.transform = '';
+    return false;
+  }
+  const width = img.naturalWidth, height = img.naturalHeight;
+  const x = viewport.clientWidth / width, y = viewport.clientHeight / height;
+  const uniform = Math.min(x, y);
+  const scaleX = mode === 'fill' ? x : uniform, scaleY = mode === 'fill' ? y : uniform;
+  const left = (viewport.clientWidth - width * scaleX) / 2;
+  const top = (viewport.clientHeight - height * scaleY) / 2;
+  world.style.setProperty('--fit-width', width + 'px');
+  world.style.setProperty('--fit-height', height + 'px');
+  world.style.transform = `translate(${left}px,${top}px) scale(${scaleX},${scaleY})`;
+  viewport.scrollTo(0, 0);
+  return true;
+}
+function positionToken(token, map, col, row, zoom = map.zoom) {
+  token.style.left = `${(map.offsetX + col * map.grid) * zoom}px`;
+  token.style.top = `${(map.offsetY + row * map.grid) * zoom}px`;
 }
 viewport.addEventListener('scroll', queueMapCamera, { passive: true });
 new ResizeObserver(() => isPlayerMap ? paintPlayerMap() : queueMapCamera()).observe(viewport);
@@ -461,18 +633,21 @@ function showMapPing({ x, y }) {
   $('map-world').querySelector('.map-ping')?.remove();
   const ping = document.createElement('span');
   ping.className = 'map-ping';
-  ping.style.left = x * state.map.zoom + 'px';
-  ping.style.top = y * state.map.zoom + 'px';
+  const zoom = mapDrawingZoom();
+  ping.style.left = x * zoom + 'px';
+  ping.style.top = y * zoom + 'px';
   $('map-world').append(ping);
   setTimeout(() => ping.remove(), 1200);
 }
 $('player-settings').onclick = () => {
   playerSettingsContext = currentContext();
-  $('toggle-player-health').checked = !!state.map.playerHealth;
+  $('toggle-player-health').checked = state.map.playerHealth !== false;
   $('toggle-player-blackout').checked = playerBlackout;
+  $('player-fit').value = state.map.playerFit ?? 'fit';
   openDialog('player-dialog');
 };
 $('toggle-player-health').onchange = e => dispatch('map:settings', { playerHealth: e.target.checked }, playerSettingsContext);
+$('player-fit').onchange = e => dispatch('map:settings', { playerFit: e.target.value }, playerSettingsContext);
 $('toggle-player-blackout').onchange = e => {
   playerBlackout = e.target.checked;
   $('player-settings').setAttribute('aria-pressed', String(playerBlackout));
@@ -481,6 +656,13 @@ $('toggle-player-blackout').onchange = e => {
 $('map-viewport').addEventListener('dragover', e => { e.preventDefault(); });
 $('map-viewport').addEventListener('drop', e => { e.preventDefault(); if (!isPlayerMap && e.dataTransfer.files[0]) loadMap(api.importDrop(e.dataTransfer.files[0], 'image')); });
 document.addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key.toLowerCase() === 'l' && (!detachedPanel || detachedPanel === 'info') &&
+      !$('workspace').querySelector('.info.is-detached') && !document.querySelector('dialog[open]')) {
+    e.preventDefault();
+    if (expanded && expanded !== 'info') expandPanel(expanded);
+    $('reference-query').focus();
+    $('reference-query').select();
+  }
   if (e.key === 'Escape' && !document.querySelector('dialog[open]')) {
     if (expanded) { e.preventDefault(); expandPanel(expanded); }
     else if (isPlayerMap && document.body.classList.contains('player-fullscreen')) result(api.fullscreen());
@@ -572,7 +754,14 @@ api.onStatus(status => {
   if (status.scope === 'update') { updateUI(status); if (['available', 'downloaded', 'error', 'latest'].includes(status.phase)) toast(status.text); }
   else if (status.scope === 'music') updateMusicStatus(status);
   else if (status.scope === 'map-focus') focusToken(status.id);
-  else if (status.scope === 'player-fullscreen' && isPlayerMap) document.body.classList.toggle('player-fullscreen', status.active);
+  else if (status.scope === 'reference') {
+    reference = status;
+    if (!isPlayerMap) renderReference();
+  }
+  else if (status.scope === 'player-fullscreen' && isPlayerMap) {
+    document.body.classList.toggle('player-fullscreen', status.active);
+    renderMap();
+  }
   else if (status.scope === 'map-preview' && isPlayerMap) {
     if (status.mapId !== state?.activeMapId) return;
     mapCamera = status.camera;
@@ -641,6 +830,13 @@ function readWindowState(value) {
 api.onState(value => { readWindowState(value); renderAll(); });
 (async () => {
   const initial = await api.init(); readWindowState(initial); updateUI(initial.updateStatus); updateMusicStatus(initial.musicStatus);
+  combatRoles = initial.combatRoles;
+  conditionDefinitions = initial.conditionDefinitions;
+  reference = initial.reference;
+  $('combatant-role').replaceChildren(...Object.entries(combatRoles).map(([id, label]) => new Option(label, id)));
+  $('reference-links').innerHTML = initial.referenceLinks.map(link =>
+    `<button type="button" data-reference-link="${link.id}" title="${escapeHTML(link.name)}">${escapeHTML(link.name)}</button>`
+  ).join('');
   playerBlackout = initial.playerBlackout;
   $('version').textContent = `v${initial.version}`;
   if (detachedPanel) {
@@ -658,5 +854,6 @@ api.onState(value => { readWindowState(value); renderAll(); });
     }
   }
   renderAll();
+  if (!isPlayerMap) renderReference();
   queueMapCamera();
 })();

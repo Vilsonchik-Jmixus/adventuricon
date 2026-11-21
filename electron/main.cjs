@@ -5,12 +5,17 @@ const { pathToFileURL } = require('node:url');
 const { randomUUID } = require('node:crypto');
 const { beginMusicImport } = require('./music-import.cjs');
 const { initialState, migrateState, activeView, reducer } = require('./model.cjs');
+const { ROLES, CONDITIONS, playerMapActors } = require('./combat-rules.cjs');
+const { DND_HOME, WEB_HOME, GEMINI, REFERENCE_LINKS, safeUrl, searchUrl } = require('./reference.cjs');
 const { autoUpdater } = require('electron-updater');
 const TEST = process.env.DM_SCREEN_TEST === '1';
 if (process.env.DM_SCREEN_DATA) app.setPath('userData', process.env.DM_SCREEN_DATA);
 protocol.registerSchemesAsPrivileged([{ scheme: 'dm', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 const PANELS = ['combat', 'music', 'map', 'info', 'characters'];
-const REMOTE = { info: 'https://dnd.su/', characters: 'https://longstoryshort.app/characters/list/' };
+const REMOTE = { info: DND_HOME, web: WEB_HOME, characters: 'https://longstoryshort.app/characters/list/' };
+const partitionFor = id => id === 'web' ? 'dm-web' : `persist:dm-${id}`;
+const remotePanelFor = id => id === 'web' ? 'info' : id;
+let referenceTab = 'info';
 const windows = new Map(), remotes = new Map();
 let mainWindow, state, store, assets, quitting = false, downloadProcess = null;
 let updateStatus = { scope: 'update', phase: 'idle', text: 'Обновления' };
@@ -37,7 +42,8 @@ function windowState(owner, view = activeView(state)) {
   const mapCamera = mapCameras.get(view.activeMapId) ?? null;
   if (owner === windows.get('map')?.webContents) {
     return {
-      state: { activeMapId: view.activeMapId, map: view.map, tokens: view.tokens, mapCombatants: view.mapCombatants, turn: view.turn },
+      state: { activeMapId: view.activeMapId, map: view.map, tokens: view.tokens,
+        mapCombatants: playerMapActors(view.mapCombatants, view.map.playerHealth !== false), turn: view.turn },
       detached: ['map'], presentation, recentImages: [], mapCamera
     };
   }
@@ -105,25 +111,130 @@ function secureWindow(options = {}, showInactive = false) {
 function attachRemote(id, owner) {
   let record = remotes.get(id);
   if (!record) {
-    const view = new WebContentsView({ webPreferences: { partition: `persist:dm-${id}`, nodeIntegration: false, contextIsolation: true, sandbox: true } });
-    record = { view, owner: null };
+    const view = new WebContentsView({ webPreferences: { partition: partitionFor(id), nodeIntegration: false, contextIsolation: true, sandbox: true } });
+    view.setVisible(false);
+    record = { view, owner: null, requested: REMOTE[id], failed: false };
     remotes.set(id, record);
-    view.webContents.setWindowOpenHandler(({ url }) => {
+    const wc = view.webContents;
+    wc.setWindowOpenHandler(({ url, disposition }) => {
+      const destination = safeUrl(url);
+      if (!destination) return { action: 'deny' };
+      if (id !== 'characters') {
+        if (['foreground-tab', 'background-tab'].includes(disposition)) {
+          setImmediate(() => { if (!wc.isDestroyed()) loadRemote(record, destination); });
+        }
+        return { action: 'deny' };
+      }
       // Authentication popups share only this site's browser session, without app APIs.
-      if (!/^https:\/\//.test(url)) return { action: 'deny' };
       return { action: 'allow', overrideBrowserWindowOptions: { width: 850, height: 720, autoHideMenuBar: true, webPreferences: { partition: `persist:dm-${id}`, sandbox: true, contextIsolation: true, nodeIntegration: false } } };
     });
-    view.webContents.on('will-navigate', (e, url) => { if (!/^https?:\/\//.test(url)) e.preventDefault(); });
-    view.webContents.on('did-fail-load', (_, code, message, url, isMainFrame) => {
-      if (isMainFrame && code !== -3) sendAll('status', { scope: id, text: `Не удалось открыть сайт: ${message}. Нажмите ↻ для повтора.` });
+    const limitNavigation = event => {
+      const destination = safeUrl(event.url);
+      if (!destination || (id !== 'characters' && new URL(destination).hostname === 'accounts.google.com')) event.preventDefault();
+    };
+    wc.on('will-navigate', limitNavigation);
+    wc.on('will-redirect', limitNavigation);
+    wc.on('did-fail-load', (_, code, message, url, isMainFrame) => {
+      if (!isMainFrame || code === -3) return;
+      if (id === 'characters') sendAll('status', { scope: id, text: `Не удалось открыть сайт: ${message}. Нажмите ↻ для повтора.` });
+      else {
+        record.failed = true;
+        if (safeUrl(url)) record.requested = url;
+        view.setVisible(false);
+        reportReference();
+      }
     });
-    view.webContents.loadURL(REMOTE[id]).catch(() => {});
+    if (id !== 'characters') {
+      wc.on('did-start-navigation', ({ url, isMainFrame }) => {
+        if (isMainFrame && safeUrl(url)) {
+          record.failed = false;
+          record.requested = url;
+          reportReference();
+        }
+      });
+      wc.on('did-navigate', () => { record.failed = false; reportReference(); });
+      for (const event of ['did-finish-load', 'did-navigate-in-page', 'page-title-updated', 'did-stop-loading']) {
+        wc.on(event, reportReference);
+      }
+    }
+    loadRemote(record, REMOTE[id]);
   }
   if (record.owner !== owner) {
     if (record.owner && !record.owner.isDestroyed()) record.owner.contentView.removeChildView(record.view);
     owner.contentView.addChildView(record.view); record.owner = owner;
   }
   return record.view;
+}
+function loadRemote(record, url) {
+  record.failed = false;
+  record.requested = url;
+  return record.view.webContents.loadURL(url).catch(() => {});
+}
+function referenceState() {
+  const pages = {};
+  for (const tab of ['info', 'web']) {
+    const record = remotes.get(tab);
+    const wc = record?.view.webContents;
+    const loaded = wc && !wc.isDestroyed() ? safeUrl(wc.getURL()) : null;
+    pages[tab] = {
+      url: record?.failed ? record.requested : loaded || record?.requested || REMOTE[tab],
+      title: loaded && !record.failed ? wc.getTitle() : '',
+      bookmarkable: !!loaded && !record.failed && !wc.isLoadingMainFrame(),
+      failed: !!record?.failed,
+      canBack: wc?.navigationHistory.canGoBack() ?? false,
+      canForward: wc?.navigationHistory.canGoForward() ?? false
+    };
+  }
+  return { tab: referenceTab, pages };
+}
+function reportReference() {
+  if (!quitting) sendAll('status', { scope: 'reference', ...referenceState() });
+}
+async function referenceAction(event, { action, value }) {
+  const owner = windows.get('info') || mainWindow;
+  if (event.sender !== owner?.webContents) throw new Error('Открой справочник, чтобы продолжить');
+  if (action === 'gemini') {
+    const query = typeof value === 'string' ? value.trim().slice(0, 500) : '';
+    if (query) await clipboard.writeText(query);
+    await shell.openExternal(GEMINI);
+    return { ok: true, copied: !!query };
+  }
+  if (action === 'remove-bookmark') return commit({ type: 'bookmark:remove', payload: { id: value } });
+  let tab = referenceTab, destination = null;
+  if (action === 'tab' && ['info', 'web'].includes(value)) tab = value;
+  else if (action === 'shortcut') {
+    tab = 'info';
+    destination = REFERENCE_LINKS.find(link => link.id === value)?.url;
+    if (!destination) throw new Error('Раздел не найден');
+  } else if (action === 'search') {
+    destination = searchUrl(value, tab === 'info');
+    tab = 'web';
+  } else if (action === 'bookmark') {
+    const item = state.bookmarks.find(entry => entry.id === value);
+    destination = safeUrl(item?.url);
+    if (!destination) throw new Error('Закладка не найдена');
+    tab = item.tab === 'info' ? 'info' : 'web';
+  } else if (!['back', 'forward', 'reload', 'external', 'save-bookmark', 'home'].includes(action)) {
+    throw new Error('Неизвестная команда справочника');
+  }
+  referenceTab = tab;
+  const wc = attachRemote(tab, owner).webContents;
+  const record = remotes.get(tab);
+  reportReference();
+  if (destination) await loadRemote(record, destination);
+  else if (action === 'back' && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
+  else if (action === 'forward' && wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
+  else if (action === 'reload') await loadRemote(record, record.failed ? record.requested : safeUrl(wc.getURL()) || record.requested);
+  else if (action === 'home') await loadRemote(record, REMOTE[tab]);
+  else if (action === 'external') {
+    const address = safeUrl(referenceState().pages[tab].url);
+    if (address) await shell.openExternal(address);
+  } else if (action === 'save-bookmark') {
+    const page = referenceState().pages[tab];
+    if (!page.bookmarkable) throw new Error('Дождись, пока страница загрузится');
+    return commit({ type: 'bookmark:add', payload: { url: page.url, title: page.title, tab } });
+  }
+  return { ok: true };
 }
 function detach(id, focus = true) {
   if (!PANELS.includes(id)) throw new Error('Неизвестная панель');
@@ -151,9 +262,10 @@ function detach(id, focus = true) {
   w.on('close', () => {
     clearTimeout(timer);
     if (!quitting) commit({ type: 'layout:window', payload: { id, bounds: w.getNormalBounds() } });
-    const remote = remotes.get(id);
-    if (remote?.owner === w && mainWindow && !mainWindow.isDestroyed()) {
-      w.contentView.removeChildView(remote.view); mainWindow.contentView.addChildView(remote.view); remote.owner = mainWindow; remote.view.setVisible(false);
+    for (const remote of remotes.values()) {
+      if (remote.owner === w && mainWindow && !mainWindow.isDestroyed()) {
+        w.contentView.removeChildView(remote.view); mainWindow.contentView.addChildView(remote.view); remote.owner = mainWindow; remote.view.setVisible(false);
+      }
     }
   });
   w.on('closed', () => {
@@ -168,7 +280,9 @@ function detach(id, focus = true) {
   broadcast(); return { ok: true };
 }
 function setupIPC() {
-  handle('init', event => ({ ...windowState(event.sender), version: app.getVersion(), updateStatus, musicStatus, playerBlackout, test: TEST }));
+  handle('init', event => ({ ...windowState(event.sender), version: app.getVersion(), updateStatus, musicStatus,
+    playerBlackout, conditionDefinitions: CONDITIONS, combatRoles: ROLES, referenceLinks: REFERENCE_LINKS,
+    reference: referenceState(), test: TEST }));
   handle('dispatch', (event, action) => {
     if (event.sender === windows.get('map')?.webContents) throw new Error('Экраном управляет мастер');
     if (!action || typeof action.type !== 'string' || JSON.stringify(action).length > 10000) throw new Error('Неверная команда');
@@ -180,7 +294,7 @@ function setupIPC() {
         throw new Error('Изображение отсутствует');
       }
     }
-    if (action.type === 'music:save-import') throw new Error('Эта команда доступна только загрузчику');
+    if (['music:save-import', 'bookmark:add', 'bookmark:remove'].includes(action.type)) throw new Error('Команда недоступна');
     const result = commit(action);
     return action.type === 'gallery:add' ? { ...result, id: state.gallery[0].id } : result;
   });
@@ -262,20 +376,22 @@ function setupIPC() {
   });
   ipcMain.on('remote-bounds', (event, { id, bounds }) => {
     try {
-      localSender(event); if ((TEST && process.env.DM_SCREEN_REMOTE_TEST !== '1') || !REMOTE[id]) return;
+      localSender(event); if ((TEST && process.env.DM_SCREEN_REMOTE_TEST !== '1') || !Object.hasOwn(REMOTE, id)) return;
       const owner = BrowserWindow.fromWebContents(event.sender);
-      if ((windows.get(id) || mainWindow) !== owner) return;
+      if ((windows.get(remotePanelFor(id)) || mainWindow) !== owner) return;
+      if (!bounds && !remotes.has(id)) return;
       const view = attachRemote(id, owner);
-      if (!bounds || bounds.width < 5 || bounds.height < 5) { view.setVisible(false); return; }
+      if (!bounds || remotes.get(id).failed || bounds.width < 5 || bounds.height < 5) { view.setVisible(false); return; }
       const [maxW, maxH] = owner.getContentSize();
       const x = Math.max(0, Math.round(bounds.x)), y = Math.max(0, Math.round(bounds.y));
       view.setBounds({ x, y, width: Math.max(1, Math.min(maxW - x, Math.round(bounds.width))), height: Math.max(1, Math.min(maxH - y, Math.round(bounds.height))) }); view.setVisible(true);
     } catch { /* Window may close during a resize. */ }
   });
+  handle('reference-action', referenceAction);
   handle('remote-action', async (_, { id, action }) => {
-    if (!REMOTE[id]) throw new Error('Неизвестный сайт');
+    if (!Object.hasOwn(REMOTE, id)) throw new Error('Неизвестный сайт');
     const wc = remotes.get(id)?.view.webContents;
-    if (action === 'external') await shell.openExternal(wc?.getURL() || REMOTE[id]);
+    if (action === 'external') await shell.openExternal(safeUrl(wc?.getURL()) || REMOTE[id]);
     else if (wc && action === 'back' && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
     else if (wc && action === 'reload') wc.reload();
     else if (wc && action === 'home') await wc.loadURL(REMOTE[id]);
@@ -388,7 +504,12 @@ app.whenReady().then(async () => {
     } catch { return new Response('Not found', { status: 404 }); }
   });
   session.defaultSession.setPermissionRequestHandler((_, __, callback) => callback(false));
-  for (const id of Object.keys(REMOTE)) session.fromPartition(`persist:dm-${id}`).setPermissionRequestHandler((_, __, cb) => cb(false));
+  for (const id of Object.keys(REMOTE)) {
+    const browserSession = session.fromPartition(partitionFor(id));
+    browserSession.setPermissionRequestHandler((_, __, cb) => cb(false));
+    browserSession.setPermissionCheckHandler(() => false);
+    if (id === 'web') browserSession.on('will-download', event => event.preventDefault());
+  }
   Menu.setApplicationMenu(null);
   setupIPC(); setupUpdater();
   mainWindow = secureWindow({ title: 'Интерактивная ширма мастера' });

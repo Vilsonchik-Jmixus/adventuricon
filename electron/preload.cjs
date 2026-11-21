@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('dm', {
   resizeWindow: bounds => ipcRenderer.send('resize-window', bounds),
   remoteBounds: (id, bounds) => ipcRenderer.send('remote-bounds', { id, bounds }),
   remoteAction: (id, action) => ipcRenderer.invoke('remote-action', { id, action }),
+  referenceAction: (action, value) => ipcRenderer.invoke('reference-action', { action, value }),
   downloadMusic: (url, folder) => ipcRenderer.invoke('download-music', { url, folder }),
   cancelMusic: () => ipcRenderer.invoke('cancel-music'),
   update: action => ipcRenderer.invoke('update', action),

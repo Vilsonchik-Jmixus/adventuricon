@@ -1,6 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { initialState, migrateState, activeView, reducer, hpValue, cellAt } = require('../electron/model.cjs');
+const { CONDITIONS, playerMapActors } = require('../electron/combat-rules.cjs');
+const { REFERENCE_LINKS, safeUrl, searchUrl } = require('../electron/reference.cjs');
 test('HP commands, bounds and invalid expressions', () => {
   assert.equal(hpValue(12, 20, '-7'), 5);
   assert.equal(hpValue(12, 20, '+99'), 20);
@@ -56,7 +58,8 @@ test('Legacy saves preserve the current fight, map, undo and token references', 
   const migrated = migrateState(legacy);
   assert.equal(migrated.schema, 2);
   const v = activeView(migrated);
-  for (const field of ['combatants', 'turn', 'round', 'history', 'tokens', 'map', 'music', 'gallery']) {
+  assert.deepEqual(migrated.battles[0].combatants, legacy.combatants);
+  for (const field of ['turn', 'round', 'history', 'tokens', 'map', 'music', 'gallery']) {
     assert.deepEqual(v[field], legacy[field]);
   }
   assert.equal(activeView(reducer(migrated, { type: 'combatant:undo' })).mapCombatants[0].hp, 10);
@@ -105,4 +108,49 @@ test('Layout stays usable and music folder moves persist', () => {
   s = reducer(s, { type: 'music:add', payload: { title: 'Лес', asset: 'test.webm', folder: 'Общее' } });
   s = reducer(s, { type: 'music:move', payload: { id: s.music.tracks[0].id, folder: 'Атмосфера' } });
   assert.equal(s.music.tracks[0].folder, 'Атмосфера');
+});
+test('Group initiative rolls use the creature modifier and leave the other side and player results alone', () => {
+  let s = initialState();
+  const act = (type, payload) => { s = reducer(s, { type, payload }); return activeView(s); };
+  act('combatant:add', { role: 'player', initiative: 13 });
+  act('combatant:add', { role: 'ally', initiative: 5, initiativeBonus: -2 });
+  act('combatant:add', { initiative: 9, initiativeBonus: 4 });
+  let [player, ally, enemy] = act('combat:roll-initiative', { role: 'enemy' }).combatants;
+  assert.equal(player.initiative, 13);
+  assert.equal(ally.initiative, 5);
+  assert.ok(enemy.initiativeRoll.die >= 1 && enemy.initiativeRoll.die <= 20);
+  assert.equal(enemy.initiative, enemy.initiativeRoll.die + 4);
+  const lastEnemy = enemy.initiative;
+  [, ally, enemy] = act('combat:roll-initiative', { role: 'ally' }).combatants;
+  assert.equal(ally.initiative, ally.initiativeRoll.die - 2);
+  assert.equal(enemy.initiative, lastEnemy);
+  assert.throws(() => act('combat:roll-initiative', { id: player.id }), /Нет участников/);
+});
+test('Hidden enemy HP stays outside the player projection and automatic unconscious clears on recovery', () => {
+  assert.equal(CONDITIONS.length, 15);
+  let s = initialState();
+  const act = (type, payload) => { s = reducer(s, { type, payload }); return activeView(s); };
+  const ally = act('combatant:add', { role: 'ally', maxHp: 25 }).combatants[0].id;
+  const enemy = act('combatant:add', { maxHp: 60 }).combatants[1].id;
+  act('token:add', { id: ally });
+  act('token:add', { id: enemy });
+  act('combatant:conditions', { id: enemy, conditions: ['poisoned', 'fake', 'poisoned'], exhaustion: 9 });
+  let publicActors = playerMapActors(act('combatant:hp', { id: enemy, expression: '=0' }).mapCombatants, true);
+  assert.equal(publicActors[0].hp, 25);
+  assert.ok(!Object.hasOwn(publicActors[1], 'hp') && !Object.hasOwn(publicActors[1], 'maxHp'));
+  assert.deepEqual(publicActors[1].effects.map(e => e.id), ['unconscious', 'exhaustion', 'poisoned']);
+  publicActors = playerMapActors(act('combatant:hp', { id: enemy, expression: '+6' }).mapCombatants, false);
+  assert.ok(publicActors.every(actor => !Object.hasOwn(actor, 'hp')));
+  assert.deepEqual(publicActors[1].effects.map(e => e.id), ['exhaustion', 'poisoned']);
+  act('combatant:conditions', { id: enemy, conditions: ['unconscious'] });
+  assert.equal(act('combatant:hp', { id: enemy, expression: '+1' }).mapCombatants[1].effects[0].id, 'unconscious');
+});
+test('Reference routes only admit HTTPS pages and encode rules search without leaking into another parameter', () => {
+  assert.equal(REFERENCE_LINKS.length, 9);
+  assert.ok(REFERENCE_LINKS.every(link => new URL(link.url).hostname === 'dnd.su'));
+  for (const input of ['file:///test', 'dm://app/index.html', 'javascript:void(0)', 'https://alice:password@dnd.su/']) {
+    assert.equal(safeUrl(input), null);
+  }
+  assert.equal(new URL(searchUrl('огненный шар & тест', true)).searchParams.get('q'), 'site:dnd.su огненный шар & тест');
+  assert.equal(searchUrl('https://dnd.su/items/', false), 'https://dnd.su/items/');
 });

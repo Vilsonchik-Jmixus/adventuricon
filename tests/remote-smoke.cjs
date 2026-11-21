@@ -34,6 +34,36 @@ let app;
   await page.click('#show-gallery');
   await expect(page.locator('#gallery')).toBeVisible();
   await other.click('[data-detach="characters"]');
+  await page.click('[data-reference-link="armor"]');
+  await expect(page.locator('#reference-query')).toHaveAttribute('title', /dnd\.su\/articles\/inventory\/95-armor-and-shields/);
+  await page.click('#open-bookmarks');
+  await expect(page.locator('#save-bookmark')).toBeEnabled({ timeout: 30_000 });
+  await page.click('#save-bookmark');
+  await expect(page.locator('#bookmarks-list [data-bookmark]')).toHaveCount(1);
+  await page.click('#bookmarks-dialog [data-close-dialog]');
+  await page.fill('#reference-query', 'огненный шар');
+  await page.press('#reference-query', 'Enter');
+  await expect(page.locator('#web-surface')).toBeVisible();
+  await expect(page.locator('#reference-query')).toHaveAttribute('title', /duckduckgo\.com.*q=site%3Adnd\.su/);
+  // Each tab keeps its own page and the web view has no privileged bridge.
+  await page.click('[data-reference-tab="info"]');
+  await expect(page.locator('#reference-query')).toHaveAttribute('title', /95-armor-and-shields/);
+  const pendingRef = app.waitForEvent('window');
+  await page.click('[data-detach="info"]');
+  const refWindow = await pendingRef;
+  await refWindow.click('[data-reference-tab="web"]');
+  const infoViewState = await app.evaluate(({ BrowserWindow }) => {
+    const owner = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().includes('?panel=info'));
+    return owner.contentView.children.filter(view => view.webContents).map(view => {
+      const preferences = view.webContents.getLastWebPreferences();
+      return { url: view.webContents.getURL(), node: preferences.nodeIntegration, sandbox: preferences.sandbox, preload: preferences.preload };
+    });
+  });
+  assert.ok(infoViewState.some(view => /duckduckgo\.com/.test(view.url) && !view.node && view.sandbox && !view.preload));
+  await refWindow.click('[data-detach="info"]');
+  await page.click('#open-bookmarks');
+  await page.click('#bookmarks-list [data-bookmark]');
+  await expect(page.locator('#reference-query')).toHaveAttribute('title', /95-armor-and-shields/);
   console.log(JSON.stringify(sites, null, 2));
-  console.log('PASS: real websites loaded, isolated browser views, native reparenting preserves the LSS webContents/session. Login is not automated.');
+  console.log('PASS: live dnd.su shortcuts and bookmark, web search and separate tab history, isolated browser views, native reparenting.');
 })().catch(e => { console.error(e); process.exitCode = 1; }).finally(async () => { if (app) await app.close(); });

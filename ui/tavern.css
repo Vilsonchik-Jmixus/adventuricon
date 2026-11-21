@@ -128,7 +128,6 @@ input[type=range], progress { accent-color: #d3a16e; }
 .map-viewport.panning { cursor: grabbing; user-select: none; }
 .player-map .map-viewport { overflow: hidden; cursor: default; pointer-events: none; }
 .player-map .token { pointer-events: none; transition: none; }
-.player-map:not(.players-see-health) .token-hp { display: none; }
 .player-map .map-toolbar, .player-map #map-settings { display: none; }
 .player-map #player-blackout { position: absolute; inset: 42px 0 0; z-index: 9; background: #1b110d; display: grid; place-items: center; color: #bc9874; font: 10px var(--pixel); text-align: center; }
 .player-options { display: grid; gap: 14px; margin-top: 18px; }
@@ -259,3 +258,39 @@ body.player-map.player-fullscreen { --panel-heading: 0px; }
 .player-map .slot-bar { display: none; }
 .slot-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .slot-actions button[type="submit"] { margin-left: auto; }
+
+.reference-tabs, .reference-form { display: flex; align-items: center; gap: 3px; flex: none; padding: 3px 5px; border-bottom: 1px solid var(--line); }
+.reference-tabs button, .reference-form button, #reference-links button { padding: 2px 5px; min-height: 21px; font-size: 10px; box-shadow: none; }
+.reference-tabs button[aria-pressed="true"] { border-color: var(--mint); background: #644329; }
+#open-bookmarks { margin-left: auto; }
+#reference-links { display: flex; gap: 3px; flex-wrap: wrap; flex: none; padding: 3px 5px; border-bottom: 1px solid var(--line); }
+#reference-links button { min-height: 18px; }
+.reference-form input { flex: 1; min-width: 0; width: 0; padding: 3px 5px; height: 23px; font-size: 11px; }
+.reference-form button { flex-shrink: 0; }
+.reference-surface .site-empty { font-size: 12px; gap: 8px; padding: 8px; justify-content: start; }
+#bookmarks-dialog { max-height: 80vh; overflow: auto; }
+#save-bookmark { margin-block: 8px; }
+.bookmark-row { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--line); }
+.bookmark-row button:first-child { flex: 1; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.combat-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.combat-bottom { flex-wrap: wrap; }
+.combat-toolbar #roll-initiative { font-size: 11px; }
+.initiative-icon { font: 9px/1 monospace; }
+.initiative-actions, .initiative-results { display: grid; gap: 5px; margin-top: 8px; }
+.initiative-results { max-height: 42vh; overflow: auto; }
+.initiative-results > div { display: flex; justify-content: space-between; gap: 6px; padding: 3px; border-bottom: 1px solid var(--line); }
+#condition-dialog { width: min(510px, 92vw); max-height: 91vh; overflow: auto; }
+.condition-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 9px; }
+.condition-list label { padding: 4px 3px; border: 1px solid var(--line); }
+.condition-list input { flex: none; accent-color: var(--mint); }
+.card-conditions { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 5px; }
+.condition-chip { display: inline-block; padding: 1px 4px; white-space: nowrap; background: #4d343d; border: 1px solid #a67a9b; color: #fff0f7; font-size: 9px; line-height: 1.3; }
+.condition-chip[data-condition="poisoned"] { background: #354632; border-color: #83a264; color: #e6f2ce; }
+.condition-chip[data-condition="unconscious"] { background: #522c2a; border-color: #d58d7f; color: #fff1e9; }
+.condition-chip[data-condition="exhaustion"] { background: #4a3928; border-color: #cf9b60; color: #fff0cb; }
+.token-conditions { display: flex; flex-wrap: wrap; justify-content: center; gap: 1px; position: absolute; left: 50%; top: 0; transform: translateX(-50%); width: max(var(--grid-size), 36px); pointer-events: none; z-index: 2; }
+.token-conditions .condition-chip { padding: 0 2px; font-size: clamp(7px, calc(var(--grid-size) * .15), 11px); }
+.condition-legend { display: flex; flex-wrap: wrap; gap: 2px 8px; position: absolute; bottom: 4px; left: 4px; right: 4px; z-index: 7; width: max-content; max-width: calc(100% - 8px); padding: 3px 6px; background: #211611e8; color: #eddbca; border: 1px solid var(--line); font-size: 10px; pointer-events: none; }
+.condition-legend b { color: var(--mint); }
+.fit-player-map #map-world { width: var(--fit-width) !important; height: var(--fit-height) !important; min-width: 0; min-height: 0; overflow: hidden; }
