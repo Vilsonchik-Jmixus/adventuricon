@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('dm', {
   pasteImage: () => ipcRenderer.invoke('paste-image'),
   detach: id => ipcRenderer.invoke('detach', id),
   showToken: id => ipcRenderer.invoke('show-token', id),
+  showPlayers: (source, id) => ipcRenderer.invoke('show-players', { source, id }),
   mirrorMap: preview => ipcRenderer.send('mirror-map', preview),
   dock: () => ipcRenderer.invoke('dock'),
   fullscreen: () => ipcRenderer.invoke('fullscreen'),

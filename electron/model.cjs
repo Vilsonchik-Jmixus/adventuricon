@@ -4,7 +4,7 @@ const finite = (n, fallback) => Number.isFinite(Number(n)) ? Number(n) : fallbac
 const text = (v, max = 120) => String(v ?? '').trim().slice(0, max);
 function initialState() {
   return {
-    schema: 1, revision: 0, combatants: [], tokens: [], round: 1, turn: null, history: [],
+    schema: 1, revision: 0, combatants: [], tokens: [], round: 1, turn: null, history: [], gallery: [],
     map: { image: null, grid: 64, offsetX: 0, offsetY: 0, opacity: 0.3, color: '#d8e6e0', visible: true, zoom: 1 },
     music: { folders: ['Общее', 'Бой', 'Атмосфера'], tracks: [], current: null, playing: false, volume: 0.55, loop: true },
     layout: { left: 32, middle: 34, top: 52, windows: {} }
@@ -95,6 +95,17 @@ function reducer(state, action) {
       if (/^#[0-9a-f]{6}$/i.test(p.color)) s.map.color = p.color;
       break;
     case 'map:image': s.map.image = text(p.image, 100) || null; break;
+    case 'gallery:add':
+      s.gallery.unshift({ id: randomUUID(), image: p.image, title: text(p.title) || 'Иллюстрация' });
+      break;
+    case 'gallery:rename': {
+      const item = s.gallery.find(entry => entry.id === p.id);
+      if (item && text(p.title)) item.title = text(p.title);
+      break;
+    }
+    case 'gallery:remove':
+      s.gallery = s.gallery.filter(item => item.id !== p.id);
+      break;
     case 'music:folder': {
       const name = text(p.name, 50); if (name && !s.music.folders.includes(name)) s.music.folders.push(name); break;
     }

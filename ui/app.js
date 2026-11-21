@@ -8,6 +8,7 @@ let editingCombatant = null;
 let toastTimer, textSubmit, draggingToken = false, animating = false, musicBusy = false, currentUpdate;
 let mapCamera = null, previewToken = null, pendingMapFrame = 0;
 let playerBlackout = false;
+let presentation = null, recentImages = [], galleryOpen = false, selectedImage = null, previewImage = null;
 const assetURL = name => `dm://app/assets/${encodeURIComponent(name)}`;
 const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 function toast(message) { $('toast').textContent = message; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 4500); }
@@ -16,6 +17,10 @@ const dispatch = (type, payload = {}) => result(api.dispatch(type, payload));
 function openDialog(id) { $(id).showModal(); syncRemoteBounds(); }
 function closeDialog(dialog) { dialog.close(); syncRemoteBounds(); }
 function avatar(c, cls = 'avatar') { return `<span class="${cls}">${c.image ? `<img src="${assetURL(c.image)}" alt="">` : escapeHTML(c.name.slice(0, 1).toUpperCase())}</span>`; }
+function combatPortrait(c) {
+  if (!c.image) return avatar(c);
+  return `<button class="portrait-button" data-preview-portrait="${c.id}" title="Открыть портрет" aria-label="Открыть портрет: ${escapeHTML(c.name)}">${avatar(c)}</button>`;
+}
 function renderCombat() {
   $('combat-count').textContent = state.combatants.length;
   $('round').textContent = `Раунд ${state.round}`;
@@ -25,7 +30,7 @@ function renderCombat() {
   const drafts = new Map([...document.querySelectorAll('.hp-form input')].map(el => [el.closest('form').dataset.id, el.value]));
   const focused = document.activeElement?.closest('.hp-form')?.dataset.id;
   const order = [...state.combatants].sort((a, b) => b.initiative - a.initiative);
-  $('combat-list').innerHTML = order.length ? order.map(c => `<article class="combat-card ${state.turn === c.id ? 'active-turn' : ''} ${c.hp === 0 ? 'dead' : ''}" data-id="${c.id}"><div class="combat-main">${avatar(c)}<div class="combat-details"><strong class="combat-name">${escapeHTML(c.name)}</strong><div class="combat-meta">Инициатива ${c.initiative}${state.turn === c.id ? ' · Ходит сейчас' : ''}</div></div><button type="button" class="hp-readout" data-edit="${c.id}" title="Изменить текущие и максимальные ХП">${c.hp}<small> / ${c.maxHp}</small></button></div><div class="hp-bar"><div style="width:${c.hp / c.maxHp * 100}%"></div></div><div class="combat-bottom"><form class="hp-form" data-id="${c.id}"><input aria-label="Изменение ХП ${escapeHTML(c.name)}" placeholder="−7 / +5" value="${escapeHTML(drafts.get(c.id) || '')}" maxlength="12"><button title="Применить ХП">↵</button></form><button class="to-map" ${state.tokens.some(t => t.combatantId === c.id) ? `data-token-focus="${c.id}" title="Показать жетон на карте"` : `data-token-add="${c.id}"`}>${state.tokens.some(t => t.combatantId === c.id) ? '✓ На карте' : '◇ На карту'}</button><button class="card-menu" data-edit="${c.id}" title="Редактировать участника" aria-label="Редактировать участника">✎</button><button class="card-menu" data-duplicate="${c.id}" title="Дублировать">⧉</button><button class="card-menu" data-remove="${c.id}" title="Удалить">×</button></div></article>`).join('') : '<div class="empty-state"><span class="empty-symbol">⚔</span><strong>Бойцов пока нет</strong></div>';
+  $('combat-list').innerHTML = order.length ? order.map(c => `<article class="combat-card ${state.turn === c.id ? 'active-turn' : ''} ${c.hp === 0 ? 'dead' : ''}" data-id="${c.id}"><div class="combat-main">${combatPortrait(c)}<div class="combat-details"><strong class="combat-name">${escapeHTML(c.name)}</strong><div class="combat-meta">Инициатива ${c.initiative}${state.turn === c.id ? ' · Ходит сейчас' : ''}</div></div><button type="button" class="hp-readout" data-edit="${c.id}" title="Изменить текущие и максимальные ХП">${c.hp}<small> / ${c.maxHp}</small></button></div><div class="hp-bar"><div style="width:${c.hp / c.maxHp * 100}%"></div></div><div class="combat-bottom"><form class="hp-form" data-id="${c.id}"><input aria-label="Изменение ХП ${escapeHTML(c.name)}" placeholder="−7 / +5" value="${escapeHTML(drafts.get(c.id) || '')}" maxlength="12"><button title="Применить ХП">↵</button></form><button class="to-map" ${state.tokens.some(t => t.combatantId === c.id) ? `data-token-focus="${c.id}" title="Показать жетон на карте"` : `data-token-add="${c.id}"`}>${state.tokens.some(t => t.combatantId === c.id) ? '✓ На карте' : '◇ На карту'}</button><button class="card-menu" data-edit="${c.id}" title="Редактировать участника" aria-label="Редактировать участника">✎</button><button class="card-menu" data-duplicate="${c.id}" title="Дублировать">⧉</button><button class="card-menu" data-remove="${c.id}" title="Удалить">×</button></div></article>`).join('') : '<div class="empty-state"><span class="empty-symbol">⚔</span><strong>Бойцов пока нет</strong></div>';
   if (focused) document.querySelector(`.hp-form[data-id="${focused}"] input`)?.focus();
 }
 function renderMap() {
@@ -40,7 +45,6 @@ function renderMap() {
   world.style.setProperty('--grid-size', m.grid * zoom + 'px'); world.style.setProperty('--grid-color', m.color);
   world.style.setProperty('--grid-x', m.offsetX * zoom + 'px'); world.style.setProperty('--grid-y', m.offsetY * zoom + 'px');
   world.style.setProperty('--grid-opacity', m.visible ? m.opacity : 0);
-  $('map-viewport').classList.toggle('has-map', !!m.image);
   $('zoom-label').textContent = `${Math.round(zoom * 100)}%`;
   $('token-count').textContent = state.tokens.length;
   document.body.classList.toggle('players-see-health', !!m.playerHealth);
@@ -77,14 +81,25 @@ function renderMusic() {
 function renderLayout() {
   const w = $('workspace'); w.style.setProperty('--left', state.layout.left + '%'); w.style.setProperty('--middle', state.layout.middle + '%'); w.style.setProperty('--top', state.layout.top + '%');
   document.querySelectorAll('[data-panel]').forEach(panel =>
-    panel.classList.toggle('is-detached', !detachedPanel && panel.dataset.panel !== 'map' && detached.includes(panel.dataset.panel)));
+    panel.classList.toggle('is-detached', !detachedPanel && panel.dataset.panel !== 'map' &&
+      !(panel.dataset.panel === 'characters' && galleryOpen) && detached.includes(panel.dataset.panel)));
 }
-function renderAll() { renderLayout(); renderCombat(); renderMap(); renderMusic(); requestAnimationFrame(syncRemoteBounds); }
+function renderAll() {
+  if (isPlayerMap) {
+    renderMap();
+    renderPresentation();
+    return;
+  }
+  renderLayout(); renderCombat(); renderMap(); renderMusic(); renderPresentation();
+  if (galleryOpen) renderGallery();
+  requestAnimationFrame(syncRemoteBounds);
+}
 function syncRemoteBounds() {
   const modal = !!document.querySelector('dialog[open]');
   document.querySelectorAll('[data-remote-surface]').forEach(el => {
     const panel = el.closest('.panel'); const rect = el.getBoundingClientRect();
-    const visible = !modal && !animating && !panel.hidden && !panel.classList.contains('is-detached') && (!expanded || panel.dataset.panel === expanded);
+    const visible = !modal && !animating && !el.closest('[hidden]') && !panel.classList.contains('is-detached') &&
+      (!expanded || panel.dataset.panel === expanded);
     api.remoteBounds(el.dataset.remoteSurface, visible ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null);
   });
 }
@@ -104,9 +119,9 @@ async function expandPanel(id) {
 async function loadMap(promise) {
   const r = await result(promise); if (r?.asset) { await dispatch('map:image', { image: r.asset }); toast('Карта загружена'); }
 }
-function askText(title, label, hint, callback, submit = 'Добавить') {
+function askText(title, label, hint, callback, submit = 'Добавить', initialValue = '') {
   $('text-dialog-title').textContent = title; $('text-dialog-label').textContent = label;
-  $('text-dialog-input').value = ''; $('text-dialog-input').placeholder = title.includes('YouTube') ? 'https://www.youtube.com/watch?v=…' : '';
+  $('text-dialog-input').value = initialValue; $('text-dialog-input').placeholder = title.includes('YouTube') ? 'https://www.youtube.com/watch?v=…' : '';
   $('text-dialog-hint').textContent = hint; $('text-dialog-submit').textContent = submit; textSubmit = callback;
   openDialog('text-dialog'); $('text-dialog-input').focus();
 }
@@ -117,6 +132,12 @@ document.addEventListener('click', async e => {
   else if (button.dataset.focus) await result(api.detach(button.dataset.focus));
   else if (button.dataset.expand) await expandPanel(button.dataset.expand);
   else if (button.dataset.remote) { const [id, action] = button.dataset.remote.split(':'); await result(api.remoteAction(id, action)); }
+  else if (button.dataset.previewPortrait) showImagePreview({ source: 'portrait', id: button.dataset.previewPortrait });
+  else if (button.dataset.galleryId !== undefined) {
+    selectedImage = button.dataset.galleryId; renderGallery();
+    [...$('gallery-list').children].find(el => el.dataset.galleryId === selectedImage)?.focus();
+  }
+  else if (button.dataset.recent !== undefined) showImagePreview(recentImages[Number(button.dataset.recent)]);
   else if (button.dataset.tokenAdd) { await dispatch('token:add', { id: button.dataset.tokenAdd }); toast('Боец добавлен на карту'); }
   else if (button.dataset.tokenFocus) await result(api.showToken(button.dataset.tokenFocus));
   else if (button.dataset.edit) openCombatantEditor(state.combatants.find(c => c.id === button.dataset.edit));
@@ -126,6 +147,105 @@ document.addEventListener('click', async e => {
   else if (button.dataset.play) await dispatch('music:play', { id: button.dataset.play });
   else if (button.dataset.deleteTrack) await dispatch('music:remove', { id: button.dataset.deleteTrack });
 });
+function selectGallery(open) {
+  galleryOpen = open;
+  $('show-gallery').setAttribute('aria-pressed', String(open));
+  $('show-sheets').setAttribute('aria-pressed', String(!open));
+  $('gallery').hidden = !open;
+  $('sheet-content').hidden = open;
+  renderLayout();
+  if (open) renderGallery();
+  syncRemoteBounds();
+}
+function selectedGalleryImage() {
+  return state.gallery.find(item => item.id === selectedImage);
+}
+function renderGallery() {
+  if (!state) return;
+  const item = selectedGalleryImage() || state.gallery[0];
+  selectedImage = item?.id ?? null;
+  $('gallery-empty').hidden = !!item;
+  $('gallery-preview').hidden = !item;
+  if (item) {
+    const image = $('gallery-image'), url = assetURL(item.image);
+    if (image.src !== url) image.src = url;
+    $('gallery-title').textContent = item.title;
+    $('gallery-title').title = item.title;
+    const showing = presentation?.source === 'gallery' && presentation.id === item.id;
+    $('present-gallery').textContent = showing ? 'На экране игроков' : 'Показать игрокам';
+    $('present-gallery').disabled = showing;
+  }
+  $('gallery-list').innerHTML = state.gallery.map(entry => `<button class="gallery-tile" data-gallery-id="${entry.id}"
+      aria-pressed="${entry.id === selectedImage}" title="${escapeHTML(entry.title)}">
+      <img src="${assetURL(entry.image)}" alt="" loading="lazy"><span>${escapeHTML(entry.title)}</span>
+    </button>`).join('');
+  $('gallery-history').hidden = !recentImages.length;
+  $('gallery-recent').innerHTML = recentImages.map((entry, index) => `<button class="gallery-tile" data-recent="${index}" title="${escapeHTML(entry.title)}">
+      <img src="${assetURL(entry.image)}" alt="" loading="lazy"><span>${escapeHTML(entry.title)}</span>
+    </button>`).join('');
+}
+function renderPresentation() {
+  $('display-label').hidden = isPlayerMap || !presentation;
+  $('return-map').hidden = isPlayerMap || !presentation;
+  if (presentation && !isPlayerMap) $('display-label').textContent = `Игрокам: ${presentation.title}`;
+  if (!isPlayerMap) return;
+  $('player-art').hidden = !presentation;
+  const image = $('presented-image');
+  if (presentation) {
+    const url = assetURL(presentation.image);
+    if (image.src !== url) image.src = url;
+  } else image.removeAttribute('src');
+  document.body.classList.toggle('showing-art', !!presentation);
+}
+function showImagePreview(ref) {
+  if (!ref) return;
+  const image = ref.source === 'gallery'
+    ? state.gallery.find(item => item.id === ref.id)
+    : state.combatants.find(combatant => combatant.id === ref.id);
+  if (!image?.image) return;
+  previewImage = ref;
+  $('image-dialog-title').textContent = image.title ?? image.name;
+  $('image-dialog-preview').src = assetURL(image.image);
+  openDialog('image-dialog');
+}
+async function presentImage(ref) {
+  const response = await result(api.showPlayers(ref.source, ref.id));
+  if (response?.ok && response.covered && ref.source !== 'map') toast('Сними затемнение в настройках экрана игроков, чтобы показать изображение');
+  return response?.ok;
+}
+async function importGallery(promise) {
+  const image = await result(promise);
+  if (!image?.asset) return;
+  const saved = await dispatch('gallery:add', { image: image.asset, title: image.title });
+  if (saved?.id) {
+    selectedImage = saved.id;
+    if (galleryOpen) renderGallery();
+  }
+}
+$('show-sheets').onclick = () => selectGallery(false);
+$('show-gallery').onclick = () => selectGallery(true);
+$('import-gallery').onclick = () => importGallery(api.importFile('image'));
+$('paste-gallery').onclick = () => importGallery(api.pasteImage());
+$('gallery').addEventListener('dragover', e => e.preventDefault());
+$('gallery').addEventListener('drop', async e => {
+  e.preventDefault();
+  // Read the complete FileList before awaiting, as drag data then expires.
+  for (const file of [...e.dataTransfer.files]) await importGallery(api.importDrop(file, 'image'));
+});
+$('present-gallery').onclick = () => { if (selectedImage) presentImage({ source: 'gallery', id: selectedImage }); };
+$('enlarge-gallery').onclick = () => showImagePreview({ source: 'gallery', id: selectedImage });
+$('present-preview').onclick = async () => {
+  if (previewImage && await presentImage(previewImage)) closeDialog($('image-dialog'));
+};
+$('rename-gallery').onclick = () => {
+  const item = selectedGalleryImage();
+  if (item) askText('Переименовать изображение', 'Название', '', title =>
+    dispatch('gallery:rename', { id: item.id, title }), 'Сохранить', item.title);
+};
+$('remove-gallery').onclick = async () => {
+  if (selectedImage) await dispatch('gallery:remove', { id: selectedImage });
+};
+$('return-map').onclick = () => presentImage({ source: 'map' });
 function openCombatantEditor(combatant) {
   const form = $('combatant-form');
   form.reset();
@@ -229,6 +349,7 @@ viewport.addEventListener('wheel', e => {
 }, { passive: false });
 viewport.addEventListener('pointerdown', e => {
   if (isPlayerMap || e.button !== 0 || e.target.closest('[data-token]') || e.target === viewport) return;
+  viewport.focus({ preventScroll: true });
   if (e.shiftKey && !detachedPanel) {
     const box = $('map-world').getBoundingClientRect();
     const ping = { x: (e.clientX - box.x) / state.map.zoom, y: (e.clientY - box.y) / state.map.zoom };
@@ -271,9 +392,17 @@ $('toggle-player-blackout').onchange = e => {
 $('map-viewport').addEventListener('dragover', e => { e.preventDefault(); });
 $('map-viewport').addEventListener('drop', e => { e.preventDefault(); if (!isPlayerMap && e.dataTransfer.files[0]) loadMap(api.importDrop(e.dataTransfer.files[0], 'image')); });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && expanded) { e.preventDefault(); expandPanel(expanded); }
+  if (e.key === 'Escape' && !document.querySelector('dialog[open]')) {
+    if (expanded) { e.preventDefault(); expandPanel(expanded); }
+    else if (isPlayerMap && document.body.classList.contains('player-fullscreen')) result(api.fullscreen());
+  }
   if (e.key === 'F11') { e.preventDefault(); result(api.fullscreen()); }
-  if (!isPlayerMap && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) && !document.querySelector('dialog[open]')) { e.preventDefault(); loadMap(api.pasteImage()); }
+  if (!isPlayerMap && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) && !document.querySelector('dialog[open]')) {
+    e.preventDefault();
+    if (galleryOpen && (!expanded || expanded === 'characters') && !document.activeElement?.closest('[data-panel="map"]')) {
+      importGallery(api.pasteImage());
+    } else loadMap(api.pasteImage());
+  }
 });
 $('map-tokens').addEventListener('dblclick', e => { const token = e.target.closest('[data-token]'); if (token && !isPlayerMap) dispatch('token:remove', { id: token.dataset.token }); });
 $('map-tokens').addEventListener('pointerdown', e => {
@@ -351,6 +480,7 @@ api.onStatus(status => {
   if (status.scope === 'update') { updateUI(status); if (['available', 'downloaded', 'error', 'latest'].includes(status.phase)) toast(status.text); }
   else if (status.scope === 'music') updateMusicStatus(status);
   else if (status.scope === 'map-focus') focusToken(status.id);
+  else if (status.scope === 'player-fullscreen' && isPlayerMap) document.body.classList.toggle('player-fullscreen', status.active);
   else if (status.scope === 'map-preview' && isPlayerMap) {
     mapCamera = status.camera;
     playerBlackout = status.blackout;
@@ -400,9 +530,15 @@ document.querySelectorAll('[data-split]').forEach(el => el.addEventListener('poi
 document.querySelectorAll('.resize-grip').forEach(el => el.addEventListener('pointerdown', e => beginResize(e, 'corner', el.closest('[data-panel]').dataset.panel)));
 new ResizeObserver(syncRemoteBounds).observe($('workspace'));
 window.addEventListener('resize', syncRemoteBounds);
-api.onState(value => { state = value.state; detached = value.detached; renderAll(); });
+function readWindowState(value) {
+  state = value.state;
+  detached = value.detached;
+  presentation = value.presentation;
+  recentImages = value.recentImages;
+}
+api.onState(value => { readWindowState(value); renderAll(); });
 (async () => {
-  const initial = await api.init(); state = initial.state; detached = initial.detached; updateUI(initial.updateStatus); updateMusicStatus(initial.musicStatus);
+  const initial = await api.init(); readWindowState(initial); updateUI(initial.updateStatus); updateMusicStatus(initial.musicStatus);
   mapCamera = initial.mapCamera;
   playerBlackout = initial.playerBlackout;
   $('version').textContent = `v${initial.version}`;
@@ -410,7 +546,8 @@ api.onState(value => { state = value.state; detached = value.detached; renderAll
     document.body.classList.add('detached');
     document.querySelectorAll('[data-panel]').forEach(panel => { panel.hidden = panel.dataset.panel !== detachedPanel; });
     const dock = document.querySelector(`[data-detach="${detachedPanel}"]`); dock.textContent = '↙'; dock.title = 'Вернуть в ширму';
-    document.title = document.querySelector(`[data-panel="${detachedPanel}"] h1`).textContent + ' · Ширма мастера';
+    const title = document.querySelector(`[data-panel="${detachedPanel}"] h1`)?.textContent ?? 'Листы персонажей';
+    document.title = title + ' · Ширма мастера';
     if (isPlayerMap) {
       document.body.classList.add('player-map');
       document.querySelector('.map h1').textContent = 'Карта игроков';

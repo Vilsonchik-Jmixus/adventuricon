@@ -17,6 +17,8 @@ let updateStatus = { scope: 'update', phase: 'idle', text: 'Обновления
 let musicStatus = { scope: 'music', phase: 'idle', text: '' };
 let mapCamera = null;
 let playerBlackout = false;
+let presentation = null;
+let recentImages = [];
 function localSender(event) {
   const url = event.senderFrame?.url || '';
   if (!url.startsWith('dm://app/') || !BrowserWindow.fromWebContents(event.sender)) throw new Error('Недопустимый источник');
@@ -24,7 +26,32 @@ function localSender(event) {
 function sendAll(channel, payload) {
   for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed() && w.webContents.getURL().startsWith('dm://app/')) w.webContents.send(channel, payload);
 }
-function broadcast() { sendAll('state', { state, detached: [...windows.keys()] }); }
+function resolveImage(ref) {
+  if (!ref) return null;
+  const item = ref.source === 'gallery'
+    ? state.gallery.find(entry => entry.id === ref.id)
+    : state.combatants.find(entry => entry.id === ref.id);
+  return item?.image ? { ...ref, image: item.image, title: item.title ?? item.name } : null;
+}
+function windowState(owner) {
+  if (owner === windows.get('map')?.webContents) {
+    return {
+      state: { map: state.map, tokens: state.tokens, combatants: state.combatants, turn: state.turn },
+      detached: ['map'], presentation, recentImages: []
+    };
+  }
+  return {
+    state, detached: [...windows.keys()], presentation,
+    recentImages: recentImages.map(resolveImage).filter(Boolean)
+  };
+}
+function broadcast() {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed() && w.webContents.getURL().startsWith('dm://app/')) {
+      w.webContents.send('state', windowState(w.webContents));
+    }
+  }
+}
 function commit(action) {
   const next = reducer(state, action);
   fs.writeFileSync(`${store}.tmp`, JSON.stringify(next), 'utf8');
@@ -58,12 +85,16 @@ function boundsOnScreen(bounds, defaults) {
   if (!visible) return defaults;
   return { x: bounds.x, y: bounds.y, width: Math.max(360, Math.min(bounds.width, 7680)), height: Math.max(300, Math.min(bounds.height, 4320)) };
 }
-function secureWindow(options = {}) {
+function secureWindow(options = {}, showInactive = false) {
   const w = new BrowserWindow({ width: 1500, height: 950, minWidth: 940, minHeight: 640, backgroundColor: '#221711', show: false, icon: path.join(__dirname, '..', 'ui', 'assets', 'icon.ico'), ...options,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required' } });
   w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   w.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('dm://app/')) e.preventDefault(); });
-  w.once('ready-to-show', () => { if (!TEST) w.show(); });
+  w.once('ready-to-show', () => {
+    if (TEST) return;
+    if (showInactive) w.showInactive();
+    else w.show();
+  });
   return w;
 }
 function attachRemote(id, owner) {
@@ -89,11 +120,24 @@ function attachRemote(id, owner) {
   }
   return record.view;
 }
-function detach(id) {
+function detach(id, focus = true) {
   if (!PANELS.includes(id)) throw new Error('Неизвестная панель');
-  if (windows.has(id)) { windows.get(id).show(); windows.get(id).focus(); return { ok: true }; }
-  const bounds = boundsOnScreen(state.layout.windows[id], { width: id === 'map' ? 1000 : 650, height: 750 });
-  const w = secureWindow({ ...bounds, minWidth: 360, minHeight: 300, title: 'Ширма · ' + id, autoHideMenuBar: true });
+  if (windows.has(id)) {
+    const window = windows.get(id);
+    if (focus && !TEST) { window.show(); window.focus(); }
+    return { ok: true };
+  }
+  const defaults = { width: id === 'map' ? 1000 : 650, height: 750 };
+  if (id === 'map' && mainWindow && !TEST) {
+    const primary = screen.getDisplayMatching(mainWindow.getBounds());
+    const second = screen.getAllDisplays().find(display => display.id !== primary.id)?.workArea;
+    if (second) Object.assign(defaults, {
+      width: Math.min(defaults.width, second.width), height: Math.min(defaults.height, second.height),
+      x: second.x + 24, y: second.y + 24
+    });
+  }
+  const bounds = boundsOnScreen(state.layout.windows[id], defaults);
+  const w = secureWindow({ ...bounds, minWidth: 360, minHeight: 300, title: 'Ширма · ' + id, autoHideMenuBar: true }, !focus);
   windows.set(id, w);
   w.loadURL(`dm://app/index.html?panel=${id}`);
   let timer;
@@ -107,17 +151,33 @@ function detach(id) {
       w.contentView.removeChildView(remote.view); mainWindow.contentView.addChildView(remote.view); remote.owner = mainWindow; remote.view.setVisible(false);
     }
   });
-  w.on('closed', () => { windows.delete(id); if (!quitting) broadcast(); });
+  w.on('closed', () => {
+    windows.delete(id);
+    if (id === 'map') presentation = null;
+    if (!quitting) broadcast();
+  });
+  if (id === 'map') {
+    w.on('enter-full-screen', () => w.webContents.send('status', { scope: 'player-fullscreen', active: true }));
+    w.on('leave-full-screen', () => w.webContents.send('status', { scope: 'player-fullscreen', active: false }));
+  }
   broadcast(); return { ok: true };
 }
 function setupIPC() {
-  handle('init', () => ({ state, detached: [...windows.keys()], version: app.getVersion(), updateStatus, musicStatus, mapCamera, playerBlackout, test: TEST }));
-  handle('dispatch', (_, action) => {
+  handle('init', event => ({ ...windowState(event.sender), version: app.getVersion(), updateStatus, musicStatus, mapCamera, playerBlackout, test: TEST }));
+  handle('dispatch', (event, action) => {
+    if (event.sender === windows.get('map')?.webContents) throw new Error('Экраном управляет мастер');
     if (!action || typeof action.type !== 'string' || JSON.stringify(action).length > 10000) throw new Error('Неверная команда');
     if (['map:image', 'combatant:add', 'combatant:edit'].includes(action.type) && action.payload?.image) assetName(action.payload.image);
     if (action.type === 'music:add') assetName(action.payload?.asset);
+    if (action.type === 'gallery:add') {
+      const name = assetName(action.payload?.image);
+      if (!/\.(png|jpe?g|webp|gif)$/i.test(name) || !fs.existsSync(path.join(assets, name))) {
+        throw new Error('Изображение отсутствует');
+      }
+    }
     if (action.type === 'music:save-import') throw new Error('Эта команда доступна только загрузчику');
-    return commit(action);
+    const result = commit(action);
+    return action.type === 'gallery:add' ? { ...result, id: state.gallery[0].id } : result;
   });
   handle('import-file', async (event, { kind }) => {
     const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { properties: ['openFile'], filters: [{ name: kind === 'audio' ? 'Музыка' : 'Изображения', extensions: kind === 'audio' ? ['mp3', 'wav', 'ogg', 'm4a', 'webm', 'flac'] : ['png', 'jpg', 'jpeg', 'webp', 'gif'] }] });
@@ -145,6 +205,21 @@ function setupIPC() {
     throw new Error('В буфере обмена нет изображения');
   });
   handle('detach', (_, id) => detach(id));
+  handle('show-players', (event, { source, id }) => {
+    if (event.sender === windows.get('map')?.webContents) throw new Error('Экраном управляет мастер');
+    if (source === 'map') presentation = null;
+    else {
+      if (!['gallery', 'portrait'].includes(source)) throw new Error('Неизвестный источник изображения');
+      const ref = { source, id };
+      const image = resolveImage(ref);
+      if (!image) throw new Error('Изображение не найдено');
+      presentation = image;
+      recentImages = [ref, ...recentImages.filter(item => item.source !== source || item.id !== id)].slice(0, 12);
+      if (!windows.has('map')) detach('map', false);
+    }
+    broadcast();
+    return { ok: true, covered: playerBlackout };
+  });
   handle('show-token', (_, id) => {
     if (!state.tokens.some(token => token.combatantId === id)) return { ok: false, error: 'Жетон уже убран с карты' };
     sendAll('status', { scope: 'map-focus', id });
@@ -278,7 +353,8 @@ app.whenReady().then(async () => {
     try {
       const saved = JSON.parse(fs.readFileSync(store, 'utf8'));
       if (saved.schema !== 1 || !Array.isArray(saved.combatants) || !Array.isArray(saved.tokens) || !saved.map || !saved.music || !saved.layout) throw new Error('Неверный формат');
-      state = saved; state.music.playing = false;
+      state = { ...saved, gallery: Array.isArray(saved.gallery) ? saved.gallery : [] };
+      state.music.playing = false;
     } catch {
       fs.copyFileSync(store, store + `.backup-${Date.now()}`);
       dialog.showErrorBox('Не удалось прочитать кампанию', 'Сохранена резервная копия файла. Открыта новая кампания.');

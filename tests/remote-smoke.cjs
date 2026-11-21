@@ -19,9 +19,20 @@ let app;
   for (const site of sites) { assert.equal(site.nodeEnabled, false); assert.ok(!site.preload); assert.ok(!/404|ERR_|not found/i.test(site.title), JSON.stringify(site)); }
   const original = sites.find(s => s.url.includes('longstoryshort')).id;
   assert.ok(sites.find(s => s.url.includes('longstoryshort')).url.includes('/characters/list/'));
+  const sheetVisible = () => app.evaluate(({ BrowserWindow }, id) => {
+    const main = BrowserWindow.getAllWindows().find(w => w.webContents.getURL() === 'dm://app/index.html');
+    return main.contentView.children.find(view => view.webContents?.id === id)?.getVisible();
+  }, original);
+  await page.click('#show-gallery');
+  await expect(page.locator('#gallery')).toBeVisible();
+  await expect.poll(sheetVisible).toBe(false);
+  await page.click('#show-sheets');
+  await expect.poll(sheetVisible).toBe(true);
   const pending = app.waitForEvent('window'); await page.click('[data-detach="characters"]'); const other = await pending;
   await other.waitForFunction(() => document.body.classList.contains('detached'));
   await expect.poll(async () => app.evaluate(({ BrowserWindow }, id) => BrowserWindow.getAllWindows().filter(w => w.webContents.getURL().includes('panel=characters')).some(w => w.contentView.children.some(v => v.webContents?.id === id)), original)).toBe(true);
+  await page.click('#show-gallery');
+  await expect(page.locator('#gallery')).toBeVisible();
   await other.click('[data-detach="characters"]');
   console.log(JSON.stringify(sites, null, 2));
   console.log('PASS: real websites loaded, isolated browser views, native reparenting preserves the LSS webContents/session. Login is not automated.');
