@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish a GitHub release if all builds pass
+        description: Upload to a release for this version's tag or existing draft
         type: boolean
         default: false
       artifacts_run:
@@ -168,6 +168,21 @@ jobs:
             fi
           done
           sha256sum "${installers[@]}" > SHA256SUMS
-          gh release create "$tag" "${installers[@]}" "${updates[@]}" SHA256SUMS \
-            --draft --target "$RELEASE_COMMIT" --title "Интерактивная ширма мастера $version" --generate-notes
-          gh release edit "$tag" --draft=false --latest
+          draft="$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null || true)"
+          if [[ "$draft" == false ]]; then
+            echo "$tag is already published"
+            exit 0
+          fi
+          if [[ "$draft" == true ]]; then
+            target="$(gh release view "$tag" --json targetCommitish --jq .targetCommitish)"
+            test "$target" = "$RELEASE_COMMIT"
+          else
+            gh release create "$tag" --verify-tag --draft --target "$RELEASE_COMMIT" \
+              --title "Интерактивная ширма мастера $version" --generate-notes
+          fi
+          gh release upload "$tag" "${installers[@]}" "${updates[@]}" SHA256SUMS
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --silent; then
+            gh release edit "$tag" --draft=false --latest
+          else
+            echo "Draft assets uploaded. Publish $tag from a GitHub account that can create the tag."
+          fi
