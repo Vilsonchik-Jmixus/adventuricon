@@ -4,6 +4,8 @@ const { initialState, migrateState, activeView, reducer, hpValue, cellAt } = req
 const { CONDITIONS, playerMapActors } = require('../electron/combat-rules.cjs');
 const { REFERENCE_LINKS, safeUrl, searchUrl } = require('../electron/reference.cjs');
 const MapGeometry = require('../ui/map-geometry.js');
+const { readCharacter } = require('../electron/lss-import.cjs');
+const { publicDndUrl } = require('../electron/dnd-import.cjs');
 test('HP commands, bounds and invalid expressions', () => {
   assert.equal(hpValue(12, 20, '-7'), 5);
   assert.equal(hpValue(12, 20, '+99'), 20);
@@ -21,6 +23,73 @@ test('A combatant can be placed once; occupied cells are skipped', () => {
   assert.equal(tokens.length, 10);
   assert.equal(new Set(tokens.map(t => `${t.col},${t.row}`)).size, 10);
   assert.deepEqual({ col: tokens[8].col, row: tokens[8].row }, { col: 0, row: 1 });
+});
+test('Templates deploy independent actors and explicit token cells stay with each map', () => {
+  let s = migrateState({ ...initialState(), library: undefined });
+  const act = (type, payload) => { s = reducer(s, { type, payload }); return activeView(s); };
+  const firstMap = s.activeMapId;
+  const template = act('library:save', { name: 'Гоблин', role: 'enemy', maxHp: 18, initiativeBonus: 3 }).library[0];
+  const first = act('library:deploy', { id: template.id, place: true, col: 3, row: 2 }).combatants[0];
+  assert.throws(() => act('library:deploy', { id: template.id, place: true, col: 3, row: 2 }), /занята/);
+  const secondMap = act('map:create', { title: 'Мост' }).activeMapId;
+  act('token:add', { id: first.id, col: 7, row: 4 });
+  const copies = act('library:deploy', { id: template.id, place: true, col: 2, row: 1 }).combatants;
+  assert.equal(copies.length, 2);
+  assert.notEqual(copies[0].id, copies[1].id);
+  act('combatant:hp', { id: first.id, expression: '-5' });
+  act('library:remove', { id: template.id });
+  s = migrateState(JSON.parse(JSON.stringify(s)));
+  assert.deepEqual(act('map:select', { id: firstMap }).tokens, [{ combatantId: first.id, col: 3, row: 2 }]);
+  assert.deepEqual(act('token:remove', { id: first.id }).combatants.map(actor => actor.hp), [13, 18]);
+  assert.equal(act('map:select', { id: secondMap }).tokens.length, 2);
+});
+test('Closed doors block path and sight; fog is optional, remembered and reset per board', () => {
+  let s = initialState();
+  const act = (type, payload) => { s = reducer(s, { type, payload }); return activeView(s); };
+  const mapId = act('map:create', { title: 'Подземелье', fog: true }).activeMapId;
+  const hero = act('combatant:add', { name: 'Лучник', role: 'player' }).combatants[0].id;
+  act('terrain:add', { kind: 'wall', a: { x: 128, y: 0 }, b: { x: 128, y: 64 } });
+  const door = act('terrain:add', { kind: 'door', a: { x: 128, y: 64 }, b: { x: 128, y: 192 } }).terrain[1];
+  act('terrain:add', { kind: 'wall', a: { x: 128, y: 192 }, b: { x: 128, y: 1700 } });
+  act('terrain:add', { kind: 'light', a: { x: 96, y: 96 }, radius: 128 });
+  const closed = act('token:add', { id: hero, col: 1, row: 1 });
+  assert.ok(closed.fog.explored.includes('1,13'));
+  assert.ok(!closed.fog.explored.includes('1,14'));
+  assert.ok(!closed.fog.explored.includes('2,1'));
+  assert.throws(() => act('token:move', { id: hero, col: 3, row: 1 }), /стена/);
+  const nearby = MapGeometry.blockingWalls(closed.terrain);
+  assert.equal(nearby.length, 3);
+  assert.ok(MapGeometry.lightPolygon({ x: 96, y: 96 }, 128, nearby).every(point => point.x <= 128.01 || point.y < 0));
+  act('terrain:door', { id: door.id });
+  assert.ok(act('token:move', { id: hero, col: 3, row: 1 }).fog.explored.includes('2,1'));
+  act('terrain:door', { id: door.id });
+  const reset = act('fog:reset');
+  assert.ok(!reset.fog.explored.includes('1,1'));
+  assert.ok(reset.fog.explored.includes('3,1'));
+  assert.equal(act('map:create', { title: 'Двор' }).fog.enabled, false);
+  assert.ok(act('map:select', { id: mapId }).fog.explored.includes('3,1'));
+  assert.equal(act('fog:enabled', { enabled: false }).fog.enabled, false);
+  assert.ok(act('fog:enabled', { enabled: true }).fog.explored.includes('3,1'));
+});
+test('Long Story Short export imports current and maximum HP, portrait bytes and initiative bonus', () => {
+  const data = { name: { value: 'Лучник' }, stats: { dex: { score: 16 } }, proficiency: 2,
+    vitality: { 'hp-current': { value: 9 }, 'hp-max': { value: 15 }, initiative: { value: '[DEX] + [PROF]' } },
+    avatar: { webp: 'data:image/webp;base64,YWJj' } };
+  const result = readCharacter(JSON.stringify({ jsonType: 'character', data: JSON.stringify(data) }));
+  assert.equal(result.name, 'Лучник');
+  assert.equal(result.hp, 9);
+  assert.equal(result.maxHp, 15);
+  assert.equal(result.initiativeBonus, 5);
+  assert.equal(result.portrait.toString(), 'abc');
+  assert.equal(result.initiativeNeedsReview, false);
+  assert.throws(() => readCharacter('{}'), /Long Story Short/);
+});
+test('Reference imports are restricted to individual public DnD.su cards and gallery images', () => {
+  assert.equal(publicDndUrl('https://dnd.su/bestiary/4-goblin?ref=1#top', 'creature'), 'https://dnd.su/bestiary/4-goblin/');
+  assert.ok(publicDndUrl('https://next.dnd.su/items/16522-potion-of-healing/', 'item'));
+  assert.equal(publicDndUrl('https://dnd.su.evil.test/bestiary/4-goblin/', 'creature'), null);
+  assert.equal(publicDndUrl('https://dnd.su/items/', 'item'), null);
+  assert.equal(publicDndUrl('https://dnd.su/gallery/bestiary/test.svg', 'portrait'), null);
 });
 test('Health changes are shared by reference to the combatant id, and can be undone', () => {
   const original = initialState();

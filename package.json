@@ -1,6 +1,6 @@
 {
   "name": "interactive-dm-screen",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Интерактивная ширма мастера — рабочий стол ведущего D&D",
   "main": "electron/main.cjs",
   "author": "Vilsonchik-Jmixus",
@@ -73,10 +73,14 @@
       "icon": "ui/assets/icon.png"
     },
     "appImage": {
-      "executableArgs": ["--disable-setuid-sandbox"]
+      "executableArgs": [
+        "--disable-setuid-sandbox"
+      ]
     },
     "deb": {
-      "recommends": ["ffmpeg"]
+      "recommends": [
+        "ffmpeg"
+      ]
     },
     "nsis": {
       "oneClick": false,

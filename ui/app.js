@@ -10,6 +10,9 @@ let mapCamera = null, previewToken = null, pendingMapFrame = 0;
 let restoreMapCamera = false, cancelTokenDrag = null;
 let masterAutoFit = false, expandedMapMode = 'fill', boardLayout, boardProjection;
 let playerBlackout = false;
+let selectedToken = null, placement = null, removal = null, editingTemplate = null;
+let mapItemDraft = null;
+const tokenDragType = 'application/x-dm-screen-token';
 let combatRoles = {}, conditionDefinitions = [], conditionEdit, initiativeContext;
 let reference = { tab: 'info', pages: {} };
 let presentation = null, recentImages = [], galleryOpen = false, selectedImage = null, previewImage = null;
@@ -38,9 +41,10 @@ function rollText(c) {
   return `d20 ${roll.die} ${roll.bonus >= 0 ? '+' : '−'} ${Math.abs(roll.bonus)} = ${c.initiative}`;
 }
 function combatCard(c, draft, placed, index, count) {
-  const details = [combatRoles[c.role], rollText(c), state.turn === c.id && 'Ходит сейчас',
+  const bonus = c.role !== 'enemy' && c.initiativeBonus !== 0 ? `Иниц. ${c.initiativeBonus > 0 ? '+' : ''}${c.initiativeBonus}` : '';
+  const details = [combatRoles[c.role], rollText(c), bonus, state.turn === c.id && 'Ходит сейчас',
     state.acted.includes(c.id) && 'Ход завершён'].filter(Boolean);
-  return `<article class="combat-card ${state.turn === c.id ? 'active-turn' : ''} ${c.hp === 0 ? 'dead' : ''}" data-id="${c.id}">
+  return `<article class="combat-card ${state.turn === c.id ? 'active-turn' : ''} ${c.hp === 0 ? 'dead' : ''}" data-id="${c.id}" draggable="true">
     <div class="combat-main">${combatPortrait(c)}<div class="combat-details">
       <strong class="combat-name">${escapeHTML(c.name)}</strong>
       <div class="combat-meta" title="${escapeHTML(details.join(' · '))}">${escapeHTML(details.join(' · '))}</div>
@@ -51,7 +55,7 @@ function combatCard(c, draft, placed, index, count) {
     <div class="hp-bar"><div style="width:${c.hp / c.maxHp * 100}%"></div></div>
     <div class="combat-bottom">
       <form class="hp-form" data-id="${c.id}"><input aria-label="Изменение ХП ${escapeHTML(c.name)}" placeholder="−7 / +5" value="${escapeHTML(draft || '')}" maxlength="12"><button title="Применить ХП">↵</button></form>
-      <button class="to-map" ${placed ? `data-token-focus="${c.id}" title="Показать жетон на карте"` : `data-token-add="${c.id}"`}>${placed ? '✓ На карте' : '◇ На карту'}</button>
+      <button class="to-map" ${placed ? `data-token-remove="${c.id}" title="Убрать с карты · Shift + щелчок показывает жетон"` : `data-token-add="${c.id}" title="Выбрать клетку на карте"`}>${placed ? '✓ На карте' : '◇ На карту'}</button>
       <button class="card-menu condition-button" data-conditions="${c.id}" title="Состояния" aria-label="Состояния ${escapeHTML(c.name)}">◆</button>
       <button class="card-menu initiative-value" data-initiative="${c.id}" title="Вписать инициативу" aria-label="Инициатива ${escapeHTML(c.name)}">${c.initiative ?? '—'}</button>
       ${c.role === 'enemy' ? `<button class="card-menu initiative-icon" data-roll-actor="${c.id}" title="Бросить инициативу" aria-label="Бросить инициативу ${escapeHTML(c.name)}">d20</button>` : ''}
@@ -113,17 +117,22 @@ function renderMap() {
   $('token-count').textContent = state.tokens.length;
   $('player-settings').hidden = !!detachedPanel || !detached.includes('map');
   layoutMap();
+  mapScene.render(state, boardLayout, previewToken);
   if (draggingToken) return;
+  if (selectedToken && !state.tokens.some(t => t.combatantId === selectedToken)) selectedToken = null;
+  const focusedToken = document.activeElement?.dataset.token;
   const actors = new Map(state.mapCombatants.map(actor => [actor.id, actor]));
   $('map-tokens').innerHTML = state.tokens.map(t => {
     const c = actors.get(t.combatantId); if (!c) return '';
+    if (isPlayerMap && !mapScene.tokenVisible(t.combatantId === previewToken?.id ? previewToken : t)) return '';
     const hp = Number.isFinite(c.hp) ? `${c.hp}/${c.maxHp}` : '';
     const details = [c.name, hp && `${hp} ХП`, ...c.effects.map(effect => effect.name)].filter(Boolean).join(' · ');
-    return `<button class="token ${c.hp === 0 ? 'dead' : ''} ${state.turn === c.id ? 'active-turn' : ''}" data-token="${c.id}" title="${escapeHTML(details)}" style="left:${(m.offsetX + t.col * m.grid) * zoom}px;top:${(m.offsetY + t.row * m.grid) * zoom}px">
+    return `<button class="token ${c.hp === 0 ? 'dead' : ''} ${state.turn === c.id ? 'active-turn' : ''} ${selectedToken === c.id ? 'selected-token' : ''}" data-token="${c.id}" title="${escapeHTML(details)}" aria-label="${escapeHTML(c.name)}" style="left:${(m.offsetX + t.col * m.grid) * zoom}px;top:${(m.offsetY + t.row * m.grid) * zoom}px">
       <span class="token-face">${avatar(c, 'token-body')}${hp ? `<span class="token-hp">${hp}</span>` : ''}
       ${c.effects.length ? `<span class="token-conditions">${conditionChips(c, true)}</span>` : ''}</span>
     </button>`;
   }).join('');
+  if (focusedToken) [...$('map-tokens').children].find(token => token.dataset.token === focusedToken)?.focus({ preventScroll: true });
   if (restoreMapCamera && img.complete) {
     restoreMapCamera = false;
     viewport.scrollTo(
@@ -133,7 +142,8 @@ function renderMap() {
     if (!isPlayerMap) queueMapCamera();
   }
   if (isPlayerMap) {
-    const unique = new Map(state.mapCombatants.flatMap(c => c.effects.map(effect => [effect.badge, effect.name])));
+    const visibleIds = new Set([...$('map-tokens').children].map(button => button.dataset.token));
+    const unique = new Map(state.mapCombatants.filter(c => visibleIds.has(c.id)).flatMap(c => c.effects.map(effect => [effect.badge, effect.name])));
     const legend = $('map-condition-legend');
     const content = [...unique].filter(([badge, name]) => badge !== name)
       .map(([badge, name]) => `<span><b>${escapeHTML(badge)}</b> ${escapeHTML(name)}</span>`).join('');
@@ -178,6 +188,7 @@ function renderAll() {
   }
   renderLayout(); renderSlots(); renderCombat(); renderMap(); renderMusic(); renderPresentation();
   if ($('bookmarks-dialog').open) renderBookmarks();
+  if ($('library-dialog').open) renderLibrary();
   if (galleryOpen) renderGallery();
   requestAnimationFrame(syncRemoteBounds);
 }
@@ -201,6 +212,14 @@ function renderReference() {
   $('reference-links').hidden = tab !== 'info';
   $('reference-query').placeholder = tab === 'info' ? 'Поиск по dnd.su' : 'Веб-поиск или HTTPS-адрес';
   const page = pages[tab];
+  const card = dndCardLink(page?.url);
+  const drag = $('drag-dnd-card');
+  drag.hidden = !card;
+  if (card) {
+    drag.textContent = card.kind === 'creature' ? 'В бой ↗' : 'На карту ↗';
+    drag.title = card.kind === 'creature' ? 'Добавить или перетащить существо в трекер'
+      : 'Добавить или перетащить предмет на карту';
+  }
   document.querySelector('[data-reference-nav="back"]').disabled = !page?.canBack;
   document.querySelector('[data-reference-nav="forward"]').disabled = !page?.canForward;
   $('reference-query').title = page?.url || '';
@@ -253,10 +272,12 @@ async function loadMap(promise) {
     toast('Карта загружена');
   }
 }
-function askText(title, label, hint, callback, submit = 'Добавить', initialValue = '') {
+function askText(title, label, hint, callback, submit = 'Добавить', initialValue = '', chooseFog = false) {
   $('text-dialog-title').textContent = title; $('text-dialog-label').textContent = label;
   $('text-dialog-input').value = initialValue; $('text-dialog-input').placeholder = title.includes('YouTube') ? 'https://www.youtube.com/watch?v=…' : '';
   $('text-dialog-hint').textContent = hint; $('text-dialog-submit').textContent = submit; textSubmit = callback;
+  $('new-map-fog').hidden = !chooseFog;
+  $('new-map-fog-enabled').checked = false;
   openDialog('text-dialog'); $('text-dialog-input').focus();
 }
 function slotInfo(kind) {
@@ -284,7 +305,9 @@ for (const kind of ['battle', 'map']) {
     if (!response?.ok) renderSlots();
   };
   $(`create-${kind}`).onclick = () =>
-    askText(slotInfo(kind).create, 'Название', '', title => dispatch(`${kind}:create`, { title }), 'Создать');
+    askText(slotInfo(kind).create, 'Название', '', title => dispatch(`${kind}:create`, {
+      title, fog: kind === 'map' && $('new-map-fog-enabled').checked,
+    }), 'Создать', '', kind === 'map');
   $(`manage-${kind}`).onclick = () => {
     const { options, id, heading } = slotInfo(kind);
     const entry = options.find(item => item.id === id);
@@ -293,7 +316,7 @@ for (const kind of ['battle', 'map']) {
     $('slot-name').value = entry.title;
     $('linked-map-field').hidden = kind !== 'battle';
     $('slot-hint').textContent = kind === 'battle' ? 'Копия перенесёт участников с полными ХП и начнётся с первого раунда.'
-      : 'Копия сохранит изображение и настройки сетки. Жетоны можно расставить заново.';
+      : 'Копия сохранит изображение, сетку, стены, двери и свет. Жетоны можно расставить заново.';
     $('delete-slot').disabled = options.length <= 1;
     if (kind === 'battle') {
       syncOptions($('linked-map'), [{ id: '', title: 'Не переключать карту' }, ...state.mapChoices], entry.linkedMapId);
@@ -352,9 +375,29 @@ document.addEventListener('click', async e => {
   }
   else if (button.dataset.recent !== undefined) showImagePreview(recentImages[Number(button.dataset.recent)]);
   else if (button.dataset.tokenAdd) {
-    if ((await dispatch('token:add', { id: button.dataset.tokenAdd }))?.ok) toast('Боец добавлен на карту');
+    await beginPlacement('actor', button.dataset.tokenAdd);
   }
-  else if (button.dataset.tokenFocus) await result(api.showToken(button.dataset.tokenFocus));
+  else if (button.dataset.tokenRemove) {
+    const id = button.dataset.tokenRemove;
+    if (e.shiftKey) await result(api.showToken(id));
+    else {
+      removal = { id, context: currentContext() };
+      $('remove-token-name').textContent = state.combatants.find(actor => actor.id === id)?.name ?? '';
+      openDialog('remove-token-dialog');
+    }
+  }
+  else if (button.dataset.libraryBattle) await dispatch('library:deploy', { id: button.dataset.libraryBattle });
+  else if (button.dataset.libraryMap) {
+    closeDialog($('library-dialog'));
+    await beginPlacement('template', button.dataset.libraryMap);
+  }
+  else if (button.dataset.libraryEdit) {
+    const entry = state.library.find(item => item.id === button.dataset.libraryEdit);
+    if (entry) openCombatantEditor(entry, true);
+  }
+  else if (button.dataset.libraryRemove) {
+    if (confirm('Удалить заготовку?')) await dispatch('library:remove', { id: button.dataset.libraryRemove });
+  }
   else if (button.dataset.edit) openCombatantEditor(state.combatants.find(c => c.id === button.dataset.edit));
   else if (button.dataset.duplicate) await dispatch('combatant:duplicate', { id: button.dataset.duplicate });
   else if (button.dataset.remove) await dispatch('combatant:remove', { id: button.dataset.remove });
@@ -463,46 +506,167 @@ $('remove-gallery').onclick = async () => {
   if (selectedImage) await dispatch('gallery:remove', { id: selectedImage });
 };
 $('return-map').onclick = () => presentImage({ source: 'map' });
-function openCombatantEditor(combatant) {
+function renderLibrary() {
+  $('library-empty').hidden = !!state.library.length;
+  $('library-list').innerHTML = state.library.map(entry => `
+    <div class="library-entry">${avatar(entry)}<div class="library-name">
+      <b>${escapeHTML(entry.name)}</b><small>${escapeHTML(combatRoles[entry.role])} · ${entry.maxHp} ХП</small>
+    </div>
+    <button type="button" data-library-battle="${entry.id}">В бой</button>
+    <button type="button" data-library-map="${entry.id}">На карту</button>
+    <button type="button" class="card-menu" data-library-edit="${entry.id}" aria-label="Редактировать заготовку">✎</button>
+    <button type="button" class="card-menu" data-library-remove="${entry.id}" aria-label="Удалить заготовку">×</button>
+    </div>`).join('');
+}
+$('open-library').onclick = () => { renderLibrary(); openDialog('library-dialog'); };
+$('create-character-template').onclick = () => openCombatantEditor(null, true);
+$('confirm-remove-token').onclick = () => {
+  const { id, context } = removal;
+  closeDialog($('remove-token-dialog'));
+  dispatch('token:remove', { id }, context);
+};
+async function importLss(file) {
+  const response = await result(api.importLss(file, state.activeBattleId));
+  if (response?.ok) toast(response.initiativeNeedsReview
+    ? 'Лист добавлен. Проверь бонус инициативы, в листе была формула.' : 'Лист Long Story Short добавлен в бой');
+}
+function dndCardLink(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || (url.hostname !== 'dnd.su' && !url.hostname.endsWith('.dnd.su'))) return null;
+    const section = /^\/(bestiary|items)\/\d+[\w-]*\/?$/.exec(url.pathname)?.[1];
+    if (section) return { url: url.href, kind: section === 'bestiary' ? 'creature' : 'item' };
+  } catch { /* The current reference page might not have a URL yet. */ }
+  return null;
+}
+function droppedDndLink(data, kind) {
+  const html = data.getData('text/html');
+  const href = html && new DOMParser().parseFromString(html, 'text/html').querySelector('a[href]')?.getAttribute('href');
+  const candidates = [data.getData('text/uri-list'), data.getData('text/plain'), href ?? ''].join('\n').split(/\r?\n/);
+  return candidates.map(line => dndCardLink(line.trim())).find(card => card?.kind === kind)?.url;
+}
+async function readDndCard(link, kind) {
+  const response = await result(api.readDndCard(link, kind));
+  if (!response?.ok) return null;
+  const document = new DOMParser().parseFromString(response.html, 'text/html');
+  const heading = document.querySelector('meta[property="og:title"]')?.content ?? document.title;
+  const name = heading.split(/\s+[/—]\s+/)[0].trim().slice(0, 120);
+  if (!name) return toast('Не удалось прочитать название карточки dnd.su');
+  const item = { name };
+  if (kind === 'creature') {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const words = [];
+    while (walker.nextNode()) {
+      if (!walker.currentNode.parentElement?.closest('script,style')) words.push(walker.currentNode.data);
+    }
+    const text = words.join(' ').replace(/\s+/g, ' ').replaceAll('−', '-');
+    const hp = /Хиты\s*:?\s*(\d+)/iu.exec(text);
+    if (!hp) return toast('В карточке dnd.su не найдены ХП существа');
+    const stats = text.slice(hp.index, hp.index + 1000);
+    const initiative = /Инициатива\s*:?\s*([+-]?\s*\d+)/iu.exec(text.slice(Math.max(0, hp.index - 260), hp.index + 160));
+    const dex = /\sЛов(?:кость)?\s+(\d+)/iu.exec(stats);
+    item.maxHp = Number(hp[1]);
+    item.initiativeBonus = initiative ? Number(initiative[1].replace(/\s/g, '')) : dex ? Math.floor((Number(dex[1]) - 10) / 2) : 0;
+    item.role = 'enemy';
+  }
+  const cover = document.querySelector('meta[property="og:image"]')?.content;
+  const illustration = cover?.includes('/gallery/') ? cover : document.querySelector('img.gallery-image')?.getAttribute('src');
+  if (illustration) {
+    try { item.image = (await api.readDndIcon(new URL(illustration, response.source).href))?.asset; }
+    catch { /* The card remains usable without a portrait. */ }
+  }
+  return item;
+}
+async function importDndCreature(link) {
+  const context = currentContext();
+  const actor = await readDndCard(link, 'creature');
+  if (actor && (await dispatch('combatant:add', actor, context))?.ok) toast(`${actor.name} добавлен из dnd.su`);
+}
+const currentDndCard = () => dndCardLink(reference.pages[reference.tab]?.url);
+$('drag-dnd-card').addEventListener('dragstart', event => {
+  const card = currentDndCard();
+  if (!card) { event.preventDefault(); return; }
+  event.dataTransfer.setData('text/uri-list', card.url);
+  event.dataTransfer.setData('text/plain', card.url);
+  event.dataTransfer.effectAllowed = 'copy';
+});
+$('drag-dnd-card').onclick = async () => {
+  const card = currentDndCard();
+  if (!card) return;
+  if (card.kind === 'creature') return importDndCreature(card.url);
+  // A detached reference window can still pass the link to the main window by dragging it.
+  if (detachedPanel) return toast('Перетащи кнопку «На карту» на карту мастера');
+  const context = currentContext();
+  const item = await readDndCard(card.url, 'item');
+  if (!item || context.expectedMapId !== state.activeMapId) return;
+  await beginItemPlacement(item, context);
+};
+$('import-lss').onclick = () => importLss();
+const combatContent = document.querySelector('.combat-content');
+combatContent.addEventListener('dragover', event => {
+  if (event.dataTransfer.types.some(type => ['Files', 'text/uri-list', 'text/plain', 'text/html'].includes(type))) event.preventDefault();
+});
+combatContent.addEventListener('drop', async event => {
+  const link = droppedDndLink(event.dataTransfer, 'creature');
+  const file = event.dataTransfer.files[0];
+  if (!link && !file?.name.toLowerCase().endsWith('.json')) return;
+  event.preventDefault();
+  if (link) await importDndCreature(link);
+  else importLss(file);
+});
+$('combat-list').addEventListener('dragstart', event => {
+  const card = event.target.closest('.combat-card');
+  if (!card) return;
+  event.dataTransfer.setData(tokenDragType, JSON.stringify({ kind: 'actor', id: card.dataset.id, ...currentContext() }));
+  event.dataTransfer.effectAllowed = 'copyMove';
+});
+
+function openCombatantEditor(combatant, template = false) {
   const form = $('combatant-form');
   form.reset();
-  editingCombatant = combatant?.id ?? null;
+  editingCombatant = template ? null : combatant?.id ?? null;
+  editingTemplate = template ? combatant?.id ?? '' : null;
   editingContext = currentContext();
   portrait = combatant?.image ?? null;
   form.elements.role.value = combatant?.role ?? 'enemy';
   form.elements.initiativeBonus.value = combatant?.initiativeBonus ?? 0;
-  updateBonusField();
-  $('editor-title').textContent = combatant ? 'Редактировать участника' : 'Добавить участника';
-  $('editor-submit').textContent = combatant ? 'Сохранить' : 'Добавить в трекер';
-  $('current-hp-field').hidden = !combatant;
-  form.elements.hp.disabled = !combatant;
-  form.elements.hp.required = !!combatant;
+  $('editor-title').textContent = template ? (combatant ? 'Редактировать заготовку' : 'Новая заготовка')
+    : (combatant ? 'Редактировать участника' : 'Добавить участника');
+  $('editor-submit').textContent = template || combatant ? 'Сохранить' : 'Добавить в трекер';
+  $('save-template-copy').hidden = !editingCombatant;
+  $('current-hp-field').hidden = !editingCombatant;
+  form.elements.hp.disabled = !editingCombatant;
+  form.elements.hp.required = !!editingCombatant;
   if (combatant) {
-    for (const field of ['name', 'hp', 'maxHp']) form.elements[field].value = combatant[field];
+    for (const field of ['name', 'maxHp']) form.elements[field].value = combatant[field];
+    if (editingCombatant) form.elements.hp.value = combatant.hp;
   }
   $('portrait-preview').innerHTML = portrait ? `<img src="${assetURL(portrait)}" alt="Портрет">` : '＋';
   openDialog('editor');
 }
-function updateBonusField() {
-  const form = $('combatant-form');
-  const nonEnemy = form.elements.role.value !== 'enemy';
-  $('initiative-bonus-field').hidden = nonEnemy;
-  form.elements.initiativeBonus.disabled = nonEnemy;
-}
-$('combatant-role').onchange = updateBonusField;
 $('add-combatant').onclick = () => openCombatantEditor();
+$('save-template-copy').onclick = () => {
+  if ($('combatant-form').reportValidity()) saveCombatant(true);
+};
 $('choose-portrait').onclick = async () => { const r = await result(api.importFile('image')); if (r?.asset) { portrait = r.asset; $('portrait-preview').innerHTML = `<img src="${assetURL(portrait)}" alt="Портрет">`; } };
 $('combatant-form').onsubmit = async e => {
-  e.preventDefault(); const f = new FormData(e.target);
+  e.preventDefault();
+  await saveCombatant(false);
+};
+async function saveCombatant(copyTemplate) {
+  const form = $('combatant-form'), f = new FormData(form);
   const payload = {
     name: f.get('name'), maxHp: Number(f.get('maxHp')),
-    ...(f.has('initiativeBonus') ? { initiativeBonus: Number(f.get('initiativeBonus')) } : {}),
+    initiativeBonus: Number(form.elements.initiativeBonus.value),
     role: f.get('role'), image: portrait
   };
-  if (editingCombatant) Object.assign(payload, { id: editingCombatant, hp: Number(f.get('hp')) });
-  const r = await dispatch(editingCombatant ? 'combatant:edit' : 'combatant:add', payload, editingContext);
+  const template = editingTemplate !== null || copyTemplate;
+  if (template && editingTemplate) payload.id = editingTemplate;
+  if (!template && editingCombatant) Object.assign(payload, { id: editingCombatant, hp: Number(f.get('hp')) });
+  const r = await dispatch(template ? 'library:save' : editingCombatant ? 'combatant:edit' : 'combatant:add', payload, editingContext);
   if (r?.ok) closeDialog($('editor'));
-};
+  if (r?.ok && copyTemplate) toast('Персонаж сохранён в заготовках');
+}
 $('combat-list').addEventListener('submit', async e => {
   if (!e.target.matches('.hp-form')) return; e.preventDefault();
   const input = e.target.querySelector('input'), expression = input.value.replace('−', '-');
@@ -568,6 +732,123 @@ $('grid-form').onsubmit = async e => {
   if (response?.ok) closeDialog($('grid-dialog'));
 };
 const viewport = $('map-viewport');
+const mapScene = createMapTerrain({
+  getState: () => state,
+  getLayout: () => boardLayout,
+  getPoint(event) {
+    const point = mapPointAt(event.clientX, event.clientY);
+    return { x: point.x / boardLayout.zoom, y: point.y / boardLayout.zoom };
+  },
+  dispatch, redraw: renderMap,
+  expand: () => expandPanel('map'), isExpanded: () => expanded === 'map', readOnly: isPlayerMap,
+  editItem: openMapItemEditor, assetURL,
+});
+
+function renderItemIcon() {
+  const preview = $('item-icon-preview');
+  preview.replaceChildren();
+  if (mapItemDraft.image) {
+    const image = document.createElement('img');
+    image.src = assetURL(mapItemDraft.image);
+    image.alt = '';
+    preview.append(image);
+  } else preview.textContent = '◆';
+  $('clear-item-icon').hidden = !mapItemDraft.image;
+}
+function openMapItemEditor(item) {
+  mapItemDraft = { id: item?.id, image: item?.image ?? null, context: currentContext() };
+  $('item-name').value = item?.name ?? '';
+  $('submit-map-item').textContent = item ? 'Сохранить' : 'Разместить на карте';
+  renderItemIcon();
+  openDialog('map-item-dialog');
+}
+async function loadItemIcon(promise) {
+  const draft = mapItemDraft;
+  const chosen = await result(promise);
+  if (chosen?.asset && mapItemDraft === draft && $('map-item-dialog').open) {
+    draft.image = chosen.asset;
+    renderItemIcon();
+  }
+}
+$('choose-item-icon').onclick = () => loadItemIcon(api.importFile('image'));
+$('map-item-dialog').addEventListener('dragover', event => {
+  if (event.dataTransfer.types.includes('Files')) event.preventDefault();
+});
+$('map-item-dialog').addEventListener('drop', event => {
+  const file = event.dataTransfer.files[0];
+  if (!file) return;
+  event.preventDefault();
+  loadItemIcon(api.importDrop(file, 'image'));
+});
+$('clear-item-icon').onclick = () => { mapItemDraft.image = null; renderItemIcon(); };
+async function beginItemPlacement(item, context) {
+  if (expanded && expanded !== 'map') await expandPanel('map');
+  mapScene.hideEditor();
+  setPlacement({ kind: 'item', name: item.name, image: item.image, context });
+  viewport.focus({ preventScroll: true });
+}
+$('map-item-form').onsubmit = async event => {
+  event.preventDefault();
+  const name = $('item-name').value.trim();
+  if (!name) return;
+  const { id, image, context } = mapItemDraft;
+  closeDialog($('map-item-dialog'));
+  if (id) await dispatch('terrain:edit-item', { id, name, image }, context);
+  else {
+    if (context.expectedMapId !== state.activeMapId) return toast('Карта переключилась. Создай предмет заново.');
+    await beginItemPlacement({ name, image }, context);
+  }
+};
+
+function pickToken(id) {
+  selectedToken = id;
+  for (const token of $('map-tokens').children) token.classList.toggle('selected-token', token.dataset.token === id);
+}
+function setPlacement(value) {
+  placement = value;
+  const hint = $('placement-hint');
+  hint.hidden = !placement;
+  hint.textContent = placement ? `${placement.name} · выбери клетку · Esc отменяет` : '';
+  viewport.classList.toggle('placing-token', !!placement);
+}
+async function beginPlacement(kind, id, context = currentContext()) {
+  if (detachedPanel) return result(api.placeToken({ kind, id, ...context }));
+  if (context.expectedMapId !== state.activeMapId || context.expectedBattleId !== state.activeBattleId) return;
+  const item = (kind === 'template' ? state.library : state.combatants).find(actor => actor.id === id);
+  if (!item) return;
+  if (expanded && expanded !== 'map') await expandPanel('map');
+  mapScene.hideEditor();
+  pickToken(null);
+  setPlacement({ kind, id, context, name: item.name });
+  viewport.focus({ preventScroll: true });
+}
+function placementCell(event) {
+  if (!boardProjection) return null;
+  const { map } = state;
+  const point = mapPointAt(event.clientX, event.clientY), zoom = boardLayout.zoom;
+  if (point.x < 0 || point.y < 0 || point.x >= boardLayout.width || point.y >= boardLayout.height) return null;
+  const col = Math.max(0, Math.min(2000, Math.floor((point.x / zoom - map.offsetX) / map.grid)));
+  const row = Math.max(0, Math.min(2000, Math.floor((point.y / zoom - map.offsetY) / map.grid)));
+  return { col, row };
+}
+async function putItem(item, cell, map, context) {
+  const a = MapGeometry.cellCenter(map, cell.col, cell.row);
+  return dispatch('terrain:add', { kind: 'item', name: item.name, image: item.image, a }, context);
+}
+async function placeAt(event, entry) {
+  const cell = placementCell(event);
+  if (!cell || !entry) return;
+  const payload = { id: entry.id, ...cell };
+  const alreadyOnMap = state.tokens.some(token => token.combatantId === entry.id);
+  const response = entry.kind === 'item' ? await putItem(entry, cell, state.map, entry.context)
+    : entry.kind === 'template' ? await dispatch('library:deploy', { ...payload, place: true }, entry.context)
+    : await dispatch(alreadyOnMap ? 'token:move' : 'token:add', payload, entry.context);
+  if (response?.ok) {
+    setPlacement(null);
+    if (entry.kind === 'actor') pickToken(entry.id);
+    viewport.focus({ preventScroll: true });
+  }
+}
 function queueMapCamera() {
   if (detachedPanel || pendingMapFrame || restoreMapCamera || !state) return;
   const mapId = state.activeMapId;
@@ -668,7 +949,14 @@ viewport.addEventListener('wheel', e => {
   changeZoom(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - rect.left, e.clientY - rect.top);
 }, { passive: false });
 viewport.addEventListener('pointerdown', e => {
-  if (isPlayerMap || e.button !== 0 || e.target.closest('[data-token]') || e.target === viewport || !boardProjection) return;
+  if (isPlayerMap || e.button !== 0 || e.target.closest('[data-door-id]') || !boardProjection) return;
+  if (placement) {
+    e.preventDefault();
+    placeAt(e, placement);
+    return;
+  }
+  if (mapScene.pointerDown(e, currentContext()) || e.target.closest('[data-token]') || e.target === viewport) return;
+  pickToken(null);
   viewport.focus({ preventScroll: true });
   if (e.shiftKey && !detachedPanel) {
     const point = mapPointAt(e.clientX, e.clientY);
@@ -714,9 +1002,40 @@ $('toggle-player-blackout').onchange = e => {
   $('player-settings').setAttribute('aria-pressed', String(playerBlackout));
   mirrorMap({ blackout: playerBlackout });
 };
-$('map-viewport').addEventListener('dragover', e => { e.preventDefault(); });
-$('map-viewport').addEventListener('drop', e => { e.preventDefault(); if (!isPlayerMap && e.dataTransfer.files[0]) loadMap(api.importDrop(e.dataTransfer.files[0], 'image')); });
+viewport.addEventListener('dragover', e => {
+  if (!isPlayerMap) e.preventDefault();
+});
+viewport.addEventListener('drop', async e => {
+  e.preventDefault();
+  if (isPlayerMap) return;
+  if (e.dataTransfer.types.includes(tokenDragType)) {
+    let dragged;
+    try { dragged = JSON.parse(e.dataTransfer.getData(tokenDragType)); } catch { return; }
+    if (dragged?.kind === 'actor' && typeof dragged.id === 'string' &&
+        dragged.expectedBattleId === state.activeBattleId && dragged.expectedMapId === state.activeMapId) {
+      placeAt(e, { ...dragged, context: currentContext() });
+    }
+  } else {
+    const link = droppedDndLink(e.dataTransfer, 'item');
+    if (link) {
+      const context = currentContext(), map = state.map, cell = placementCell(e);
+      if (!cell) return;
+      const item = await readDndCard(link, 'item');
+      if (item) await putItem(item, cell, map, context);
+    } else if (e.dataTransfer.files[0]) loadMap(api.importDrop(e.dataTransfer.files[0], 'image'));
+  }
+});
 document.addEventListener('keydown', e => {
+  const modal = document.querySelector('dialog[open]');
+  const onMap = !isPlayerMap && !modal && e.target.closest('#map-viewport');
+  if (onMap && !e.altKey && !e.ctrlKey && !e.metaKey && !e.repeat) {
+    if (e.key === 'Backspace' && selectedToken && !draggingToken && !mapScene.isEditing()) {
+      e.preventDefault();
+      dispatch('token:remove', { id: selectedToken });
+      return;
+    }
+    if (e.code === 'KeyF') { e.preventDefault(); mapScene.toggleFog(); return; }
+  }
   if (e.ctrlKey && e.key.toLowerCase() === 'l' && (!detachedPanel || detachedPanel === 'info') &&
       !$('workspace').querySelector('.info.is-detached') && !document.querySelector('dialog[open]')) {
     e.preventDefault();
@@ -724,7 +1043,9 @@ document.addEventListener('keydown', e => {
     $('reference-query').focus();
     $('reference-query').select();
   }
-  if (e.key === 'Escape' && !document.querySelector('dialog[open]')) {
+  if (e.key === 'Escape' && !modal) {
+    if (placement) { e.preventDefault(); setPlacement(null); return; }
+    if (mapScene.hideEditor()) { e.preventDefault(); return; }
     if (expanded) { e.preventDefault(); expandPanel(expanded); }
     else if (isPlayerMap && document.body.classList.contains('player-fullscreen')) result(api.fullscreen());
   }
@@ -737,17 +1058,30 @@ document.addEventListener('keydown', e => {
   }
 });
 $('map-tokens').addEventListener('dblclick', e => { const token = e.target.closest('[data-token]'); if (token && !isPlayerMap) dispatch('token:remove', { id: token.dataset.token }); });
+$('map-tokens').addEventListener('focusin', e => {
+  if (!isPlayerMap && e.target.dataset.token) pickToken(e.target.dataset.token);
+});
 $('map-tokens').addEventListener('pointerdown', e => {
-  const token = e.target.closest('[data-token]'); if (!token || isPlayerMap || e.button !== 0 || !boardProjection) return;
-  e.preventDefault(); draggingToken = true; token.classList.add('dragging'); token.setPointerCapture(e.pointerId);
+  const token = e.target.closest('[data-token]'); if (!token || isPlayerMap || placement || mapScene.isEditing() || e.button !== 0 || !boardProjection) return;
   const id = token.dataset.token, m = { ...state.map }, z = mapDrawingZoom();
+  const original = state.tokens.find(t => t.combatantId === id);
+  if (!original) return;
+  token.focus({ preventScroll: true });
+  pickToken(id);
+  e.preventDefault(); draggingToken = true; token.classList.add('dragging'); token.setPointerCapture(e.pointerId);
   const context = currentContext();
-  let col = 0, row = 0, moved = false, previewFrame = 0;
+  const from = MapGeometry.cellCenter(m, original.col, original.row);
+  let { col, row } = original;
+  let moved = false, blocked = false, previewFrame = 0;
   const move = event => {
-    moved = true;
     const point = mapPointAt(event.clientX, event.clientY);
-    col = Math.max(0, Math.floor((point.x / z - m.offsetX) / m.grid));
-    row = Math.max(0, Math.floor((point.y / z - m.offsetY) / m.grid));
+    const nextCol = Math.max(0, Math.min(2000, Math.floor((point.x / z - m.offsetX) / m.grid)));
+    const nextRow = Math.max(0, Math.min(2000, Math.floor((point.y / z - m.offsetY) / m.grid)));
+    blocked = MapGeometry.blocked(MapGeometry.blockingWalls(state.terrain), from, MapGeometry.cellCenter(m, nextCol, nextRow));
+    if (blocked || (nextCol === col && nextRow === row)) return;
+    moved = true;
+    col = nextCol;
+    row = nextRow;
     positionToken(token, m, col, row, z);
     if (detached.includes('map') && !previewFrame) {
       previewFrame = requestAnimationFrame(() => {
@@ -761,11 +1095,14 @@ $('map-tokens').addEventListener('pointerdown', e => {
     draggingToken = false; token.classList.remove('dragging');
     cancelTokenDrag = null;
     cancelAnimationFrame(previewFrame);
-    if (moved) await dispatch('token:move', { id, col, row }, context);
+    if (moved) {
+      if (!(await dispatch('token:move', { id, col, row }, context))?.ok) renderMap();
+    }
     else renderMap();
+    if (blocked) toast('Дальше стена или закрытая дверь');
     if (detached.includes('map')) mirrorMap({ token: null }, context.expectedMapId);
   };
-  const cancel = () => { moved = false; stop(); };
+  const cancel = () => { moved = blocked = false; stop(); };
   cancelTokenDrag = cancel;
   token.addEventListener('pointermove', move); token.addEventListener('pointerup', stop); token.addEventListener('pointercancel', cancel);
 });
@@ -790,7 +1127,22 @@ $('volume').onchange = e => dispatch('music:settings', { volume: Number(e.target
 $('audio').onended = () => { if (!state.music.loop) dispatch('music:settings', { playing: false }); };
 $('audio').onerror = () => { if (state?.music.playing) { toast('Аудиофайл недоступен или имеет неподдерживаемый формат'); dispatch('music:settings', { playing: false }); } };
 $('help').onclick = () => openDialog('help-dialog');
-document.querySelectorAll('dialog').forEach(d => { d.addEventListener('close', syncRemoteBounds); d.addEventListener('click', e => { if (e.target === d) { const r = d.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeDialog(d); } }); });
+document.querySelectorAll('dialog').forEach(dialog => {
+  let startedOnBackdrop = false;
+  const onBackdrop = event => {
+    if (event.target !== dialog) return false;
+    const bounds = dialog.getBoundingClientRect();
+    return event.clientX < bounds.left || event.clientX > bounds.right ||
+      event.clientY < bounds.top || event.clientY > bounds.bottom;
+  };
+  dialog.addEventListener('pointerdown', event => { startedOnBackdrop = event.button === 0 && onBackdrop(event); });
+  dialog.addEventListener('pointercancel', () => { startedOnBackdrop = false; });
+  dialog.addEventListener('click', event => {
+    if (startedOnBackdrop && onBackdrop(event)) closeDialog(dialog);
+    startedOnBackdrop = false;
+  });
+  dialog.addEventListener('close', () => { startedOnBackdrop = false; syncRemoteBounds(); });
+});
 function updateUI(status) { currentUpdate = status; $('updates').textContent = status.phase === 'available' ? `↓ Версия ${status.version}` : status.phase === 'downloaded' ? '↻ Установить обновление' : ['checking', 'downloading', 'releases'].includes(status.phase) ? status.text : '↻ Обновления'; }
 function updateMusicStatus(status) {
   musicBusy = ['loading', 'stopping'].includes(status.phase);
@@ -816,6 +1168,7 @@ api.onStatus(status => {
   if (status.scope === 'update') { updateUI(status); if (['available', 'downloaded', 'error', 'latest'].includes(status.phase)) toast(status.text); }
   else if (status.scope === 'music') updateMusicStatus(status);
   else if (status.scope === 'map-focus') focusToken(status.id);
+  else if (status.scope === 'map-place' && !detachedPanel) beginPlacement(status.kind, status.id, status);
   else if (status.scope === 'reference') {
     reference = status;
     if (!isPlayerMap) renderReference();
@@ -831,7 +1184,7 @@ api.onStatus(status => {
     $('player-blackout').hidden = !playerBlackout;
     if (Object.hasOwn(status, 'token')) {
       previewToken = status.token;
-      if (previewToken) paintPlayerMap();
+      if (previewToken && !state.fog.enabled) paintPlayerMap();
       else renderMap();
     } else paintPlayerMap();
     if (status.ping) showMapPing(status.ping);
@@ -877,6 +1230,8 @@ window.addEventListener('resize', syncRemoteBounds);
 function readWindowState(value) {
   const switched = state?.activeMapId !== value.state.activeMapId;
   const rotated = !switched && (state?.map.rotation ?? 0) !== (value.state.map.rotation ?? 0);
+  if (switched || state?.activeBattleId !== value.state.activeBattleId) setPlacement(null);
+  if (switched) selectedToken = null;
   if (switched || rotated) {
     cancelTokenDrag?.();
     cancelAnimationFrame(pendingMapFrame);
@@ -925,4 +1280,6 @@ api.onState(value => { readWindowState(value); renderAll(); });
   if (!isPlayerMap) renderReference();
   queueMapCamera();
   if (!detachedPanel) ambience.start({ openDialog, closeDialog, showAtStart: initial.welcomeAtStart });
+  const now = new Date(), month = now.getMonth(), day = now.getDate();
+  $('holiday-lights').hidden = !!detachedPanel || !(month === 11 || month === 10 && day >= 20 || month === 0 && day <= 14);
 })();

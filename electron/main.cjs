@@ -1,10 +1,12 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, protocol, net, dialog, clipboard, session, shell, screen, Menu } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, protocol, net, dialog, clipboard, session, shell, screen, Menu, nativeImage } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { fileURLToPath, pathToFileURL } = require('node:url');
 const { randomUUID } = require('node:crypto');
 const { beginMusicImport, mediaTools } = require('./music-import.cjs');
-const { initialState, migrateState, activeView, reducer } = require('./model.cjs');
+const { initialState, migrateState, activeView, reducer, canMoveToken } = require('./model.cjs');
+const { readCharacter } = require('./lss-import.cjs');
+const { publicDndUrl, readPublicResponse } = require('./dnd-import.cjs');
 const { ROLES, CONDITIONS, playerMapActors } = require('./combat-rules.cjs');
 const { DND_HOME, WEB_HOME, GEMINI, REFERENCE_LINKS, safeUrl, searchUrl } = require('./reference.cjs');
 const { autoUpdater } = require('electron-updater');
@@ -50,7 +52,9 @@ function windowState(owner, view = activeView(state)) {
   if (owner === windows.get('map')?.webContents) {
     return {
       state: { activeMapId: view.activeMapId, map: view.map, tokens: view.tokens,
-        mapCombatants: playerMapActors(view.mapCombatants, view.map.playerHealth !== false), turn: view.turn },
+        mapCombatants: playerMapActors(view.mapCombatants, view.map.playerHealth !== false),
+        visionOrigins: view.mapCombatants.filter(actor => actor.role === 'player' && actor.hp > 0).map(actor => actor.id),
+        terrain: view.terrain, fog: view.fog, turn: view.turn },
       detached: ['map'], presentation, recentImages: [], mapCamera
     };
   }
@@ -301,7 +305,7 @@ function setupIPC() {
   handle('dispatch', (event, action) => {
     if (event.sender === windows.get('map')?.webContents) throw new Error('Экраном управляет мастер');
     if (!action || typeof action.type !== 'string' || JSON.stringify(action).length > 10000) throw new Error('Неверная команда');
-    if (['map:image', 'combatant:add', 'combatant:edit'].includes(action.type) && action.payload?.image) assetName(action.payload.image);
+    if (['map:image', 'combatant:add', 'combatant:edit', 'library:save', 'terrain:add', 'terrain:edit-item'].includes(action.type) && action.payload?.image) assetName(action.payload.image);
     if (action.type === 'music:add') assetName(action.payload?.asset);
     if (action.type === 'gallery:add') {
       const name = assetName(action.payload?.image);
@@ -309,7 +313,7 @@ function setupIPC() {
         throw new Error('Изображение отсутствует');
       }
     }
-    if (['music:save-import', 'bookmark:add', 'bookmark:remove'].includes(action.type)) throw new Error('Команда недоступна');
+    if (['music:save-import', 'bookmark:add', 'bookmark:remove', 'combatant:import'].includes(action.type)) throw new Error('Команда недоступна');
     const result = commit(action);
     return action.type === 'gallery:add' ? { ...result, id: state.gallery[0].id } : result;
   });
@@ -318,6 +322,40 @@ function setupIPC() {
     return result.canceled ? { canceled: true } : importAsset(result.filePaths[0], kind);
   });
   handle('import-drop', (_, { path: file, kind }) => importAsset(file, kind));
+  handle('read-dnd-card', async (event, { url, kind }) => {
+    if (event.sender === windows.get('map')?.webContents || !['creature', 'item'].includes(kind)) throw new Error('Импорт доступен мастеру');
+    const source = publicDndUrl(url, kind);
+    if (!source) throw new Error('Перетащи ссылку на отдельную карточку dnd.su');
+    const bytes = await readPublicResponse(net, source, 2 * 1024 * 1024);
+    return { ok: true, source, html: bytes.toString('utf8') };
+  });
+  handle('read-dnd-icon', async (event, url) => {
+    if (event.sender === windows.get('map')?.webContents) throw new Error('Импорт доступен мастеру');
+    const source = publicDndUrl(url, 'portrait');
+    if (!source) return { ok: true };
+    const bytes = await readPublicResponse(net, source, 5 * 1024 * 1024);
+    const icon = nativeImage.createFromBuffer(bytes);
+    if (icon.isEmpty()) return { ok: true };
+    return pasteImageBytes(icon.resize({ width: Math.min(384, icon.getSize().width) }).toPNG(), '.png');
+  });
+  handle('import-lss', async (event, { file, expectedBattleId }) => {
+    if (event.sender === windows.get('map')?.webContents) throw new Error('Экраном управляет мастер');
+    if (!file) {
+      const chosen = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
+        properties: ['openFile'], filters: [{ name: 'Лист Long Story Short', extensions: ['json'] }],
+      });
+      if (chosen.canceled) return { canceled: true };
+      [file] = chosen.filePaths;
+    }
+    if (state.activeBattleId !== expectedBattleId) throw new Error('Бой переключился. Повтори импорт.');
+    if (path.extname(file).toLowerCase() !== '.json' || fs.statSync(file).size > 12 * 1024 * 1024) {
+      throw new Error('Выбери JSON-файл Long Story Short размером до 12 МБ');
+    }
+    const { portrait, initiativeNeedsReview, ...actor } = readCharacter(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+    const image = portrait && nativeImage.createFromBuffer(portrait);
+    if (image && !image.isEmpty()) actor.image = pasteImageBytes(image.resize({ width: 384 }).toPNG(), '.png').asset;
+    return { ...commit({ type: 'combatant:import', payload: { ...actor, expectedBattleId } }), initiativeNeedsReview };
+  });
   handle('paste-image', async () => {
     const items = await clipboard.read().catch(() => []);
     for (const item of items) {
@@ -366,6 +404,16 @@ function setupIPC() {
     sendAll('status', { scope: 'map-focus', id });
     return { ok: true };
   });
+  handle('place-token', (event, { kind, id, expectedBattleId, expectedMapId }) => {
+    if (event.sender !== windows.get('combat')?.webContents || !['actor', 'template'].includes(kind)) {
+      throw new Error('Размещение доступно в трекере боя');
+    }
+    if (expectedBattleId !== state.activeBattleId || expectedMapId !== state.activeMapId) throw new Error('Карта или бой переключились');
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.send('status', { scope: 'map-place', kind, id, expectedBattleId, expectedMapId });
+    return { ok: true };
+  });
   handle('dock', event => { const w = BrowserWindow.fromWebContents(event.sender); if (w !== mainWindow) w.close(); return { ok: true }; });
   ipcMain.on('mirror-map', (event, preview) => {
     if (event.sender !== mainWindow?.webContents || !preview) return;
@@ -377,8 +425,10 @@ function setupIPC() {
     const mirror = windows.get('map');
     if (!mirror || mirror.isDestroyed()) return;
     const token = preview.token;
-    const valid = token && Number.isFinite(token.col) && Number.isFinite(token.row) &&
-      state.boards.find(item => item.id === state.activeMapId).tokens.some(item => item.combatantId === token.id);
+    const board = state.boards.find(item => item.id === state.activeMapId);
+    const original = token && board.tokens.find(item => item.combatantId === token.id);
+    const valid = original && [token.col, token.row].every(n => Number.isInteger(n) && n >= 0 && n <= 2000) &&
+      canMoveToken(board, original, token.col, token.row);
     mirror.webContents.send('status', {
       scope: 'map-preview', mapId: state.activeMapId, camera: mapCameras.get(state.activeMapId) ?? null,
       blackout: playerBlackout,
@@ -525,7 +575,7 @@ app.whenReady().then(async () => {
       const bundledAssets = ['/assets/demo-map.svg', '/assets/PressStart2P-Regular.ttf', '/assets/welcome-tavern.webp', '/assets/welcome-jingle.wav'];
       if (u.pathname.startsWith('/assets/') && !bundledAssets.includes(u.pathname)) file = path.join(assets, assetName(decodeURIComponent(u.pathname.slice(8))));
       else {
-        const allowed = ['index.html', 'app.js', 'map-geometry.js', 'styles.css', 'tavern.css', 'tavern-art.js', 'ambience.css', 'ambience.js', ...bundledAssets.map(asset => asset.slice(1))];
+        const allowed = ['index.html', 'app.js', 'map-geometry.js', 'map-terrain.js', 'styles.css', 'tavern.css', 'tavern-art.js', 'ambience.css', 'ambience.js', 'scene.css', ...bundledAssets.map(asset => asset.slice(1))];
         const relative = u.pathname.slice(1) || 'index.html';
         if (!allowed.includes(relative)) return new Response('Not found', { status: 404 });
         file = path.join(__dirname, '..', 'ui', relative);

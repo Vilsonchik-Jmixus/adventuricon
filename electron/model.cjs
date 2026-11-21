@@ -1,14 +1,16 @@
 const { randomUUID, randomInt } = require('node:crypto');
 const { roleOf, effectsFor, MANUAL_IDS } = require('./combat-rules.cjs');
+const { blockingWalls, blocked, cellCenter, distanceToSegment, visibleCells } = require('../ui/map-geometry.js');
 const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
 const finite = (n, fallback) => Number.isFinite(Number(n)) ? Number(n) : fallback;
 const text = (v, max = 120) => String(v ?? '').trim().slice(0, max);
+const newFog = (enabled = false) => ({ enabled, explored: [] });
 function newBattle(title = 'Первый бой') {
   return { id: randomUUID(), title, linkedMapId: null, combatants: [], round: 1, turn: null, acted: [], manualOrder: null, history: [] };
 }
 function newBoard(title = 'Первая карта', demo = false) {
   return {
-    id: randomUUID(), title, tokens: [],
+    id: randomUUID(), title, tokens: [], terrain: [], fog: newFog(),
     map: { image: null, demo, grid: 64, offsetX: 0, offsetY: 0, opacity: 0.3, color: '#d8e6e0', visible: true, zoom: 1 }
   };
 }
@@ -16,7 +18,7 @@ function initialState() {
   const battle = newBattle(), board = newBoard(undefined, true);
   return {
     schema: 2, revision: 0, battles: [battle], boards: [board],
-    activeBattleId: battle.id, activeMapId: board.id, gallery: [], bookmarks: [],
+    activeBattleId: battle.id, activeMapId: board.id, gallery: [], bookmarks: [], library: [],
     music: { folders: ['Общее', 'Бой', 'Атмосфера'], tracks: [], current: null, playing: false, volume: 0.55, loop: true },
     layout: { left: 32, middle: 34, top: 52, windows: {} }
   };
@@ -29,7 +31,9 @@ function migrateState(saved) {
         !saved.boards.some(board => board.id === saved.activeMapId)) {
       throw new Error('Бои или карты повреждены');
     }
-    return { ...saved, battles: saved.battles.map(restoreRound), bookmarks: Array.isArray(saved.bookmarks) ? saved.bookmarks : [] };
+    return { ...saved, battles: saved.battles.map(restoreRound), bookmarks: Array.isArray(saved.bookmarks) ? saved.bookmarks : [],
+      library: Array.isArray(saved.library) ? saved.library : [],
+      boards: saved.boards.map(board => ({ terrain: [], fog: newFog(), ...board })) };
   }
   if (saved.schema !== 1 || !Array.isArray(saved.combatants) || !Array.isArray(saved.tokens) || !saved.map) {
     throw new Error('Неверный формат сохранения');
@@ -39,7 +43,7 @@ function migrateState(saved) {
     combatants, round: round ?? 1, turn: turn ?? null, history: history ?? [] });
   const board = { ...newBoard('Текущая карта'), map, tokens };
   return {
-    ...base, schema: 2, gallery: gallery ?? [], bookmarks: [],
+    ...base, schema: 2, gallery: gallery ?? [], bookmarks: [], library: [],
     battles: [battle], boards: [board], activeBattleId: battle.id, activeMapId: board.id
   };
 }
@@ -65,13 +69,13 @@ function activeView(state) {
   const placed = new Set(board.tokens.map(token => token.combatantId));
   const describe = c => ({ ...c, role: roleOf(c.role), initiativeBonus: c.initiativeBonus ?? 0, effects: effectsFor(c) });
   return {
-    revision: state.revision, music: state.music, layout: state.layout, gallery: state.gallery, bookmarks: state.bookmarks,
+    revision: state.revision, music: state.music, layout: state.layout, gallery: state.gallery, bookmarks: state.bookmarks, library: state.library,
     activeBattleId: battle.id, activeMapId: board.id,
     battleChoices: state.battles.map(({ id, title, linkedMapId }) => ({ id, title, linkedMapId })),
     mapChoices: state.boards.map(({ id, title }) => ({ id, title })),
     combatants: battle.combatants.map(describe), order: battleOrder(battle).map(c => c.id), manualOrder: !!battle.manualOrder,
     round: battle.round, turn: battle.turn, acted: battle.acted, history: battle.history,
-    map: board.map, tokens: board.tokens,
+    map: board.map, tokens: board.tokens, terrain: board.terrain, fog: board.fog,
     mapCombatants: state.battles.flatMap(entry => entry.combatants.filter(c => placed.has(c.id)).map(describe))
   };
 }
@@ -93,16 +97,55 @@ const initiativeBonus = (value, fallback = 0) => clamp(Math.round(finite(value, 
 function copyCombatant(c, name = c.name) {
   return { ...c, id: randomUUID(), name, hp: c.maxHp, conditions: [], exhaustion: 0, initiativeRoll: null };
 }
+function characterFields(p) {
+  return { name: text(p.name) || 'Безымянный', image: text(p.image, 100) || null,
+    maxHp: clamp(Math.round(finite(p.maxHp, 10)), 1, 999999), role: roleOf(p.role),
+    initiativeBonus: initiativeBonus(p.initiativeBonus) };
+}
+function newCombatant(fields, hp = fields.maxHp) {
+  return { ...fields, id: randomUUID(), hp, initiative: null, conditions: [], exhaustion: 0 };
+}
+const cellIndex = n => clamp(Math.round(finite(n, 0)), 0, 2000);
+function placeToken(board, id, { col, row }) {
+  if (board.tokens.some(t => t.combatantId === id)) return;
+  if (Number.isFinite(col) && Number.isFinite(row)) {
+    col = cellIndex(col);
+    row = cellIndex(row);
+    if (board.tokens.some(t => t.col === col && t.row === row)) throw new Error('Эта клетка занята');
+  } else {
+    const occupied = new Set(board.tokens.map(t => `${t.col},${t.row}`));
+    let index = 0;
+    while (occupied.has(`${index % 8},${Math.floor(index / 8)}`)) index++;
+    col = index % 8;
+    row = Math.floor(index / 8);
+  }
+  board.tokens.push({ combatantId: id, col, row });
+}
+function canMoveToken(board, token, col, row) {
+  return !blocked(blockingWalls(board.terrain), cellCenter(board.map, token.col, token.row), cellCenter(board.map, col, row));
+}
+function updateExploration(state, board) {
+  if (!board.fog.enabled) return;
+  const players = new Set(state.battles.flatMap(battle => battle.combatants
+    .filter(actor => actor.role === 'player' && actor.hp > 0).map(actor => actor.id)));
+  const origins = board.tokens.filter(token => players.has(token.combatantId));
+  const seen = visibleCells(board.map, origins, blockingWalls(board.terrain));
+  board.fog.explored = [...new Set([...board.fog.explored, ...seen])].slice(-32000);
+}
+const terrainPoint = point => {
+  if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) throw new Error('Укажи точку на карте');
+  return { x: clamp(Math.round(point.x), 0, 512000), y: clamp(Math.round(point.y), 0, 512000) };
+};
 function reducer(state, action) {
   const s = structuredClone(state), p = action.payload || {};
   const battle = s.battles.find(entry => entry.id === s.activeBattleId);
   const board = s.boards.find(entry => entry.id === s.activeMapId);
   if (p.expectedBattleId && p.expectedBattleId !== battle.id &&
-      /^(combatant:|combat:|battle:(save|duplicate)|token:add)/.test(action.type)) {
+      /^(combatant:|combat:|battle:(save|duplicate)|token:add|library:deploy)/.test(action.type)) {
     throw new Error('Бой переключился. Открой действие заново.');
   }
   if (p.expectedMapId && p.expectedMapId !== board.id &&
-      /^(token:|map:(image|settings|save|duplicate))/.test(action.type)) {
+      /^(token:|terrain:|fog:|map:(image|settings|save|duplicate)|library:deploy)/.test(action.type)) {
     throw new Error('Карта переключилась. Открой действие заново.');
   }
   switch (action.type) {
@@ -147,6 +190,7 @@ function reducer(state, action) {
     }
     case 'map:create': {
       const next = newBoard(text(p.title) || 'Новая карта');
+      next.fog.enabled = p.fog === true;
       s.boards.push(next);
       s.activeMapId = next.id;
       break;
@@ -159,7 +203,8 @@ function reducer(state, action) {
       board.title = text(p.title) || board.title;
       break;
     case 'map:duplicate': {
-      const next = { ...newBoard(text(p.title) || (board.title + ' · копия')), map: { ...board.map } };
+      const next = { ...newBoard(text(p.title) || (board.title + ' · копия')), map: { ...board.map },
+        terrain: structuredClone(board.terrain), fog: newFog(board.fog.enabled) };
       s.boards.push(next);
       s.activeMapId = next.id;
       break;
@@ -173,12 +218,32 @@ function reducer(state, action) {
       break;
     }
     case 'combatant:add': {
-      const maxHp = clamp(Math.round(finite(p.maxHp, 10)), 1, 999999);
-      battle.combatants.push({
-        id: randomUUID(), name: text(p.name) || 'Безымянный', image: text(p.image, 100) || null,
-        maxHp, hp: maxHp, initiative: null,
-        role: roleOf(p.role), initiativeBonus: initiativeBonus(p.initiativeBonus), conditions: [], exhaustion: 0
-      });
+      battle.combatants.push(newCombatant(characterFields(p)));
+      break;
+    }
+    case 'combatant:import': {
+      const fields = characterFields({ ...p, role: 'player' });
+      const actor = newCombatant(fields, clamp(Math.round(finite(p.hp, fields.maxHp)), 0, fields.maxHp));
+      battle.combatants.push(actor);
+      break;
+    }
+    case 'library:save': {
+      const index = s.library.findIndex(entry => entry.id === p.id);
+      if (p.id && index < 0) throw new Error('Заготовка уже удалена');
+      const entry = { id: p.id || randomUUID(), ...characterFields(p) };
+      if (index < 0) s.library.push(entry);
+      else s.library[index] = entry;
+      break;
+    }
+    case 'library:remove':
+      s.library = s.library.filter(entry => entry.id !== p.id);
+      break;
+    case 'library:deploy': {
+      const entry = s.library.find(item => item.id === p.id);
+      if (!entry) throw new Error('Заготовка уже удалена');
+      const actor = newCombatant(entry);
+      if (p.place === true) placeToken(board, actor.id, p);
+      battle.combatants.push(actor);
       break;
     }
     case 'combatant:duplicate': {
@@ -278,16 +343,59 @@ function reducer(state, action) {
       break;
     }
     case 'token:add': {
-      if (!battle.combatants.some(c => c.id === p.id) || board.tokens.some(t => t.combatantId === p.id)) break;
-      let index = 0;
-      while (board.tokens.some(t => t.col === index % 8 && t.row === Math.floor(index / 8))) index++;
-      board.tokens.push({ combatantId: p.id, col: index % 8, row: Math.floor(index / 8) }); break;
+      if (!battle.combatants.some(c => c.id === p.id)) throw new Error('Участник уже удалён');
+      placeToken(board, p.id, p);
+      break;
     }
     case 'token:move': {
       const t = board.tokens.find(t => t.combatantId === p.id);
-      if (t) { t.col = clamp(Math.round(finite(p.col, t.col)), 0, 2000); t.row = clamp(Math.round(finite(p.row, t.row)), 0, 2000); } break;
+      if (t) {
+        const col = cellIndex(finite(p.col, t.col)), row = cellIndex(finite(p.row, t.row));
+        if (!canMoveToken(board, t, col, row)) throw new Error('Дальше стена или закрытая дверь');
+        Object.assign(t, { col, row });
+      }
+      break;
     }
     case 'token:remove': board.tokens = board.tokens.filter(t => t.combatantId !== p.id); break;
+    case 'terrain:add': {
+      if (!['wall', 'door', 'light', 'item'].includes(p.kind)) throw new Error('Выбери инструмент карты');
+      const light = p.kind === 'light';
+      if (board.terrain.filter(item => (item.kind === 'light') === light).length >= (light ? 24 : 400)) {
+        throw new Error('На карте слишком много объектов этого типа');
+      }
+      const a = terrainPoint(p.a);
+      if (p.kind === 'item') {
+        board.terrain.push({ id: randomUUID(), kind: 'item', a, name: text(p.name) || 'Предмет', image: text(p.image, 100) || null });
+      } else if (!light) {
+        const b = terrainPoint(p.b);
+        if (distanceToSegment(a, b, b) < 2) throw new Error('Нарисуй отрезок между двумя точками');
+        board.terrain.push({ id: randomUUID(), kind: p.kind, a, b, open: false });
+      } else {
+        board.terrain.push({ id: randomUUID(), kind: 'light', a, radius: clamp(finite(p.radius, board.map.grid * 3), 8, 8192) });
+      }
+      break;
+    }
+    case 'terrain:edit-item': {
+      const item = board.terrain.find(object => object.id === p.id && object.kind === 'item');
+      if (!item) throw new Error('Предмет уже удалён');
+      item.name = text(p.name) || item.name;
+      item.image = text(p.image, 100) || null;
+      break;
+    }
+    case 'terrain:door': {
+      const door = board.terrain.find(item => item.id === p.id && item.kind === 'door');
+      if (door) door.open = !door.open;
+      break;
+    }
+    case 'terrain:remove':
+      board.terrain = board.terrain.filter(item => item.id !== p.id);
+      break;
+    case 'fog:enabled':
+      board.fog.enabled = p.enabled === true;
+      break;
+    case 'fog:reset':
+      board.fog.explored = [];
+      break;
     case 'map:settings':
       for (const [key, min, max] of [['grid', 16, 256], ['offsetX', -512, 512], ['offsetY', -512, 512], ['opacity', 0, 1], ['zoom', 0.01, 24]])
         if (key in p) board.map[key] = clamp(finite(p[key], board.map[key]), min, max);
@@ -355,7 +463,14 @@ function reducer(state, action) {
       if (['combat', 'music', 'map', 'info', 'characters'].includes(p.id)) s.layout.windows[p.id] = p.bounds || null; break;
     default: throw new Error('Неизвестная команда');
   }
+  if (action.type === 'map:image' || action.type === 'map:settings' &&
+      ['grid', 'offsetX', 'offsetY'].some(key => board.map[key] !== state.boards.find(item => item.id === board.id).map[key])) {
+    board.fog.explored = [];
+  }
+  if (/^(token:|terrain:|fog:|map:(image|settings|select)|battle:select|library:deploy|combatant:(edit|hp|undo))/.test(action.type)) {
+    updateExploration(s, s.boards.find(item => item.id === s.activeMapId));
+  }
   s.revision++;
   return s;
 }
-module.exports = { initialState, migrateState, activeView, reducer, hpValue, cellAt };
+module.exports = { initialState, migrateState, activeView, reducer, hpValue, cellAt, canMoveToken };

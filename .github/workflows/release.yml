@@ -58,6 +58,7 @@ jobs:
         run: |
           node tests/desktop-smoke.cjs
           node tests/map-window-smoke.cjs
+          node tests/scene-smoke.cjs
           node tests/welcome-smoke.cjs
       - name: Install native Debian packager
         if: matrix.platform == 'linux' && matrix.arch == 'arm64'
