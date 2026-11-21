@@ -8,12 +8,17 @@ on:
         description: Publish a GitHub release if all builds pass
         type: boolean
         default: false
+      artifacts_run:
+        description: Reuse tested installers from this workflow run ID
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 jobs:
   build:
+    if: inputs.artifacts_run == ''
     name: ${{ matrix.platform }} ${{ matrix.arch }}
     strategy:
       fail-fast: false
@@ -102,21 +107,44 @@ jobs:
             !dist/builder-*.yml
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+    if: >-
+      !cancelled() && (startsWith(github.ref, 'refs/tags/v') || inputs.publish)
+      && (needs.build.result == 'success' || (needs.build.result == 'skipped' && inputs.artifacts_run != ''))
     needs: build
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Identify the commit used to build the installers
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACTS_RUN: ${{ inputs.artifacts_run }}
+        shell: bash
+        run: |
+          target="$GITHUB_SHA"
+          if [[ -n "$ARTIFACTS_RUN" ]]; then
+            [[ "$ARTIFACTS_RUN" =~ ^[0-9]+$ ]]
+            workflow="$(gh run view "$ARTIFACTS_RUN" --json workflowName --jq .workflowName)"
+            test "$workflow" = 'Desktop release'
+            passed="$(gh run view "$ARTIFACTS_RUN" --json jobs --jq '[.jobs[] | select(.name != "publish" and .conclusion == "success")] | length')"
+            test "$passed" = 5
+            target="$(gh run view "$ARTIFACTS_RUN" --json headSha --jq .headSha)"
+          fi
+          echo "commit=$target" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with:
           pattern: desktop-*
           path: release-assets
           merge-multiple: true
+          github-token: ${{ inputs.artifacts_run && github.token || '' }}
+          run-id: ${{ inputs.artifacts_run || github.run_id }}
       - name: Publish matching installers and update manifests
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ steps.source.outputs.commit }}
         shell: bash
         run: |
           version="$(node -p "require('./package.json').version")"
@@ -124,16 +152,22 @@ jobs:
           cd release-assets
           installers=(
             "DM-Screen-Setup-$version.exe"
-            "DM-Screen-$version-linux-x64.AppImage"
+            "DM-Screen-$version-linux-x86_64.AppImage"
             "DM-Screen-$version-linux-arm64.AppImage"
-            "DM-Screen-$version-linux-x64.deb"
+            "DM-Screen-$version-linux-amd64.deb"
             "DM-Screen-$version-linux-arm64.deb"
             "DM-Screen-$version-mac-x64.dmg"
             "DM-Screen-$version-mac-arm64.dmg"
           )
           updates=("DM-Screen-Setup-$version.exe.blockmap" latest.yml latest-linux.yml latest-linux-arm64.yml)
-          for file in "${installers[@]}" "${updates[@]}"; do test -s "$file"; done
+          for file in "${installers[@]}" "${updates[@]}"; do
+            if [[ ! -s "$file" ]]; then
+              ls -1
+              echo "Missing release asset: $file" >&2
+              exit 1
+            fi
+          done
           sha256sum "${installers[@]}" > SHA256SUMS
           gh release create "$tag" "${installers[@]}" "${updates[@]}" SHA256SUMS \
-            --draft --target "$GITHUB_SHA" --title "Интерактивная ширма мастера $version" --generate-notes
+            --draft --target "$RELEASE_COMMIT" --title "Интерактивная ширма мастера $version" --generate-notes
           gh release edit "$tag" --draft=false --latest
