@@ -1,0 +1,18 @@
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
+contextBridge.exposeInMainWorld('dm', {
+  init: () => ipcRenderer.invoke('init'),
+  dispatch: (type, payload) => ipcRenderer.invoke('dispatch', { type, payload }),
+  importFile: kind => ipcRenderer.invoke('import-file', { kind }),
+  importDrop: (file, kind) => ipcRenderer.invoke('import-drop', { path: webUtils.getPathForFile(file), kind }),
+  pasteImage: () => ipcRenderer.invoke('paste-image'),
+  detach: id => ipcRenderer.invoke('detach', id),
+  dock: () => ipcRenderer.invoke('dock'),
+  fullscreen: () => ipcRenderer.invoke('fullscreen'),
+  resizeWindow: bounds => ipcRenderer.send('resize-window', bounds),
+  remoteBounds: (id, bounds) => ipcRenderer.send('remote-bounds', { id, bounds }),
+  remoteAction: (id, action) => ipcRenderer.invoke('remote-action', { id, action }),
+  downloadMusic: (url, folder) => ipcRenderer.invoke('download-music', { url, folder }),
+  update: action => ipcRenderer.invoke('update', action),
+  onState: fn => { const listener = (_, value) => fn(value); ipcRenderer.on('state', listener); return () => ipcRenderer.removeListener('state', listener); },
+  onStatus: fn => { const listener = (_, value) => fn(value); ipcRenderer.on('status', listener); return () => ipcRenderer.removeListener('status', listener); }
+});

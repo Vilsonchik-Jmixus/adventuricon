@@ -1,0 +1,97 @@
+const { _electron: electron, expect } = require('playwright/test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { randomUUID } = require('node:crypto');
+const root = path.resolve(__dirname, '..');
+const data = path.join(root, 'test-results', `campaign-${Date.now()}`);
+const executablePath = process.env.DM_SCREEN_EXECUTABLE || require('electron');
+const launchArgs = process.env.DM_SCREEN_EXECUTABLE ? [] : [root];
+const env = { ...process.env, DM_SCREEN_TEST: '1', DM_SCREEN_DATA: data }; delete env.ELECTRON_RUN_AS_NODE;
+let application;
+(async () => {
+  application = await electron.launch({ executablePath, args: launchArgs, env });
+  const page = await application.firstWindow(); const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.waitForFunction(() => document.querySelector('#version')?.textContent === 'v0.1.0');
+  await page.waitForFunction(() => document.querySelector('#map-image').naturalWidth > 0);
+  await page.click('#add-combatant');
+  await page.fill('[name="name"]', 'Гоблин-разведчик');
+  await page.fill('[name="maxHp"]', '24');
+  await page.fill('[name="initiative"]', '16');
+  await page.click('#combatant-form [type="submit"]');
+  await expect(page.locator('.combat-name')).toHaveText('Гоблин-разведчик');
+  await page.click('[data-token-add]');
+  await expect(page.locator('.token')).toHaveCount(1);
+  await page.fill('.hp-form input', '-7'); await page.press('.hp-form input', 'Enter');
+  await expect(page.locator('.token-hp')).toHaveText('17/24');
+  await page.click('#undo-hp'); await expect(page.locator('.token-hp')).toHaveText('24/24');
+  await page.click('#next-turn'); await expect(page.locator('.combat-card')).toHaveClass(/active-turn/);
+  await page.click('[data-expand="map"]');
+  await expect(page.locator('.panel.map')).toHaveClass(/expanded/);
+  await page.keyboard.press('Escape'); await expect(page.locator('.panel.map')).not.toHaveClass(/expanded/);
+  // Verify a genuine native detached window, not an HTML imitation.
+  const newWindow = application.waitForEvent('window'); await page.click('[data-detach="map"]');
+  const mapPage = await newWindow; await mapPage.waitForFunction(() => document.body.classList.contains('detached'));
+  await expect(mapPage.locator('.token-hp')).toHaveText('24/24');
+  await page.fill('.hp-form input', '-4'); await page.press('.hp-form input', 'Enter');
+  await expect(mapPage.locator('.token-hp')).toHaveText('20/24');
+  const token = mapPage.locator('.token'); const box = await token.boundingBox();
+  await mapPage.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await mapPage.mouse.down();
+  await mapPage.mouse.move(box.x + 160, box.y + 160, { steps: 8 }); await mapPage.mouse.up();
+  await expect.poll(async () => (await page.evaluate(() => window.dm.init())).state.tokens[0].col).toBeGreaterThan(0);
+  const live = await page.evaluate(() => window.dm.init());
+  assert.ok(live.state.tokens[0].col > 0 && live.state.tokens[0].row > 0);
+  await mapPage.click('[data-detach="map"]');
+  await expect(page.locator('.panel.map')).not.toHaveClass(/is-detached/);
+  // Atomic persistence contains the same health and grid position.
+  const saved = JSON.parse(fs.readFileSync(path.join(data, 'campaign.json'), 'utf8'));
+  assert.equal(saved.combatants[0].hp, 20); assert.ok(saved.tokens[0].col > 0);
+  // Clipboard import exercises the actual privileged image path and app asset protocol.
+  const clipPNG = (await page.screenshot()).toString('base64');
+  const clipTypes = await application.evaluate(async ({ clipboard, ClipboardItem }, base64) => {
+    const png = Buffer.from(base64, 'base64');
+    await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(png)], { type: 'image/png' }) })]);
+    return (await clipboard.read()).map(item => item.types);
+  }, clipPNG);
+  assert.ok(clipTypes.flat().includes('image/png'), JSON.stringify(clipTypes));
+  const imported = await page.evaluate(() => window.dm.pasteImage());
+  assert.ok(imported.asset, imported.error);
+  const response = await page.evaluate(async asset => { const r = await fetch(`dm://app/assets/${asset}`); return { status: r.status, bytes: (await r.arrayBuffer()).byteLength }; }, imported.asset);
+  assert.equal(response.status, 200); assert.ok(response.bytes > 0);
+  // Block path traversal and invalid state commands.
+  const invalid = await page.evaluate(() => window.dm.dispatch('map:image', { image: '../campaign.json' }));
+  assert.equal(invalid.ok, false);
+  const unknown = await page.evaluate(() => window.dm.dispatch('arbitrary-code', {})); assert.equal(unknown.ok, false);
+  // Silent PCM verifies actual audio decoding and cross-window playback controls.
+  const wav = Buffer.alloc(44 + 44100 * 2 * 4);
+  wav.write('RIFF', 0); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(44100, 24); wav.writeUInt32LE(88200, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
+  wav.write('data', 36); wav.writeUInt32LE(wav.length - 44, 40);
+  const wavAsset = randomUUID() + '.wav'; fs.writeFileSync(path.join(data, 'assets', wavAsset), wav);
+  await page.evaluate(asset => window.dm.dispatch('music:add', { asset, title: 'Тестовый тихий трек', folder: 'Общее' }), wavAsset);
+  await page.click('[data-play]');
+  await expect.poll(() => page.evaluate(() => document.querySelector('#audio').currentTime)).toBeGreaterThan(0);
+  const musicPending = application.waitForEvent('window'); await page.click('[data-detach="music"]'); const musicPage = await musicPending;
+  await musicPage.waitForFunction(() => document.body.classList.contains('detached'));
+  await musicPage.click('#stop-music');
+  await expect.poll(() => page.evaluate(() => document.querySelector('#audio').paused)).toBe(true);
+  await expect.poll(() => page.evaluate(() => document.querySelector('#audio').currentTime)).toBe(0);
+  await musicPage.click('[data-detach="music"]');
+  // Add a second participant and save a visual preview of the real renderer.
+  await page.evaluate(() => window.dm.dispatch('combatant:add', { name: 'Хранитель крепости', maxHp: 45, initiative: 9 }));
+  const snapshot = await page.evaluate(() => window.dm.init());
+  await page.evaluate(id => window.dm.dispatch('token:add', { id }), snapshot.state.combatants[1].id);
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.webContents.getURL() === 'dm://app/index.html').showInactive());
+  await page.screenshot({ path: path.join(root, 'test-results', 'prototype.png') });
+  assert.deepEqual(errors, []);
+  await application.close(); application = null;
+  // Restart and verify the campaign survives the process, not only the live view.
+  application = await electron.launch({ executablePath, args: launchArgs, env });
+  const restarted = await application.firstWindow();
+  await expect(restarted.locator('.combat-card')).toHaveCount(2);
+  await expect(restarted.locator('.token')).toHaveCount(2);
+  assert.equal((await restarted.evaluate(() => window.dm.init())).state.combatants[0].hp, 20);
+  console.log('PASS: tracker, HP/undo, turns, tokens, detached window sync, drag snap, clipboard/assets, audio and detached controls, validation, save and restart.');
+})().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => { if (application) await application.close(); });

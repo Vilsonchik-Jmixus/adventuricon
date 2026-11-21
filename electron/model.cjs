@@ -1,0 +1,100 @@
+const { randomUUID } = require('node:crypto');
+const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
+const finite = (n, fallback) => Number.isFinite(Number(n)) ? Number(n) : fallback;
+const text = (v, max = 120) => String(v ?? '').trim().slice(0, max);
+function initialState() {
+  return {
+    schema: 1, revision: 0, combatants: [], tokens: [], round: 1, turn: null, history: [],
+    map: { image: null, grid: 64, offsetX: 0, offsetY: 0, opacity: 0.3, color: '#d8e6e0', visible: true, zoom: 1 },
+    music: { folders: ['Общее', 'Бой', 'Атмосфера'], tracks: [], current: null, playing: false, volume: 0.55, loop: true },
+    layout: { left: 32, middle: 34, top: 52, windows: {} }
+  };
+}
+function hpValue(current, max, expression) {
+  const s = String(expression).trim();
+  if (!/^(?:[+-]\d+|=\d+|\d+)$/.test(s)) throw new Error('Введите -7, +5 или =20');
+  const value = s.startsWith('=') ? Number(s.slice(1)) : /^[+-]/.test(s) ? current + Number(s) : Number(s);
+  if (!Number.isSafeInteger(value)) throw new Error('Слишком большое число');
+  return clamp(value, 0, max);
+}
+function cellAt(map, x, y) {
+  return { col: Math.max(0, Math.floor((x - map.offsetX) / map.grid)), row: Math.max(0, Math.floor((y - map.offsetY) / map.grid)) };
+}
+function reducer(state, action) {
+  const s = structuredClone(state), p = action.payload || {};
+  switch (action.type) {
+    case 'combatant:add': {
+      const maxHp = clamp(Math.round(finite(p.maxHp, 10)), 1, 999999);
+      s.combatants.push({ id: randomUUID(), name: text(p.name) || 'Безымянный', image: text(p.image, 100) || null, maxHp, hp: maxHp, initiative: clamp(Math.round(finite(p.initiative, 0)), -100, 1000) });
+      break;
+    }
+    case 'combatant:duplicate': {
+      const c = s.combatants.find(c => c.id === p.id); if (!c) break;
+      s.combatants.push({ ...c, id: randomUUID(), name: `${c.name} · копия`, hp: c.maxHp }); break;
+    }
+    case 'combatant:remove':
+      s.combatants = s.combatants.filter(c => c.id !== p.id); s.tokens = s.tokens.filter(t => t.combatantId !== p.id);
+      if (s.turn === p.id) s.turn = null; break;
+    case 'combatant:hp': {
+      const c = s.combatants.find(c => c.id === p.id); if (!c) break;
+      const next = hpValue(c.hp, c.maxHp, p.expression);
+      s.history.push({ id: c.id, hp: c.hp }); s.history = s.history.slice(-50); c.hp = next; break;
+    }
+    case 'combatant:undo': {
+      const previous = s.history.pop(); const c = previous && s.combatants.find(c => c.id === previous.id); if (c) c.hp = previous.hp; break;
+    }
+    case 'combat:next': {
+      const order = [...s.combatants].sort((a, b) => b.initiative - a.initiative);
+      if (!order.length) break;
+      const idx = order.findIndex(c => c.id === s.turn);
+      if (idx === order.length - 1) s.round++;
+      s.turn = order[(idx + 1) % order.length].id; break;
+    }
+    case 'token:add': {
+      if (!s.combatants.some(c => c.id === p.id) || s.tokens.some(t => t.combatantId === p.id)) break;
+      let index = 0;
+      while (s.tokens.some(t => t.col === index % 8 && t.row === Math.floor(index / 8))) index++;
+      s.tokens.push({ combatantId: p.id, col: index % 8, row: Math.floor(index / 8) }); break;
+    }
+    case 'token:move': {
+      const t = s.tokens.find(t => t.combatantId === p.id);
+      if (t) { t.col = clamp(Math.round(finite(p.col, t.col)), 0, 2000); t.row = clamp(Math.round(finite(p.row, t.row)), 0, 2000); } break;
+    }
+    case 'token:remove': s.tokens = s.tokens.filter(t => t.combatantId !== p.id); break;
+    case 'map:settings':
+      for (const [key, min, max] of [['grid', 16, 256], ['offsetX', -512, 512], ['offsetY', -512, 512], ['opacity', 0, 1], ['zoom', 0.2, 3]])
+        if (key in p) s.map[key] = clamp(finite(p[key], s.map[key]), min, max);
+      if (typeof p.visible === 'boolean') s.map.visible = p.visible;
+      if (/^#[0-9a-f]{6}$/i.test(p.color)) s.map.color = p.color;
+      break;
+    case 'map:image': s.map.image = text(p.image, 100) || null; break;
+    case 'music:folder': {
+      const name = text(p.name, 50); if (name && !s.music.folders.includes(name)) s.music.folders.push(name); break;
+    }
+    case 'music:add':
+      s.music.tracks.push({ id: randomUUID(), title: text(p.title) || 'Без названия', asset: text(p.asset, 100), folder: s.music.folders.includes(p.folder) ? p.folder : 'Общее', source: text(p.source, 300) }); break;
+    case 'music:move': {
+      const t = s.music.tracks.find(t => t.id === p.id); if (t && s.music.folders.includes(p.folder)) t.folder = p.folder; break;
+    }
+    case 'music:remove':
+      s.music.tracks = s.music.tracks.filter(t => t.id !== p.id);
+      if (s.music.current === p.id) { s.music.current = null; s.music.playing = false; } break;
+    case 'music:play':
+      if (s.music.tracks.some(t => t.id === p.id)) { s.music.current = p.id; s.music.playing = true; } break;
+    case 'music:settings':
+      if (typeof p.playing === 'boolean') s.music.playing = p.playing;
+      if (typeof p.loop === 'boolean') s.music.loop = p.loop;
+      if ('volume' in p) s.music.volume = clamp(finite(p.volume, 0.55), 0, 1); break;
+    case 'music:stop': s.music.playing = false; s.music.reset = (s.music.reset || 0) + 1; break;
+    case 'layout:settings':
+      if ('left' in p) s.layout.left = clamp(finite(p.left, 32), 18, 45);
+      if ('middle' in p) s.layout.middle = clamp(finite(p.middle, 34), 18, 82 - s.layout.left);
+      if ('top' in p) s.layout.top = clamp(finite(p.top, 52), 25, 75); break;
+    case 'layout:window':
+      if (['combat', 'music', 'map', 'info', 'characters'].includes(p.id)) s.layout.windows[p.id] = p.bounds || null; break;
+    default: throw new Error('Неизвестная команда');
+  }
+  s.revision++;
+  return s;
+}
+module.exports = { initialState, reducer, hpValue, cellAt };
