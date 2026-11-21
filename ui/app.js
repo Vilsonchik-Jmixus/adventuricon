@@ -4,16 +4,19 @@ const api = window.dm;
 const detachedPanel = new URLSearchParams(location.search).get('panel');
 const isPlayerMap = detachedPanel === 'map';
 let state, detached = [], currentFolder = 'Общее', portrait = null, expanded = null;
-let editingCombatant = null;
+let editingCombatant = null, editingContext, gridContext, playerSettingsContext, managedSlot;
 let toastTimer, textSubmit, draggingToken = false, animating = false, musicBusy = false, currentUpdate;
 let mapCamera = null, previewToken = null, pendingMapFrame = 0;
+let restoreMapCamera = false, cancelTokenDrag = null;
 let playerBlackout = false;
 let presentation = null, recentImages = [], galleryOpen = false, selectedImage = null, previewImage = null;
 const assetURL = name => `dm://app/assets/${encodeURIComponent(name)}`;
 const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 function toast(message) { $('toast').textContent = message; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 4500); }
 async function result(promise) { const value = await promise; if (value?.error) toast(value.error); return value; }
-const dispatch = (type, payload = {}) => result(api.dispatch(type, payload));
+const currentContext = () => ({ expectedBattleId: state?.activeBattleId, expectedMapId: state?.activeMapId });
+const dispatch = (type, payload = {}, context = currentContext()) => result(api.dispatch(type, { ...payload, ...context }));
+const mirrorMap = (preview, mapId = state.activeMapId) => api.mirrorMap({ ...preview, mapId });
 function openDialog(id) { $(id).showModal(); syncRemoteBounds(); }
 function closeDialog(dialog) { dialog.close(); syncRemoteBounds(); }
 function avatar(c, cls = 'avatar') { return `<span class="${cls}">${c.image ? `<img src="${assetURL(c.image)}" alt="">` : escapeHTML(c.name.slice(0, 1).toUpperCase())}</span>`; }
@@ -35,9 +38,14 @@ function renderCombat() {
 }
 function renderMap() {
   const m = state.map, zoom = m.zoom;
-  const img = $('map-image'), src = m.image ? assetURL(m.image) : new URL('assets/demo-map.svg', location.href).href;
-  if (img.src !== src) img.src = src;
-  const width = img.naturalWidth || 1600, height = img.naturalHeight || 1100;
+  const img = $('map-image');
+  const src = m.image ? assetURL(m.image) : m.demo === false ? null : new URL('assets/demo-map.svg', location.href).href;
+  if (src && img.src !== src) {
+    img.removeAttribute('src');
+    img.src = src;
+  } else if (!src && img.hasAttribute('src')) img.removeAttribute('src');
+  img.hidden = !src;
+  const width = (img.complete && img.naturalWidth) || 1600, height = (img.complete && img.naturalHeight) || 1100;
   $('map-world').style.width = `${Math.max(width, ...state.tokens.map(t => (t.col + 2) * m.grid + m.offsetX)) * zoom}px`;
   $('map-world').style.height = `${Math.max(height, ...state.tokens.map(t => (t.row + 2) * m.grid + m.offsetY)) * zoom}px`;
   img.style.width = `${width * zoom}px`; img.style.height = `${height * zoom}px`;
@@ -50,10 +58,19 @@ function renderMap() {
   document.body.classList.toggle('players-see-health', !!m.playerHealth);
   $('player-settings').hidden = !!detachedPanel || !detached.includes('map');
   if (draggingToken) return;
+  const actors = new Map(state.mapCombatants.map(actor => [actor.id, actor]));
   $('map-tokens').innerHTML = state.tokens.map(t => {
-    const c = state.combatants.find(c => c.id === t.combatantId); if (!c) return '';
+    const c = actors.get(t.combatantId); if (!c) return '';
     return `<button class="token ${c.hp === 0 ? 'dead' : ''} ${state.turn === c.id ? 'active-turn' : ''}" data-token="${c.id}" title="${escapeHTML(c.name)} · ${c.hp}/${c.maxHp} ХП. Двойное нажатие: убрать" style="left:${(m.offsetX + t.col * m.grid) * zoom}px;top:${(m.offsetY + t.row * m.grid) * zoom}px">${avatar(c, 'token-body')}<span class="token-hp">${c.hp}/${c.maxHp}</span></button>`;
   }).join('');
+  if (restoreMapCamera && img.complete) {
+    restoreMapCamera = false;
+    viewport.scrollTo(
+      mapCamera ? mapCamera.x * zoom - viewport.clientWidth / 2 : 0,
+      mapCamera ? mapCamera.y * zoom - viewport.clientHeight / 2 : 0
+    );
+    if (!isPlayerMap) queueMapCamera();
+  }
   if (isPlayerMap) paintPlayerMap();
 }
 function renderMusic() {
@@ -90,7 +107,7 @@ function renderAll() {
     renderPresentation();
     return;
   }
-  renderLayout(); renderCombat(); renderMap(); renderMusic(); renderPresentation();
+  renderLayout(); renderSlots(); renderCombat(); renderMap(); renderMusic(); renderPresentation();
   if (galleryOpen) renderGallery();
   requestAnimationFrame(syncRemoteBounds);
 }
@@ -117,7 +134,9 @@ async function expandPanel(id) {
   animating = false; syncRemoteBounds();
 }
 async function loadMap(promise) {
-  const r = await result(promise); if (r?.asset) { await dispatch('map:image', { image: r.asset }); toast('Карта загружена'); }
+  const context = currentContext();
+  const r = await result(promise);
+  if (r?.asset && (await dispatch('map:image', { image: r.asset }, context))?.ok) toast('Карта загружена');
 }
 function askText(title, label, hint, callback, submit = 'Добавить', initialValue = '') {
   $('text-dialog-title').textContent = title; $('text-dialog-label').textContent = label;
@@ -125,6 +144,67 @@ function askText(title, label, hint, callback, submit = 'Добавить', init
   $('text-dialog-hint').textContent = hint; $('text-dialog-submit').textContent = submit; textSubmit = callback;
   openDialog('text-dialog'); $('text-dialog-input').focus();
 }
+function slotInfo(kind) {
+  return kind === 'battle'
+    ? { options: state.battleChoices, id: state.activeBattleId, heading: 'Настройки боя', create: 'Новый бой' }
+    : { options: state.mapChoices, id: state.activeMapId, heading: 'Настройки карты', create: 'Новая карта' };
+}
+function syncOptions(select, options, selected) {
+  const signature = JSON.stringify(options.map(({ id, title }) => [id, title]));
+  if (select.dataset.options !== signature) {
+    select.replaceChildren(...options.map(({ id, title }) => new Option(title, id)));
+    select.dataset.options = signature;
+  }
+  select.value = selected ?? '';
+}
+function renderSlots() {
+  for (const kind of ['battle', 'map']) {
+    const { options, id } = slotInfo(kind);
+    syncOptions($(`${kind}-select`), options, id);
+  }
+}
+for (const kind of ['battle', 'map']) {
+  $(`${kind}-select`).onchange = async e => {
+    const response = await dispatch(`${kind}:select`, { id: e.target.value });
+    if (!response?.ok) renderSlots();
+  };
+  $(`create-${kind}`).onclick = () =>
+    askText(slotInfo(kind).create, 'Название', '', title => dispatch(`${kind}:create`, { title }), 'Создать');
+  $(`manage-${kind}`).onclick = () => {
+    const { options, id, heading } = slotInfo(kind);
+    const entry = options.find(item => item.id === id);
+    managedSlot = { kind, id, context: currentContext() };
+    $('slot-title').textContent = heading;
+    $('slot-name').value = entry.title;
+    $('linked-map-field').hidden = kind !== 'battle';
+    $('slot-hint').textContent = kind === 'battle' ? 'Копия перенесёт участников с полными ХП и начнётся с первого раунда.'
+      : 'Копия сохранит изображение и настройки сетки. Жетоны можно расставить заново.';
+    $('delete-slot').disabled = options.length <= 1;
+    if (kind === 'battle') {
+      syncOptions($('linked-map'), [{ id: '', title: 'Не переключать карту' }, ...state.mapChoices], entry.linkedMapId);
+    }
+    openDialog('slot-dialog');
+  };
+}
+$('slot-form').onsubmit = async e => {
+  e.preventDefault();
+  const { kind, context } = managedSlot;
+  const response = await dispatch(`${kind}:save`, { title: $('slot-name').value, linkedMapId: $('linked-map').value }, context);
+  if (response?.ok) closeDialog($('slot-dialog'));
+};
+$('duplicate-slot').onclick = async () => {
+  const { kind, context } = managedSlot;
+  const name = $('slot-name').value.trim();
+  const response = await dispatch(`${kind}:duplicate`, { title: name ? name + ' · копия' : '' }, context);
+  if (response?.ok) closeDialog($('slot-dialog'));
+};
+$('delete-slot').onclick = async () => {
+  const { kind, id } = managedSlot;
+  const message = kind === 'battle'
+    ? 'Удалить бой, его участников и их жетоны со всех карт?'
+    : 'Удалить карту, её настройки и расстановку жетонов?';
+  if (confirm(message) && (await dispatch(`${kind}:remove`, { id }))?.ok) closeDialog($('slot-dialog'));
+};
 document.addEventListener('click', async e => {
   const button = e.target.closest('button'); if (!button) return;
   if (button.hasAttribute('data-close-dialog')) closeDialog(button.closest('dialog'));
@@ -138,7 +218,9 @@ document.addEventListener('click', async e => {
     [...$('gallery-list').children].find(el => el.dataset.galleryId === selectedImage)?.focus();
   }
   else if (button.dataset.recent !== undefined) showImagePreview(recentImages[Number(button.dataset.recent)]);
-  else if (button.dataset.tokenAdd) { await dispatch('token:add', { id: button.dataset.tokenAdd }); toast('Боец добавлен на карту'); }
+  else if (button.dataset.tokenAdd) {
+    if ((await dispatch('token:add', { id: button.dataset.tokenAdd }))?.ok) toast('Боец добавлен на карту');
+  }
   else if (button.dataset.tokenFocus) await result(api.showToken(button.dataset.tokenFocus));
   else if (button.dataset.edit) openCombatantEditor(state.combatants.find(c => c.id === button.dataset.edit));
   else if (button.dataset.duplicate) await dispatch('combatant:duplicate', { id: button.dataset.duplicate });
@@ -201,7 +283,7 @@ function showImagePreview(ref) {
   if (!ref) return;
   const image = ref.source === 'gallery'
     ? state.gallery.find(item => item.id === ref.id)
-    : state.combatants.find(combatant => combatant.id === ref.id);
+    : state.combatants.find(combatant => combatant.id === ref.id) ?? ref;
   if (!image?.image) return;
   previewImage = ref;
   $('image-dialog-title').textContent = image.title ?? image.name;
@@ -250,6 +332,7 @@ function openCombatantEditor(combatant) {
   const form = $('combatant-form');
   form.reset();
   editingCombatant = combatant?.id ?? null;
+  editingContext = currentContext();
   portrait = combatant?.image ?? null;
   $('editor-title').textContent = combatant ? 'Редактировать участника' : 'Добавить участника';
   $('editor-submit').textContent = combatant ? 'Сохранить' : 'Добавить в трекер';
@@ -268,7 +351,7 @@ $('combatant-form').onsubmit = async e => {
   e.preventDefault(); const f = new FormData(e.target);
   const payload = { name: f.get('name'), maxHp: Number(f.get('maxHp')), initiative: Number(f.get('initiative')), image: portrait };
   if (editingCombatant) Object.assign(payload, { id: editingCombatant, hp: Number(f.get('hp')) });
-  const r = await dispatch(editingCombatant ? 'combatant:edit' : 'combatant:add', payload);
+  const r = await dispatch(editingCombatant ? 'combatant:edit' : 'combatant:add', payload, editingContext);
   if (r?.ok) closeDialog($('editor'));
 };
 $('combat-list').addEventListener('submit', async e => {
@@ -283,25 +366,28 @@ $('import-map').onclick = () => loadMap(api.importFile('image'));
 $('paste-map').onclick = () => loadMap(api.pasteImage());
 $('map-image').onload = () => { if (state) renderMap(); };
 $('map-settings').onclick = () => {
+  gridContext = currentContext();
   const form = $('grid-form');
   for (const key of ['grid', 'offsetX', 'offsetY', 'opacity', 'color']) form.elements[key].value = state.map[key];
   form.elements.visible.checked = state.map.visible; openDialog('grid-dialog');
 };
-$('grid-form').onsubmit = e => {
+$('grid-form').onsubmit = async e => {
   e.preventDefault(); const f = e.target;
-  dispatch('map:settings', { grid: Number(f.elements.grid.value), offsetX: Number(f.elements.offsetX.value), offsetY: Number(f.elements.offsetY.value), opacity: Number(f.elements.opacity.value), color: f.elements.color.value, visible: f.elements.visible.checked }); closeDialog($('grid-dialog'));
+  const response = await dispatch('map:settings', { grid: Number(f.elements.grid.value), offsetX: Number(f.elements.offsetX.value), offsetY: Number(f.elements.offsetY.value), opacity: Number(f.elements.opacity.value), color: f.elements.color.value, visible: f.elements.visible.checked }, gridContext);
+  if (response?.ok) closeDialog($('grid-dialog'));
 };
 const viewport = $('map-viewport');
 function queueMapCamera() {
-  if (detachedPanel || pendingMapFrame) return;
+  if (detachedPanel || pendingMapFrame || restoreMapCamera || !state) return;
+  const mapId = state.activeMapId;
   pendingMapFrame = requestAnimationFrame(() => {
     pendingMapFrame = 0;
-    if (!state || !viewport.clientWidth || !viewport.clientHeight) return;
+    if (mapId !== state.activeMapId || !viewport.clientWidth || !viewport.clientHeight) return;
     const zoom = state.map.zoom;
-    api.mirrorMap({ camera: {
+    mirrorMap({ camera: {
       x: (viewport.scrollLeft + viewport.clientWidth / 2) / zoom,
       y: (viewport.scrollTop + viewport.clientHeight / 2) / zoom
-    } });
+    } }, mapId);
   });
 }
 function paintPlayerMap() {
@@ -320,12 +406,13 @@ viewport.addEventListener('scroll', queueMapCamera, { passive: true });
 new ResizeObserver(() => isPlayerMap ? paintPlayerMap() : queueMapCamera()).observe(viewport);
 let zoomRequest = 0;
 async function setZoom(value, anchorX = viewport.clientWidth / 2, anchorY = viewport.clientHeight / 2) {
+  const mapId = state.activeMapId;
   const request = ++zoomRequest, old = state.map.zoom;
   const x = (viewport.scrollLeft + anchorX) / old;
   const y = (viewport.scrollTop + anchorY) / old;
   const zoom = Math.max(0.01, Math.min(3, value));
   const response = await dispatch('map:settings', { zoom });
-  if (response?.ok && request === zoomRequest) {
+  if (response?.ok && request === zoomRequest && mapId === state.activeMapId) {
     viewport.scrollLeft = x * zoom - anchorX;
     viewport.scrollTop = y * zoom - anchorY;
     queueMapCamera();
@@ -334,11 +421,12 @@ async function setZoom(value, anchorX = viewport.clientWidth / 2, anchorY = view
 $('zoom-in').onclick = () => setZoom(state.map.zoom * 1.25);
 $('zoom-out').onclick = () => setZoom(state.map.zoom / 1.25);
 $('fit-map').onclick = async () => {
+  const mapId = state.activeMapId;
   const image = $('map-image');
   if (!image.naturalWidth) return;
   const target = Math.min((viewport.clientWidth - 8) / image.naturalWidth, (viewport.clientHeight - 8) / image.naturalHeight, 3);
   await setZoom(target, 0, 0);
-  viewport.scrollTo(0, 0);
+  if (mapId === state.activeMapId) viewport.scrollTo(0, 0);
 };
 viewport.addEventListener('wheel', e => {
   if (isPlayerMap) { e.preventDefault(); return; }
@@ -354,7 +442,7 @@ viewport.addEventListener('pointerdown', e => {
     const box = $('map-world').getBoundingClientRect();
     const ping = { x: (e.clientX - box.x) / state.map.zoom, y: (e.clientY - box.y) / state.map.zoom };
     showMapPing(ping);
-    api.mirrorMap({ ping });
+    mirrorMap({ ping });
     return;
   }
   const { scrollLeft, scrollTop } = viewport;
@@ -379,15 +467,16 @@ function showMapPing({ x, y }) {
   setTimeout(() => ping.remove(), 1200);
 }
 $('player-settings').onclick = () => {
+  playerSettingsContext = currentContext();
   $('toggle-player-health').checked = !!state.map.playerHealth;
   $('toggle-player-blackout').checked = playerBlackout;
   openDialog('player-dialog');
 };
-$('toggle-player-health').onchange = e => dispatch('map:settings', { playerHealth: e.target.checked });
+$('toggle-player-health').onchange = e => dispatch('map:settings', { playerHealth: e.target.checked }, playerSettingsContext);
 $('toggle-player-blackout').onchange = e => {
   playerBlackout = e.target.checked;
   $('player-settings').setAttribute('aria-pressed', String(playerBlackout));
-  api.mirrorMap({ blackout: playerBlackout });
+  mirrorMap({ blackout: playerBlackout });
 };
 $('map-viewport').addEventListener('dragover', e => { e.preventDefault(); });
 $('map-viewport').addEventListener('drop', e => { e.preventDefault(); if (!isPlayerMap && e.dataTransfer.files[0]) loadMap(api.importDrop(e.dataTransfer.files[0], 'image')); });
@@ -409,6 +498,7 @@ $('map-tokens').addEventListener('pointerdown', e => {
   const token = e.target.closest('[data-token]'); if (!token || isPlayerMap || e.button !== 0) return;
   e.preventDefault(); draggingToken = true; token.classList.add('dragging'); token.setPointerCapture(e.pointerId);
   const id = token.dataset.token, m = { ...state.map }, z = m.zoom, rect = $('map-world').getBoundingClientRect();
+  const context = currentContext();
   let col = 0, row = 0, moved = false, previewFrame = 0;
   const move = event => {
     moved = true;
@@ -418,19 +508,21 @@ $('map-tokens').addEventListener('pointerdown', e => {
     if (detached.includes('map') && !previewFrame) {
       previewFrame = requestAnimationFrame(() => {
         previewFrame = 0;
-        api.mirrorMap({ token: { id, col, row } });
+        mirrorMap({ token: { id, col, row } }, context.expectedMapId);
       });
     }
   };
   const stop = async () => {
     token.removeEventListener('pointermove', move); token.removeEventListener('pointerup', stop); token.removeEventListener('pointercancel', cancel);
     draggingToken = false; token.classList.remove('dragging');
+    cancelTokenDrag = null;
     cancelAnimationFrame(previewFrame);
-    if (moved) await dispatch('token:move', { id, col, row });
+    if (moved) await dispatch('token:move', { id, col, row }, context);
     else renderMap();
-    if (detached.includes('map')) api.mirrorMap({ token: null });
+    if (detached.includes('map')) mirrorMap({ token: null }, context.expectedMapId);
   };
   const cancel = () => { moved = false; stop(); };
+  cancelTokenDrag = cancel;
   token.addEventListener('pointermove', move); token.addEventListener('pointerup', stop); token.addEventListener('pointercancel', cancel);
 });
 $('import-audio').onclick = async () => { const r = await result(api.importFile('audio')); if (r?.asset) dispatch('music:add', { title: r.title, asset: r.asset, folder: currentFolder }); };
@@ -482,6 +574,7 @@ api.onStatus(status => {
   else if (status.scope === 'map-focus') focusToken(status.id);
   else if (status.scope === 'player-fullscreen' && isPlayerMap) document.body.classList.toggle('player-fullscreen', status.active);
   else if (status.scope === 'map-preview' && isPlayerMap) {
+    if (status.mapId !== state?.activeMapId) return;
     mapCamera = status.camera;
     playerBlackout = status.blackout;
     $('player-blackout').hidden = !playerBlackout;
@@ -531,6 +624,15 @@ document.querySelectorAll('.resize-grip').forEach(el => el.addEventListener('poi
 new ResizeObserver(syncRemoteBounds).observe($('workspace'));
 window.addEventListener('resize', syncRemoteBounds);
 function readWindowState(value) {
+  if (state?.activeMapId !== value.state.activeMapId) {
+    cancelTokenDrag?.();
+    cancelAnimationFrame(pendingMapFrame);
+    pendingMapFrame = 0;
+    previewToken = null;
+    mapCamera = value.mapCamera;
+    restoreMapCamera = true;
+    $('map-world').querySelector('.map-ping')?.remove();
+  }
   state = value.state;
   detached = value.detached;
   presentation = value.presentation;
@@ -539,7 +641,6 @@ function readWindowState(value) {
 api.onState(value => { readWindowState(value); renderAll(); });
 (async () => {
   const initial = await api.init(); readWindowState(initial); updateUI(initial.updateStatus); updateMusicStatus(initial.musicStatus);
-  mapCamera = initial.mapCamera;
   playerBlackout = initial.playerBlackout;
   $('version').textContent = `v${initial.version}`;
   if (detachedPanel) {

@@ -4,7 +4,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { randomUUID } = require('node:crypto');
 const { beginMusicImport } = require('./music-import.cjs');
-const { initialState, reducer } = require('./model.cjs');
+const { initialState, migrateState, activeView, reducer } = require('./model.cjs');
 const { autoUpdater } = require('electron-updater');
 const TEST = process.env.DM_SCREEN_TEST === '1';
 if (process.env.DM_SCREEN_DATA) app.setPath('userData', process.env.DM_SCREEN_DATA);
@@ -15,7 +15,7 @@ const windows = new Map(), remotes = new Map();
 let mainWindow, state, store, assets, quitting = false, downloadProcess = null;
 let updateStatus = { scope: 'update', phase: 'idle', text: 'Обновления' };
 let musicStatus = { scope: 'music', phase: 'idle', text: '' };
-let mapCamera = null;
+const mapCameras = new Map();
 let playerBlackout = false;
 let presentation = null;
 let recentImages = [];
@@ -30,25 +30,27 @@ function resolveImage(ref) {
   if (!ref) return null;
   const item = ref.source === 'gallery'
     ? state.gallery.find(entry => entry.id === ref.id)
-    : state.combatants.find(entry => entry.id === ref.id);
+    : state.battles.flatMap(battle => battle.combatants).find(entry => entry.id === ref.id);
   return item?.image ? { ...ref, image: item.image, title: item.title ?? item.name } : null;
 }
-function windowState(owner) {
+function windowState(owner, view = activeView(state)) {
+  const mapCamera = mapCameras.get(view.activeMapId) ?? null;
   if (owner === windows.get('map')?.webContents) {
     return {
-      state: { map: state.map, tokens: state.tokens, combatants: state.combatants, turn: state.turn },
-      detached: ['map'], presentation, recentImages: []
+      state: { activeMapId: view.activeMapId, map: view.map, tokens: view.tokens, mapCombatants: view.mapCombatants, turn: view.turn },
+      detached: ['map'], presentation, recentImages: [], mapCamera
     };
   }
   return {
-    state, detached: [...windows.keys()], presentation,
-    recentImages: recentImages.map(resolveImage).filter(Boolean)
+    state: view, detached: [...windows.keys()], presentation,
+    recentImages: recentImages.map(resolveImage).filter(Boolean), mapCamera
   };
 }
 function broadcast() {
+  const view = activeView(state);
   for (const w of BrowserWindow.getAllWindows()) {
     if (!w.isDestroyed() && w.webContents.getURL().startsWith('dm://app/')) {
-      w.webContents.send('state', windowState(w.webContents));
+      w.webContents.send('state', windowState(w.webContents, view));
     }
   }
 }
@@ -56,7 +58,10 @@ function commit(action) {
   const next = reducer(state, action);
   fs.writeFileSync(`${store}.tmp`, JSON.stringify(next), 'utf8');
   fs.renameSync(`${store}.tmp`, store);
-  state = next; broadcast(); return { ok: true };
+  state = next;
+  if (action.type === 'map:remove') mapCameras.delete(action.payload.id);
+  broadcast();
+  return { ok: true };
 }
 function handle(name, fn) {
   ipcMain.handle(name, async (event, payload) => {
@@ -163,7 +168,7 @@ function detach(id, focus = true) {
   broadcast(); return { ok: true };
 }
 function setupIPC() {
-  handle('init', event => ({ ...windowState(event.sender), version: app.getVersion(), updateStatus, musicStatus, mapCamera, playerBlackout, test: TEST }));
+  handle('init', event => ({ ...windowState(event.sender), version: app.getVersion(), updateStatus, musicStatus, playerBlackout, test: TEST }));
   handle('dispatch', (event, action) => {
     if (event.sender === windows.get('map')?.webContents) throw new Error('Экраном управляет мастер');
     if (!action || typeof action.type !== 'string' || JSON.stringify(action).length > 10000) throw new Error('Неверная команда');
@@ -221,24 +226,25 @@ function setupIPC() {
     return { ok: true, covered: playerBlackout };
   });
   handle('show-token', (_, id) => {
-    if (!state.tokens.some(token => token.combatantId === id)) return { ok: false, error: 'Жетон уже убран с карты' };
+    if (!activeView(state).tokens.some(token => token.combatantId === id)) return { ok: false, error: 'Жетон уже убран с карты' };
     sendAll('status', { scope: 'map-focus', id });
     return { ok: true };
   });
   handle('dock', event => { const w = BrowserWindow.fromWebContents(event.sender); if (w !== mainWindow) w.close(); return { ok: true }; });
   ipcMain.on('mirror-map', (event, preview) => {
     if (event.sender !== mainWindow?.webContents || !preview) return;
+    if (preview.mapId !== state.activeMapId) return;
     const camera = preview.camera;
-    if (camera && Number.isFinite(camera.x) && Number.isFinite(camera.y)) mapCamera = camera;
+    if (camera && Number.isFinite(camera.x) && Number.isFinite(camera.y)) mapCameras.set(state.activeMapId, camera);
     if (typeof preview.blackout === 'boolean') playerBlackout = preview.blackout;
     const ping = preview.ping;
     const mirror = windows.get('map');
     if (!mirror || mirror.isDestroyed()) return;
     const token = preview.token;
     const valid = token && Number.isFinite(token.col) && Number.isFinite(token.row) &&
-      state.tokens.some(item => item.combatantId === token.id);
+      state.boards.find(item => item.id === state.activeMapId).tokens.some(item => item.combatantId === token.id);
     mirror.webContents.send('status', {
-      scope: 'map-preview', camera: mapCamera,
+      scope: 'map-preview', mapId: state.activeMapId, camera: mapCameras.get(state.activeMapId) ?? null,
       blackout: playerBlackout,
       ...(ping && Number.isFinite(ping.x) && Number.isFinite(ping.y) ? { ping } : {}),
       ...(Object.hasOwn(preview, 'token') ? { token: valid ? token : null } : {})
@@ -352,8 +358,11 @@ app.whenReady().then(async () => {
   if (fs.existsSync(store)) {
     try {
       const saved = JSON.parse(fs.readFileSync(store, 'utf8'));
-      if (saved.schema !== 1 || !Array.isArray(saved.combatants) || !Array.isArray(saved.tokens) || !saved.map || !saved.music || !saved.layout) throw new Error('Неверный формат');
-      state = { ...saved, gallery: Array.isArray(saved.gallery) ? saved.gallery : [] };
+      state = migrateState(saved);
+      if (saved.schema === 1) {
+        try { fs.copyFileSync(store, store + '.v1.bak', fs.constants.COPYFILE_EXCL); }
+        catch (error) { if (error.code !== 'EEXIST') console.warn('Не удалось сохранить копию предыдущего формата:', error.message); }
+      }
       state.music.playing = false;
     } catch {
       fs.copyFileSync(store, store + `.backup-${Date.now()}`);

@@ -251,3 +251,11 @@ body.player-map .map .resize-grip { z-index: 12; }
 .player-map #player-blackout { background: #100c09; }
 body.player-map.player-fullscreen { --panel-heading: 0px; }
 .player-fullscreen .map .panel-head, .player-fullscreen .map .resize-grip { display: none; }
+
+.slot-bar { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.slot-bar select { flex: 1; min-width: 0; width: 0; height: 27px; padding: 3px 5px; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+.slot-bar button { flex: none; height: 27px; padding: 2px 6px; }
+.map-content > .slot-bar { padding: 4px 7px 3px; border-bottom: 1px solid var(--line); }
+.player-map .slot-bar { display: none; }
+.slot-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.slot-actions button[type="submit"] { margin-left: auto; }

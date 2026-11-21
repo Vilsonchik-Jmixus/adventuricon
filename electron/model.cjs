@@ -2,12 +2,57 @@ const { randomUUID } = require('node:crypto');
 const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
 const finite = (n, fallback) => Number.isFinite(Number(n)) ? Number(n) : fallback;
 const text = (v, max = 120) => String(v ?? '').trim().slice(0, max);
-function initialState() {
+function newBattle(title = 'Первый бой') {
+  return { id: randomUUID(), title, linkedMapId: null, combatants: [], round: 1, turn: null, history: [] };
+}
+function newBoard(title = 'Первая карта', demo = false) {
   return {
-    schema: 1, revision: 0, combatants: [], tokens: [], round: 1, turn: null, history: [], gallery: [],
-    map: { image: null, grid: 64, offsetX: 0, offsetY: 0, opacity: 0.3, color: '#d8e6e0', visible: true, zoom: 1 },
+    id: randomUUID(), title, tokens: [],
+    map: { image: null, demo, grid: 64, offsetX: 0, offsetY: 0, opacity: 0.3, color: '#d8e6e0', visible: true, zoom: 1 }
+  };
+}
+function initialState() {
+  const battle = newBattle(), board = newBoard(undefined, true);
+  return {
+    schema: 2, revision: 0, battles: [battle], boards: [board],
+    activeBattleId: battle.id, activeMapId: board.id, gallery: [],
     music: { folders: ['Общее', 'Бой', 'Атмосфера'], tracks: [], current: null, playing: false, volume: 0.55, loop: true },
     layout: { left: 32, middle: 34, top: 52, windows: {} }
+  };
+}
+function migrateState(saved) {
+  if (!saved || !saved.music || !saved.layout) throw new Error('Неверный формат сохранения');
+  if (saved.schema === 2) {
+    if (!Array.isArray(saved.battles) || !Array.isArray(saved.boards) ||
+        !saved.battles.some(battle => battle.id === saved.activeBattleId) ||
+        !saved.boards.some(board => board.id === saved.activeMapId)) {
+      throw new Error('Бои или карты повреждены');
+    }
+    return saved;
+  }
+  if (saved.schema !== 1 || !Array.isArray(saved.combatants) || !Array.isArray(saved.tokens) || !saved.map) {
+    throw new Error('Неверный формат сохранения');
+  }
+  const { combatants, tokens, map, round, turn, history, gallery, ...base } = saved;
+  const battle = { ...newBattle('Текущий бой'), combatants, round: round ?? 1, turn: turn ?? null, history: history ?? [] };
+  const board = { ...newBoard('Текущая карта'), map, tokens };
+  return {
+    ...base, schema: 2, gallery: gallery ?? [],
+    battles: [battle], boards: [board], activeBattleId: battle.id, activeMapId: board.id
+  };
+}
+function activeView(state) {
+  const battle = state.battles.find(entry => entry.id === state.activeBattleId);
+  const board = state.boards.find(entry => entry.id === state.activeMapId);
+  const placed = new Set(board.tokens.map(token => token.combatantId));
+  return {
+    revision: state.revision, music: state.music, layout: state.layout, gallery: state.gallery,
+    activeBattleId: battle.id, activeMapId: board.id,
+    battleChoices: state.battles.map(({ id, title, linkedMapId }) => ({ id, title, linkedMapId })),
+    mapChoices: state.boards.map(({ id, title }) => ({ id, title })),
+    combatants: battle.combatants, round: battle.round, turn: battle.turn, history: battle.history,
+    map: board.map, tokens: board.tokens,
+    mapCombatants: state.battles.flatMap(entry => entry.combatants.filter(c => placed.has(c.id)))
   };
 }
 function hpValue(current, max, expression) {
@@ -20,28 +65,104 @@ function hpValue(current, max, expression) {
 function cellAt(map, x, y) {
   return { col: Math.max(0, Math.floor((x - map.offsetX) / map.grid)), row: Math.max(0, Math.floor((y - map.offsetY) / map.grid)) };
 }
-function rememberHealth(state, combatant) {
-  state.history.push({ id: combatant.id, hp: combatant.hp, maxHp: combatant.maxHp });
-  state.history = state.history.slice(-50);
+function rememberHealth(battle, combatant) {
+  battle.history.push({ id: combatant.id, hp: combatant.hp, maxHp: combatant.maxHp });
+  battle.history = battle.history.slice(-50);
 }
 function reducer(state, action) {
   const s = structuredClone(state), p = action.payload || {};
+  const battle = s.battles.find(entry => entry.id === s.activeBattleId);
+  const board = s.boards.find(entry => entry.id === s.activeMapId);
+  if (p.expectedBattleId && p.expectedBattleId !== battle.id &&
+      /^(combatant:|combat:|battle:(save|duplicate)|token:add)/.test(action.type)) {
+    throw new Error('Бой переключился. Открой действие заново.');
+  }
+  if (p.expectedMapId && p.expectedMapId !== board.id &&
+      /^(token:|map:(image|settings|save|duplicate))/.test(action.type)) {
+    throw new Error('Карта переключилась. Открой действие заново.');
+  }
   switch (action.type) {
+    case 'battle:create': {
+      const next = newBattle(text(p.title) || 'Новый бой');
+      s.battles.push(next);
+      s.activeBattleId = next.id;
+      break;
+    }
+    case 'battle:select': {
+      const next = s.battles.find(entry => entry.id === p.id);
+      if (!next) throw new Error('Бой не найден');
+      s.activeBattleId = next.id;
+      if (next.linkedMapId) s.activeMapId = next.linkedMapId;
+      break;
+    }
+    case 'battle:save':
+      battle.title = text(p.title) || battle.title;
+      battle.linkedMapId = s.boards.some(entry => entry.id === p.linkedMapId) ? p.linkedMapId : null;
+      break;
+    case 'battle:duplicate': {
+      const next = newBattle(text(p.title) || (battle.title + ' · копия'));
+      next.linkedMapId = battle.linkedMapId;
+      next.combatants = battle.combatants.map(c => ({ ...c, id: randomUUID(), hp: c.maxHp }));
+      s.battles.push(next);
+      s.activeBattleId = next.id;
+      if (next.linkedMapId) s.activeMapId = next.linkedMapId;
+      break;
+    }
+    case 'battle:remove': {
+      const index = s.battles.findIndex(entry => entry.id === p.id);
+      if (index < 0 || s.battles.length === 1) throw new Error('Оставь хотя бы один бой');
+      const removed = s.battles.splice(index, 1)[0];
+      const ids = new Set(removed.combatants.map(c => c.id));
+      for (const savedBoard of s.boards) savedBoard.tokens = savedBoard.tokens.filter(t => !ids.has(t.combatantId));
+      if (removed.id === s.activeBattleId) {
+        const next = s.battles[Math.min(index, s.battles.length - 1)];
+        s.activeBattleId = next.id;
+        if (next.linkedMapId) s.activeMapId = next.linkedMapId;
+      }
+      break;
+    }
+    case 'map:create': {
+      const next = newBoard(text(p.title) || 'Новая карта');
+      s.boards.push(next);
+      s.activeMapId = next.id;
+      break;
+    }
+    case 'map:select':
+      if (!s.boards.some(entry => entry.id === p.id)) throw new Error('Карта не найдена');
+      s.activeMapId = p.id;
+      break;
+    case 'map:save':
+      board.title = text(p.title) || board.title;
+      break;
+    case 'map:duplicate': {
+      const next = { ...newBoard(text(p.title) || (board.title + ' · копия')), map: { ...board.map } };
+      s.boards.push(next);
+      s.activeMapId = next.id;
+      break;
+    }
+    case 'map:remove': {
+      const index = s.boards.findIndex(entry => entry.id === p.id);
+      if (index < 0 || s.boards.length === 1) throw new Error('Оставь хотя бы одну карту');
+      s.boards.splice(index, 1);
+      for (const entry of s.battles) if (entry.linkedMapId === p.id) entry.linkedMapId = null;
+      if (s.activeMapId === p.id) s.activeMapId = s.boards[Math.min(index, s.boards.length - 1)].id;
+      break;
+    }
     case 'combatant:add': {
       const maxHp = clamp(Math.round(finite(p.maxHp, 10)), 1, 999999);
-      s.combatants.push({ id: randomUUID(), name: text(p.name) || 'Безымянный', image: text(p.image, 100) || null, maxHp, hp: maxHp, initiative: clamp(Math.round(finite(p.initiative, 0)), -100, 1000) });
+      battle.combatants.push({ id: randomUUID(), name: text(p.name) || 'Безымянный', image: text(p.image, 100) || null, maxHp, hp: maxHp, initiative: clamp(Math.round(finite(p.initiative, 0)), -100, 1000) });
       break;
     }
     case 'combatant:duplicate': {
-      const c = s.combatants.find(c => c.id === p.id); if (!c) break;
-      s.combatants.push({ ...c, id: randomUUID(), name: `${c.name} · копия`, hp: c.maxHp }); break;
+      const c = battle.combatants.find(c => c.id === p.id); if (!c) break;
+      battle.combatants.push({ ...c, id: randomUUID(), name: `${c.name} · копия`, hp: c.maxHp }); break;
     }
     case 'combatant:edit': {
-      const c = s.combatants.find(c => c.id === p.id);
+      const c = battle.combatants.find(c => c.id === p.id);
       if (!c) throw new Error('Участник уже удалён');
       const maxHp = clamp(Math.round(finite(p.maxHp, c.maxHp)), 1, 999999);
       const hp = clamp(Math.round(finite(p.hp, c.hp)), 0, maxHp);
-      if (hp !== c.hp || maxHp !== c.maxHp) rememberHealth(s, c);
+      if (hp !== c.hp || maxHp !== c.maxHp) rememberHealth(battle, c);
       Object.assign(c, {
         name: text(p.name) || c.name,
         image: 'image' in p ? text(p.image, 100) || null : c.image,
@@ -51,18 +172,19 @@ function reducer(state, action) {
       break;
     }
     case 'combatant:remove':
-      s.combatants = s.combatants.filter(c => c.id !== p.id); s.tokens = s.tokens.filter(t => t.combatantId !== p.id);
-      s.history = s.history.filter(entry => entry.id !== p.id);
-      if (s.turn === p.id) s.turn = null; break;
+      battle.combatants = battle.combatants.filter(c => c.id !== p.id);
+      for (const savedBoard of s.boards) savedBoard.tokens = savedBoard.tokens.filter(t => t.combatantId !== p.id);
+      battle.history = battle.history.filter(entry => entry.id !== p.id);
+      if (battle.turn === p.id) battle.turn = null; break;
     case 'combatant:hp': {
-      const c = s.combatants.find(c => c.id === p.id); if (!c) break;
+      const c = battle.combatants.find(c => c.id === p.id); if (!c) break;
       const next = hpValue(c.hp, c.maxHp, p.expression);
-      if (next !== c.hp) { rememberHealth(s, c); c.hp = next; }
+      if (next !== c.hp) { rememberHealth(battle, c); c.hp = next; }
       break;
     }
     case 'combatant:undo': {
-      const previous = s.history.pop();
-      const c = previous && s.combatants.find(c => c.id === previous.id);
+      const previous = battle.history.pop();
+      const c = previous && battle.combatants.find(c => c.id === previous.id);
       if (c) {
         c.maxHp = previous.maxHp ?? c.maxHp;
         c.hp = clamp(previous.hp, 0, c.maxHp);
@@ -70,31 +192,31 @@ function reducer(state, action) {
       break;
     }
     case 'combat:next': {
-      const order = [...s.combatants].sort((a, b) => b.initiative - a.initiative);
+      const order = [...battle.combatants].sort((a, b) => b.initiative - a.initiative);
       if (!order.length) break;
-      const idx = order.findIndex(c => c.id === s.turn);
-      if (idx === order.length - 1) s.round++;
-      s.turn = order[(idx + 1) % order.length].id; break;
+      const idx = order.findIndex(c => c.id === battle.turn);
+      if (idx === order.length - 1) battle.round++;
+      battle.turn = order[(idx + 1) % order.length].id; break;
     }
     case 'token:add': {
-      if (!s.combatants.some(c => c.id === p.id) || s.tokens.some(t => t.combatantId === p.id)) break;
+      if (!battle.combatants.some(c => c.id === p.id) || board.tokens.some(t => t.combatantId === p.id)) break;
       let index = 0;
-      while (s.tokens.some(t => t.col === index % 8 && t.row === Math.floor(index / 8))) index++;
-      s.tokens.push({ combatantId: p.id, col: index % 8, row: Math.floor(index / 8) }); break;
+      while (board.tokens.some(t => t.col === index % 8 && t.row === Math.floor(index / 8))) index++;
+      board.tokens.push({ combatantId: p.id, col: index % 8, row: Math.floor(index / 8) }); break;
     }
     case 'token:move': {
-      const t = s.tokens.find(t => t.combatantId === p.id);
+      const t = board.tokens.find(t => t.combatantId === p.id);
       if (t) { t.col = clamp(Math.round(finite(p.col, t.col)), 0, 2000); t.row = clamp(Math.round(finite(p.row, t.row)), 0, 2000); } break;
     }
-    case 'token:remove': s.tokens = s.tokens.filter(t => t.combatantId !== p.id); break;
+    case 'token:remove': board.tokens = board.tokens.filter(t => t.combatantId !== p.id); break;
     case 'map:settings':
       for (const [key, min, max] of [['grid', 16, 256], ['offsetX', -512, 512], ['offsetY', -512, 512], ['opacity', 0, 1], ['zoom', 0.01, 3]])
-        if (key in p) s.map[key] = clamp(finite(p[key], s.map[key]), min, max);
-      if (typeof p.visible === 'boolean') s.map.visible = p.visible;
-      if (typeof p.playerHealth === 'boolean') s.map.playerHealth = p.playerHealth;
-      if (/^#[0-9a-f]{6}$/i.test(p.color)) s.map.color = p.color;
+        if (key in p) board.map[key] = clamp(finite(p[key], board.map[key]), min, max);
+      if (typeof p.visible === 'boolean') board.map.visible = p.visible;
+      if (typeof p.playerHealth === 'boolean') board.map.playerHealth = p.playerHealth;
+      if (/^#[0-9a-f]{6}$/i.test(p.color)) board.map.color = p.color;
       break;
-    case 'map:image': s.map.image = text(p.image, 100) || null; break;
+    case 'map:image': board.map.image = text(p.image, 100) || null; break;
     case 'gallery:add':
       s.gallery.unshift({ id: randomUUID(), image: p.image, title: text(p.title) || 'Иллюстрация' });
       break;
@@ -146,4 +268,4 @@ function reducer(state, action) {
   s.revision++;
   return s;
 }
-module.exports = { initialState, reducer, hpValue, cellAt };
+module.exports = { initialState, migrateState, activeView, reducer, hpValue, cellAt };
