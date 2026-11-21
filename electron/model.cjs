@@ -91,6 +91,7 @@ function reducer(state, action) {
       for (const [key, min, max] of [['grid', 16, 256], ['offsetX', -512, 512], ['offsetY', -512, 512], ['opacity', 0, 1], ['zoom', 0.01, 3]])
         if (key in p) s.map[key] = clamp(finite(p[key], s.map[key]), min, max);
       if (typeof p.visible === 'boolean') s.map.visible = p.visible;
+      if (typeof p.playerHealth === 'boolean') s.map.playerHealth = p.playerHealth;
       if (/^#[0-9a-f]{6}$/i.test(p.color)) s.map.color = p.color;
       break;
     case 'map:image': s.map.image = text(p.image, 100) || null; break;
@@ -99,6 +100,17 @@ function reducer(state, action) {
     }
     case 'music:add':
       s.music.tracks.push({ id: randomUUID(), title: text(p.title) || 'Без названия', asset: text(p.asset, 100), folder: s.music.folders.includes(p.folder) ? p.folder : 'Общее', source: text(p.source, 300) }); break;
+    case 'music:save-import': {
+      const asset = text(p.asset, 100);
+      const folder = s.music.folders.includes(p.folder) ? p.folder : 'Общее';
+      for (const track of s.music.tracks) {
+        if (p.previousAsset && track.asset === p.previousAsset) track.asset = asset;
+      }
+      if (!s.music.tracks.some(track => track.asset === asset && track.folder === folder)) {
+        s.music.tracks.push({ id: randomUUID(), title: text(p.title), asset, folder, source: text(p.source, 300) });
+      }
+      break;
+    }
     case 'music:move': {
       const t = s.music.tracks.find(t => t.id === p.id); if (t && s.music.folders.includes(p.folder)) t.folder = p.folder; break;
     }

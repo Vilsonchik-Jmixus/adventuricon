@@ -26,10 +26,10 @@ jobs:
           if ($env:GITHUB_REF_NAME -ne "v$version") { throw 'Tag and package version differ' }
       - name: Verify combat and map logic
         run: npm test
+      - name: Download verified media importer and MP3 converter
+        run: npm run tools
       - name: Verify desktop interaction and persistence
         run: node tests/desktop-smoke.cjs
-      - name: Download verified media importer
-        run: npm run tools
       - name: Build and publish installer and update manifest
         run: npm run release
         env:

@@ -2,9 +2,12 @@
 const $ = id => document.getElementById(id);
 const api = window.dm;
 const detachedPanel = new URLSearchParams(location.search).get('panel');
+const isPlayerMap = detachedPanel === 'map';
 let state, detached = [], currentFolder = 'Общее', portrait = null, expanded = null;
 let editingCombatant = null;
 let toastTimer, textSubmit, draggingToken = false, animating = false, musicBusy = false, currentUpdate;
+let mapCamera = null, previewToken = null, pendingMapFrame = 0;
+let playerBlackout = false;
 const assetURL = name => `dm://app/assets/${encodeURIComponent(name)}`;
 const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 function toast(message) { $('toast').textContent = message; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 4500); }
@@ -40,11 +43,14 @@ function renderMap() {
   $('map-viewport').classList.toggle('has-map', !!m.image);
   $('zoom-label').textContent = `${Math.round(zoom * 100)}%`;
   $('token-count').textContent = state.tokens.length;
+  document.body.classList.toggle('players-see-health', !!m.playerHealth);
+  $('player-settings').hidden = !!detachedPanel || !detached.includes('map');
   if (draggingToken) return;
   $('map-tokens').innerHTML = state.tokens.map(t => {
     const c = state.combatants.find(c => c.id === t.combatantId); if (!c) return '';
     return `<button class="token ${c.hp === 0 ? 'dead' : ''} ${state.turn === c.id ? 'active-turn' : ''}" data-token="${c.id}" title="${escapeHTML(c.name)} · ${c.hp}/${c.maxHp} ХП. Двойное нажатие: убрать" style="left:${(m.offsetX + t.col * m.grid) * zoom}px;top:${(m.offsetY + t.row * m.grid) * zoom}px">${avatar(c, 'token-body')}<span class="token-hp">${c.hp}/${c.maxHp}</span></button>`;
   }).join('');
+  if (isPlayerMap) paintPlayerMap();
 }
 function renderMusic() {
   if (!state.music.folders.includes(currentFolder)) currentFolder = state.music.folders[0];
@@ -70,7 +76,8 @@ function renderMusic() {
 }
 function renderLayout() {
   const w = $('workspace'); w.style.setProperty('--left', state.layout.left + '%'); w.style.setProperty('--middle', state.layout.middle + '%'); w.style.setProperty('--top', state.layout.top + '%');
-  document.querySelectorAll('[data-panel]').forEach(panel => panel.classList.toggle('is-detached', !detachedPanel && detached.includes(panel.dataset.panel)));
+  document.querySelectorAll('[data-panel]').forEach(panel =>
+    panel.classList.toggle('is-detached', !detachedPanel && panel.dataset.panel !== 'map' && detached.includes(panel.dataset.panel)));
 }
 function renderAll() { renderLayout(); renderCombat(); renderMap(); renderMusic(); requestAnimationFrame(syncRemoteBounds); }
 function syncRemoteBounds() {
@@ -165,6 +172,32 @@ $('grid-form').onsubmit = e => {
   dispatch('map:settings', { grid: Number(f.elements.grid.value), offsetX: Number(f.elements.offsetX.value), offsetY: Number(f.elements.offsetY.value), opacity: Number(f.elements.opacity.value), color: f.elements.color.value, visible: f.elements.visible.checked }); closeDialog($('grid-dialog'));
 };
 const viewport = $('map-viewport');
+function queueMapCamera() {
+  if (detachedPanel || pendingMapFrame) return;
+  pendingMapFrame = requestAnimationFrame(() => {
+    pendingMapFrame = 0;
+    if (!state || !viewport.clientWidth || !viewport.clientHeight) return;
+    const zoom = state.map.zoom;
+    api.mirrorMap({ camera: {
+      x: (viewport.scrollLeft + viewport.clientWidth / 2) / zoom,
+      y: (viewport.scrollTop + viewport.clientHeight / 2) / zoom
+    } });
+  });
+}
+function paintPlayerMap() {
+  if (!state) return;
+  const zoom = state.map.zoom;
+  if (mapCamera) viewport.scrollTo(mapCamera.x * zoom - viewport.clientWidth / 2, mapCamera.y * zoom - viewport.clientHeight / 2);
+  if (!previewToken) return;
+  const token = [...$('map-tokens').children].find(button => button.dataset.token === previewToken.id);
+  if (token) positionToken(token, state.map, previewToken.col, previewToken.row);
+}
+function positionToken(token, map, col, row) {
+  token.style.left = `${(map.offsetX + col * map.grid) * map.zoom}px`;
+  token.style.top = `${(map.offsetY + row * map.grid) * map.zoom}px`;
+}
+viewport.addEventListener('scroll', queueMapCamera, { passive: true });
+new ResizeObserver(() => isPlayerMap ? paintPlayerMap() : queueMapCamera()).observe(viewport);
 let zoomRequest = 0;
 async function setZoom(value, anchorX = viewport.clientWidth / 2, anchorY = viewport.clientHeight / 2) {
   const request = ++zoomRequest, old = state.map.zoom;
@@ -175,6 +208,7 @@ async function setZoom(value, anchorX = viewport.clientWidth / 2, anchorY = view
   if (response?.ok && request === zoomRequest) {
     viewport.scrollLeft = x * zoom - anchorX;
     viewport.scrollTop = y * zoom - anchorY;
+    queueMapCamera();
   }
 }
 $('zoom-in').onclick = () => setZoom(state.map.zoom * 1.25);
@@ -187,13 +221,21 @@ $('fit-map').onclick = async () => {
   viewport.scrollTo(0, 0);
 };
 viewport.addEventListener('wheel', e => {
+  if (isPlayerMap) { e.preventDefault(); return; }
   if (!e.ctrlKey) return;
   e.preventDefault();
   const rect = viewport.getBoundingClientRect();
   setZoom(state.map.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX - rect.left, e.clientY - rect.top);
 }, { passive: false });
 viewport.addEventListener('pointerdown', e => {
-  if (e.button !== 0 || e.target.closest('[data-token]') || e.target === viewport) return;
+  if (isPlayerMap || e.button !== 0 || e.target.closest('[data-token]') || e.target === viewport) return;
+  if (e.shiftKey && !detachedPanel) {
+    const box = $('map-world').getBoundingClientRect();
+    const ping = { x: (e.clientX - box.x) / state.map.zoom, y: (e.clientY - box.y) / state.map.zoom };
+    showMapPing(ping);
+    api.mirrorMap({ ping });
+    return;
+  }
   const { scrollLeft, scrollTop } = viewport;
   const startX = e.clientX, startY = e.clientY;
   viewport.classList.add('panning');
@@ -205,29 +247,59 @@ viewport.addEventListener('pointerdown', e => {
     viewport.classList.remove('panning');
   }, { once: true });
 });
+function showMapPing({ x, y }) {
+  if (!state || (isPlayerMap && playerBlackout)) return;
+  $('map-world').querySelector('.map-ping')?.remove();
+  const ping = document.createElement('span');
+  ping.className = 'map-ping';
+  ping.style.left = x * state.map.zoom + 'px';
+  ping.style.top = y * state.map.zoom + 'px';
+  $('map-world').append(ping);
+  setTimeout(() => ping.remove(), 1200);
+}
+$('player-settings').onclick = () => {
+  $('toggle-player-health').checked = !!state.map.playerHealth;
+  $('toggle-player-blackout').checked = playerBlackout;
+  openDialog('player-dialog');
+};
+$('toggle-player-health').onchange = e => dispatch('map:settings', { playerHealth: e.target.checked });
+$('toggle-player-blackout').onchange = e => {
+  playerBlackout = e.target.checked;
+  $('player-settings').setAttribute('aria-pressed', String(playerBlackout));
+  api.mirrorMap({ blackout: playerBlackout });
+};
 $('map-viewport').addEventListener('dragover', e => { e.preventDefault(); });
-$('map-viewport').addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer.files[0]) loadMap(api.importDrop(e.dataTransfer.files[0], 'image')); });
+$('map-viewport').addEventListener('drop', e => { e.preventDefault(); if (!isPlayerMap && e.dataTransfer.files[0]) loadMap(api.importDrop(e.dataTransfer.files[0], 'image')); });
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && expanded) { e.preventDefault(); expandPanel(expanded); }
   if (e.key === 'F11') { e.preventDefault(); result(api.fullscreen()); }
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) && !document.querySelector('dialog[open]')) { e.preventDefault(); loadMap(api.pasteImage()); }
+  if (!isPlayerMap && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) && !document.querySelector('dialog[open]')) { e.preventDefault(); loadMap(api.pasteImage()); }
 });
-$('map-tokens').addEventListener('dblclick', e => { const token = e.target.closest('[data-token]'); if (token) dispatch('token:remove', { id: token.dataset.token }); });
+$('map-tokens').addEventListener('dblclick', e => { const token = e.target.closest('[data-token]'); if (token && !isPlayerMap) dispatch('token:remove', { id: token.dataset.token }); });
 $('map-tokens').addEventListener('pointerdown', e => {
-  const token = e.target.closest('[data-token]'); if (!token || e.button !== 0) return;
+  const token = e.target.closest('[data-token]'); if (!token || isPlayerMap || e.button !== 0) return;
   e.preventDefault(); draggingToken = true; token.classList.add('dragging'); token.setPointerCapture(e.pointerId);
   const id = token.dataset.token, m = { ...state.map }, z = m.zoom, rect = $('map-world').getBoundingClientRect();
-  let col = 0, row = 0, moved = false;
+  let col = 0, row = 0, moved = false, previewFrame = 0;
   const move = event => {
     moved = true;
     col = Math.max(0, Math.floor(((event.clientX - rect.left) / z - m.offsetX) / m.grid));
     row = Math.max(0, Math.floor(((event.clientY - rect.top) / z - m.offsetY) / m.grid));
-    token.style.left = `${(m.offsetX + col * m.grid) * z}px`; token.style.top = `${(m.offsetY + row * m.grid) * z}px`;
+    positionToken(token, m, col, row);
+    if (detached.includes('map') && !previewFrame) {
+      previewFrame = requestAnimationFrame(() => {
+        previewFrame = 0;
+        api.mirrorMap({ token: { id, col, row } });
+      });
+    }
   };
-  const stop = () => {
+  const stop = async () => {
     token.removeEventListener('pointermove', move); token.removeEventListener('pointerup', stop); token.removeEventListener('pointercancel', cancel);
     draggingToken = false; token.classList.remove('dragging');
-    if (moved) dispatch('token:move', { id, col, row }); else renderMap();
+    cancelAnimationFrame(previewFrame);
+    if (moved) await dispatch('token:move', { id, col, row });
+    else renderMap();
+    if (detached.includes('map')) api.mirrorMap({ token: null });
   };
   const cancel = () => { moved = false; stop(); };
   token.addEventListener('pointermove', move); token.addEventListener('pointerup', stop); token.addEventListener('pointercancel', cancel);
@@ -236,8 +308,8 @@ $('import-audio').onclick = async () => { const r = await result(api.importFile(
 $('add-folder').onclick = () => askText('Новая папка', 'Название папки', '', async name => { await dispatch('music:folder', { name }); currentFolder = name; renderMusic(); });
 $('import-youtube').onclick = () => {
   if (musicBusy) return toast('Трек уже загружается');
-  askText('Аудио с YouTube', 'Ссылка на видео', `Трек сохранится в папке «${currentFolder}».`,
-    url => result(api.downloadMusic(url, currentFolder)), 'Загрузить аудио');
+  askText('MP3 с YouTube', 'Ссылка на видео', `MP3 появится в папке «${currentFolder}».`,
+    url => result(api.downloadMusic(url, currentFolder)), 'Скачать MP3');
 };
 $('cancel-music').onclick = () => result(api.cancelMusic());
 $('text-form').onsubmit = e => { e.preventDefault(); const value = $('text-dialog-input').value.trim(); if (value) { const cb = textSubmit; closeDialog($('text-dialog')); Promise.resolve(cb(value)).catch(err => toast(err.message)); } };
@@ -267,7 +339,7 @@ function updateMusicStatus(status) {
   else progress.removeAttribute('value');
 }
 async function focusToken(id) {
-  if (detachedPanel && detachedPanel !== 'map' || !detachedPanel && detached.includes('map')) return;
+  if (detachedPanel) return;
   if (expanded && expanded !== 'map') await expandPanel(expanded);
   const token = [...$('map-tokens').children].find(button => button.dataset.token === id);
   if (!token) return;
@@ -279,6 +351,17 @@ api.onStatus(status => {
   if (status.scope === 'update') { updateUI(status); if (['available', 'downloaded', 'error', 'latest'].includes(status.phase)) toast(status.text); }
   else if (status.scope === 'music') updateMusicStatus(status);
   else if (status.scope === 'map-focus') focusToken(status.id);
+  else if (status.scope === 'map-preview' && isPlayerMap) {
+    mapCamera = status.camera;
+    playerBlackout = status.blackout;
+    $('player-blackout').hidden = !playerBlackout;
+    if (Object.hasOwn(status, 'token')) {
+      previewToken = status.token;
+      if (previewToken) paintPlayerMap();
+      else renderMap();
+    } else paintPlayerMap();
+    if (status.ping) showMapPing(status.ping);
+  }
   else toast(status.text);
 });
 function beginResize(e, kind, panel) {
@@ -320,12 +403,22 @@ window.addEventListener('resize', syncRemoteBounds);
 api.onState(value => { state = value.state; detached = value.detached; renderAll(); });
 (async () => {
   const initial = await api.init(); state = initial.state; detached = initial.detached; updateUI(initial.updateStatus); updateMusicStatus(initial.musicStatus);
+  mapCamera = initial.mapCamera;
+  playerBlackout = initial.playerBlackout;
   $('version').textContent = `v${initial.version}`;
   if (detachedPanel) {
     document.body.classList.add('detached');
     document.querySelectorAll('[data-panel]').forEach(panel => { panel.hidden = panel.dataset.panel !== detachedPanel; });
     const dock = document.querySelector(`[data-detach="${detachedPanel}"]`); dock.textContent = '↙'; dock.title = 'Вернуть в ширму';
     document.title = document.querySelector(`[data-panel="${detachedPanel}"] h1`).textContent + ' · Ширма мастера';
+    if (isPlayerMap) {
+      document.body.classList.add('player-map');
+      document.querySelector('.map h1').textContent = 'Карта игроков';
+      document.title = 'Карта игроков · Ширма мастера';
+      viewport.inert = true;
+      $('player-blackout').hidden = !playerBlackout;
+    }
   }
   renderAll();
+  queueMapCamera();
 })();

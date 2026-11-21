@@ -3,8 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { randomUUID } = require('node:crypto');
-const { spawn } = require('node:child_process');
-const { createInterface } = require('node:readline');
+const { beginMusicImport } = require('./music-import.cjs');
 const { initialState, reducer } = require('./model.cjs');
 const { autoUpdater } = require('electron-updater');
 const TEST = process.env.DM_SCREEN_TEST === '1';
@@ -16,6 +15,8 @@ const windows = new Map(), remotes = new Map();
 let mainWindow, state, store, assets, quitting = false, downloadProcess = null;
 let updateStatus = { scope: 'update', phase: 'idle', text: 'Обновления' };
 let musicStatus = { scope: 'music', phase: 'idle', text: '' };
+let mapCamera = null;
+let playerBlackout = false;
 function localSender(event) {
   const url = event.senderFrame?.url || '';
   if (!url.startsWith('dm://app/') || !BrowserWindow.fromWebContents(event.sender)) throw new Error('Недопустимый источник');
@@ -110,11 +111,12 @@ function detach(id) {
   broadcast(); return { ok: true };
 }
 function setupIPC() {
-  handle('init', () => ({ state, detached: [...windows.keys()], version: app.getVersion(), updateStatus, musicStatus, test: TEST }));
+  handle('init', () => ({ state, detached: [...windows.keys()], version: app.getVersion(), updateStatus, musicStatus, mapCamera, playerBlackout, test: TEST }));
   handle('dispatch', (_, action) => {
     if (!action || typeof action.type !== 'string' || JSON.stringify(action).length > 10000) throw new Error('Неверная команда');
     if (['map:image', 'combatant:add', 'combatant:edit'].includes(action.type) && action.payload?.image) assetName(action.payload.image);
     if (action.type === 'music:add') assetName(action.payload?.asset);
+    if (action.type === 'music:save-import') throw new Error('Эта команда доступна только загрузчику');
     return commit(action);
   });
   handle('import-file', async (event, { kind }) => {
@@ -145,15 +147,28 @@ function setupIPC() {
   handle('detach', (_, id) => detach(id));
   handle('show-token', (_, id) => {
     if (!state.tokens.some(token => token.combatantId === id)) return { ok: false, error: 'Жетон уже убран с карты' };
-    const mapWindow = windows.get('map');
-    if (mapWindow) {
-      mapWindow.show();
-      mapWindow.focus();
-    }
     sendAll('status', { scope: 'map-focus', id });
     return { ok: true };
   });
   handle('dock', event => { const w = BrowserWindow.fromWebContents(event.sender); if (w !== mainWindow) w.close(); return { ok: true }; });
+  ipcMain.on('mirror-map', (event, preview) => {
+    if (event.sender !== mainWindow?.webContents || !preview) return;
+    const camera = preview.camera;
+    if (camera && Number.isFinite(camera.x) && Number.isFinite(camera.y)) mapCamera = camera;
+    if (typeof preview.blackout === 'boolean') playerBlackout = preview.blackout;
+    const ping = preview.ping;
+    const mirror = windows.get('map');
+    if (!mirror || mirror.isDestroyed()) return;
+    const token = preview.token;
+    const valid = token && Number.isFinite(token.col) && Number.isFinite(token.row) &&
+      state.tokens.some(item => item.combatantId === token.id);
+    mirror.webContents.send('status', {
+      scope: 'map-preview', camera: mapCamera,
+      blackout: playerBlackout,
+      ...(ping && Number.isFinite(ping.x) && Number.isFinite(ping.y) ? { ping } : {}),
+      ...(Object.hasOwn(preview, 'token') ? { token: valid ? token : null } : {})
+    });
+  });
   handle('fullscreen', event => { const w = BrowserWindow.fromWebContents(event.sender); w.setFullScreen(!w.isFullScreen()); return { ok: true }; });
   ipcMain.on('resize-window', (event, p) => {
     try {
@@ -213,99 +228,32 @@ function reportMusic(phase, text, percent = null) {
   musicStatus = { scope: 'music', phase, text, percent };
   sendAll('status', musicStatus);
 }
-function downloadMusic({ url, folder }) {
+async function downloadMusic({ url, folder }) {
   const videoId = youtubeVideoId(url);
   if (!videoId) throw new Error('Вставьте HTTPS-ссылку на отдельное видео YouTube');
   if (downloadProcess) throw new Error('Дождитесь завершения текущей загрузки');
-  const source = `https://www.youtube.com/watch?v=${videoId}`;
-  const cached = state.music.tracks.find(track => youtubeVideoId(track.source) === videoId &&
+  if (!state.music.folders.includes(folder)) folder = 'Общее';
+  const source = 'https://www.youtube.com/watch?v=' + videoId;
+  const available = state.music.tracks.filter(track => youtubeVideoId(track.source) === videoId &&
     fs.existsSync(path.join(assets, assetName(track.asset))));
-  if (cached) {
-    if (!state.music.tracks.some(track => track.asset === cached.asset && track.folder === folder)) {
-      commit({ type: 'music:add', payload: { ...cached, source, folder } });
-    }
-    reportMusic('done', 'Трек уже сохранён на компьютере');
+  const mp3 = available.find(track => track.asset.endsWith('.mp3'));
+  const save = ({ asset, title, previousAsset }) => commit({
+    type: 'music:save-import',
+    payload: { asset, title: title || videoId, previousAsset, folder, source }
+  });
+  if (mp3) {
+    save(mp3);
+    reportMusic('done', 'MP3 уже сохранён на компьютере');
     return { ok: true };
   }
-  const executable = app.isPackaged ? path.join(process.resourcesPath, 'media', 'yt-dlp.exe') : path.join(__dirname, '..', '.tools', 'media', 'yt-dlp.exe');
-  if (!fs.existsSync(executable)) throw new Error('Загрузчик не найден. Выполните npm run tools и пересоберите программу.');
-  const id = randomUUID();
-  reportMusic('loading', 'Подключение к YouTube…');
-  const child = spawn(executable, [
-    '--ignore-config', '--no-playlist', '--no-warnings', '--no-simulate',
-    '--socket-timeout', '10', '--retries', '2', '--fragment-retries', '2',
-    '--extractor-retries', '1', '--concurrent-fragments', '4', '--abort-on-unavailable-fragments',
-    '--progress', '--newline', '--color', 'never', '--progress-delta', '0.5',
-    '--progress-template', 'download:DM_PROGRESS %(progress.downloaded_bytes)s %(progress._percent_str)s',
-    '--max-filesize', '1G', '--js-runtimes', `node:${process.execPath}`,
-    '-f', 'bestaudio[ext=m4a]/bestaudio', '--print', 'after_move:DM_TITLE %(title)j',
-    '-o', path.join(assets, `${id}.%(ext)s`), '--', source
-  ], { windowsHide: true, env: { ...process.env, PYTHONIOENCODING: 'utf-8', ELECTRON_RUN_AS_NODE: '1' } });
-  let title, reason, inactivity, downloaded = -1;
-  const stop = message => {
-    if (reason) return;
-    reason = message;
-    clearTimeout(inactivity);
-    reportMusic('stopping', message);
-    // The packaged Windows loader spawns a child. Kill the entire job.
-    if (child.pid && process.platform === 'win32') {
-      const killer = spawn(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'),
-        ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-      killer.once('error', () => child.kill());
-      killer.once('close', code => { if (code !== 0 && child.exitCode === null) child.kill(); });
-    } else child.kill();
-  };
-  downloadProcess = { stop };
-  const refreshTimeout = () => {
-    clearTimeout(inactivity);
-    inactivity = setTimeout(() => stop('YouTube перестал передавать данные. Попробуйте ещё раз или добавьте аудиофайл.'), 45_000);
-  };
-  refreshTimeout();
-  const lines = createInterface({ input: child.stdout });
-  lines.on('line', line => {
-    if (reason) return;
-    const progress = line.match(/^DM_PROGRESS\s+(\d+)\s*(\d+(?:\.\d+)?)?/);
-    if (progress && Number(progress[1]) > downloaded) {
-      downloaded = Number(progress[1]);
-      refreshTimeout();
-      const percent = progress[2] ? Math.min(100, Math.round(Number(progress[2]))) : null;
-      const mb = (downloaded / 1024 ** 2).toFixed(1);
-      reportMusic('loading', percent === null ? `Получено ${mb} МБ` : `Загружено ${percent}%`, percent);
-    }
-    if (line.startsWith('DM_TITLE ')) {
-      try { title = JSON.parse(line.slice(9)); } catch { /* Fall back to the video ID. */ }
-    }
-  });
-  let stderr = '';
-  child.stderr.on('data', data => { stderr = (stderr + data.toString()).slice(-3000); });
-  return new Promise(resolve => {
-    child.once('error', e => { reason ||= `Не удалось запустить загрузчик: ${e.message}`; });
-    child.once('close', code => {
-      clearTimeout(inactivity);
-      lines.close();
-      downloadProcess = null;
-      let files = [];
-      try {
-        files = fs.readdirSync(assets).filter(file => file.startsWith(id + '.'));
-        if (reason) throw new Error(reason);
-        if (code !== 0) throw new Error(/ssl|timed out|connection|network/i.test(stderr)
-          ? 'Соединение с YouTube прервалось. Попробуйте ещё раз или добавьте аудиофайл.'
-          : 'YouTube не отдал аудио для этого видео. Попробуйте другую ссылку.');
-        const asset = files.find(file => /\.(m4a|webm|mp3|ogg|mp4)$/.test(file));
-        if (!asset) throw new Error('YouTube не передал поддерживаемый аудиофайл');
-        commit({ type: 'music:add', payload: { title: title || videoId, asset, folder, source } });
-        reportMusic('done', 'Трек сохранён для прослушивания без интернета');
-        resolve({ ok: true });
-      } catch (e) {
-        for (const file of files) {
-          try { fs.unlinkSync(path.join(assets, file)); } catch { /* A file may already be gone. */ }
-        }
-        const canceled = reason === 'Загрузка отменена';
-        reportMusic(canceled ? 'idle' : 'error', e.message);
-        resolve(canceled ? { canceled: true } : { ok: false, error: e.message });
-      }
-    });
-  });
+  const tools = app.isPackaged ? path.join(process.resourcesPath, 'media') : path.join(__dirname, '..', '.tools', 'media');
+  const cached = available[0];
+  if (!cached && !fs.existsSync(path.join(tools, 'yt-dlp.exe'))) throw new Error('Не найден загрузчик YouTube');
+  if (!fs.existsSync(path.join(tools, 'ffmpeg', 'ffmpeg.exe'))) throw new Error('Не найден конвертер MP3');
+  const job = beginMusicImport({ assets, tools, source, cached, nodePath: process.execPath, report: reportMusic, save });
+  downloadProcess = job;
+  try { return await job.done; }
+  finally { downloadProcess = null; }
 }
 function setupUpdater() {
   autoUpdater.autoDownload = false;

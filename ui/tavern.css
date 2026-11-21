@@ -135,6 +135,30 @@ input[type=range], progress { accent-color: #d3a16e; }
 .lss-monogram { border-radius: 0; border-color: #996440; color: #e7b780; font: 12px/1 var(--pixel); }
 .map-viewport { background: #211610; cursor: grab; }
 .map-viewport.panning { cursor: grabbing; user-select: none; }
+.player-map .map-viewport { overflow: hidden; cursor: default; pointer-events: none; }
+.player-map .token { pointer-events: none; transition: none; }
+.player-map:not(.players-see-health) .token-hp { display: none; }
+.player-map .map-toolbar, .player-map #map-settings, .player-map .map-hint { display: none; }
+.player-map #player-blackout { position: absolute; inset: 42px 0 0; z-index: 9; background: #1b110d; display: grid; place-items: center; color: #bc9874; font: 10px var(--pixel); text-align: center; }
+.player-options { display: grid; gap: 14px; margin-top: 18px; }
+#player-settings[aria-pressed="true"] { color: #f4c788; background: #24160f; }
+.map-ping {
+  position: absolute;
+  width: 36px;
+  height: 36px;
+  z-index: 12;
+  border: 3px solid #ffd395;
+  box-shadow: 0 0 0 2px #5a321c, inset 0 0 0 2px #5a321c;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  animation: map-ping 1.2s ease-out forwards;
+}
+@keyframes map-ping {
+  from { transform: translate(-50%, -50%) scale(.45); opacity: 1; }
+  65% { opacity: 1; }
+  to { transform: translate(-50%, -50%) scale(1.8); opacity: 0; }
+}
 .map-hint { background: #27180fee; border-color: #855b3c; color: #f0d1a4; }
 .map-hint small, .zoom-controls { color: var(--muted); }
 .token { padding: min(4px, calc(var(--grid-size) * .07)); background: none; box-shadow: none; }
