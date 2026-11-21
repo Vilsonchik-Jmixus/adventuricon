@@ -32,6 +32,8 @@ jobs:
         run: node tests/desktop-smoke.cjs
       - name: Verify map scaling and combat queue
         run: node tests/map-window-smoke.cjs
+      - name: Verify welcome screen and preferences
+        run: node tests/welcome-smoke.cjs
       - name: Build and publish installer and update manifest
         run: npm run release
         env:

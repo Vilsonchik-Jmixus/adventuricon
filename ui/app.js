@@ -80,6 +80,7 @@ function renderCombat() {
   $('combat-list').innerHTML = order.length
     ? order.map((c, index) => combatCard(c, drafts.get(c.id), placed.has(c.id), index, order.length)).join('')
     : empty;
+  ambience.combat($('combat-list'), byId, state.activeBattleId, state.turn, state.round);
   if (focused) document.querySelector(`.hp-form[data-id="${focused}"] input`)?.focus();
   if ($('initiative-dialog').open) renderInitiative();
 }
@@ -398,6 +399,8 @@ function renderGallery() {
       <img src="${assetURL(entry.image)}" alt="" loading="lazy"><span>${escapeHTML(entry.title)}</span>
     </button>`).join('');
 }
+ambience.fadeImage($('gallery-image'));
+ambience.fadeImage($('presented-image'));
 function renderPresentation() {
   $('display-label').hidden = isPlayerMap || !presentation;
   $('return-map').hidden = isPlayerMap || !presentation;
@@ -918,4 +921,5 @@ api.onState(value => { readWindowState(value); renderAll(); });
   renderAll();
   if (!isPlayerMap) renderReference();
   queueMapCamera();
+  if (!detachedPanel) ambience.start({ openDialog, closeDialog, showAtStart: initial.welcomeAtStart });
 })();

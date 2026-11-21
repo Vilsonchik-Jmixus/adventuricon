@@ -283,7 +283,7 @@ function detach(id, focus = true) {
 function setupIPC() {
   handle('init', event => ({ ...windowState(event.sender), version: app.getVersion(), updateStatus, musicStatus,
     playerBlackout, conditionDefinitions: CONDITIONS, combatRoles: ROLES, referenceLinks: REFERENCE_LINKS,
-    reference: referenceState(), test: TEST }));
+    reference: referenceState(), test: TEST, welcomeAtStart: !TEST || process.env.DM_SCREEN_WELCOME_TEST === '1' }));
   handle('dispatch', (event, action) => {
     if (event.sender === windows.get('map')?.webContents) throw new Error('Экраном управляет мастер');
     if (!action || typeof action.type !== 'string' || JSON.stringify(action).length > 10000) throw new Error('Неверная команда');
@@ -491,9 +491,10 @@ app.whenReady().then(async () => {
     try {
       if (u.hostname !== 'app') return new Response('Forbidden', { status: 403 });
       let file;
-      if (u.pathname.startsWith('/assets/') && !['/assets/demo-map.svg', '/assets/PressStart2P-Regular.ttf'].includes(u.pathname)) file = path.join(assets, assetName(decodeURIComponent(u.pathname.slice(8))));
+      const bundledAssets = ['/assets/demo-map.svg', '/assets/PressStart2P-Regular.ttf', '/assets/welcome-tavern.webp', '/assets/welcome-jingle.wav'];
+      if (u.pathname.startsWith('/assets/') && !bundledAssets.includes(u.pathname)) file = path.join(assets, assetName(decodeURIComponent(u.pathname.slice(8))));
       else {
-        const allowed = ['index.html', 'app.js', 'map-geometry.js', 'styles.css', 'tavern.css', 'tavern-art.js', 'assets/demo-map.svg', 'assets/PressStart2P-Regular.ttf'];
+        const allowed = ['index.html', 'app.js', 'map-geometry.js', 'styles.css', 'tavern.css', 'tavern-art.js', 'ambience.css', 'ambience.js', ...bundledAssets.map(asset => asset.slice(1))];
         const relative = u.pathname.slice(1) || 'index.html';
         if (!allowed.includes(relative)) return new Response('Not found', { status: 404 });
         file = path.join(__dirname, '..', 'ui', relative);

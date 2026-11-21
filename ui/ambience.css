@@ -1,0 +1,145 @@
+.appbar {
+  background:
+    radial-gradient(ellipse 300px 70px at 28px -17px, #a4643740, transparent),
+    linear-gradient(180deg, #422b1e, #2e1e16);
+  box-shadow: inset 0 1px #8b624050, 0 2px #170f0b;
+}
+
+.brand-mark { flex: none; filter: drop-shadow(0 0 6px #eb984868); }
+.brand, .app-actions { flex-shrink: 0; }
+.appbar #display-label { max-width: min(21vw, 240px); }
+#screen-settings { font-size: 15px; }
+
+#screen-tip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin-inline: 9px auto;
+  padding: 4px 8px;
+  background: #21160f92;
+  border: 1px solid #8c603955;
+  color: #e0c4a6;
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: left;
+}
+
+#screen-tip:hover, #screen-tip:focus-visible { border-color: #b48356; background: #492e1e; }
+.tip-label { color: #e7b173; }
+#tip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tip-next { color: #cf9a66; font-size: 14px; line-height: 1; }
+
+.panel-head {
+  --header-light: #ce976c36;
+  background:
+    linear-gradient(90deg, var(--header-light), transparent 59%),
+    repeating-linear-gradient(0deg, transparent 0 8px, #21130e30 8px 9px),
+    linear-gradient(#4e3424, #38251b);
+}
+
+.combat .panel-head { --header-light: #d7754733; }
+.info .panel-head { --header-light: #a4a7782e; }
+.music .panel-head { --header-light: #cc976044; }
+.map .panel-head { --header-light: #be8d563d; }
+
+.combat-card.active-turn {
+  background: #4b3121;
+  box-shadow: inset 3px 0 #d59b62, inset 0 1px #a7764a66;
+}
+.combat-card.active-turn .combat-name { color: #ffe0b0; }
+.combat-card.active-turn .combat-meta { color: #e8be95; }
+
+.appbar button:focus-visible, #welcome-dialog button:focus-visible,
+#screen-settings-dialog :is(button, input):focus-visible {
+  outline: 2px solid #efbc82;
+  outline-offset: 2px;
+}
+
+#welcome-dialog {
+  width: min(610px, calc(100vw - 40px));
+  max-height: calc(100vh - 36px);
+  padding: 0;
+  border-color: #b68250;
+  background: #2c1d14;
+  box-shadow: 0 0 0 3px #1c110c, 0 20px 76px #0d0705e0;
+}
+
+#welcome-dialog[open] { animation: welcome-enter 330ms cubic-bezier(.2,.7,.25,1) both; }
+#welcome-dialog::backdrop { background: #170d08dc; }
+
+.welcome-art {
+  position: relative;
+  isolation: isolate;
+  min-height: 100px;
+  overflow: hidden;
+  background: #3e281a;
+}
+
+.welcome-art img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 20 / 9;
+  max-height: 42vh;
+  object-fit: cover;
+}
+
+.welcome-art::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 24% 56% at 23% 54%, #fcb66342, transparent 75%),
+    radial-gradient(ellipse 16% 32% at 79% 73%, #ffb46852, transparent 78%);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  opacity: .28;
+  animation: welcome-glow 4.6s ease-in-out 2;
+}
+
+.welcome-content {
+  position: relative;
+  padding: 22px clamp(18px, 5vw, 36px) 25px;
+  border-top: 1px solid #91603b;
+  background: radial-gradient(ellipse 460px 180px at 13% 0%, #503121, #2d1e16);
+}
+
+.welcome-content h2 {
+  margin: 0;
+  font: clamp(11px, 2.9vw, 19px)/1.65 var(--pixel);
+  color: #f6d6a5;
+  text-shadow: 2px 3px #20120c;
+}
+.welcome-content p { margin: 9px 0 18px; font-size: 14px; color: #e6c099; }
+.welcome-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.welcome-actions .primary-button { padding: 9px 12px; }
+.welcome-actions .primary-button span { margin-left: 6px; }
+#welcome-sound { min-width: 105px; padding: 8px 7px; color: #e2bb91; }
+#welcome-sound[aria-pressed="false"] { color: #c3aa93; }
+
+#screen-settings-dialog[open] { animation: welcome-enter 190ms ease-out both; }
+.screen-options { display: grid; gap: 10px; margin: 15px 0 18px; }
+.screen-options label { display: flex; align-items: center; gap: 8px; margin: 0; cursor: pointer; }
+.screen-options input { width: 15px; height: 15px; margin: 0; accent-color: #d7a26c; }
+
+@keyframes welcome-enter {
+  from { opacity: 0; transform: translateY(8px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes welcome-glow {
+  0%, 100% { opacity: .28; }
+  34% { opacity: .66; }
+  50% { opacity: .51; }
+  71% { opacity: .76; }
+}
+
+@media (max-width: 1050px) {
+  #screen-tip { margin-left: 2px; }
+  .appbar #display-label { max-width: 12vw; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #welcome-dialog[open], #screen-settings-dialog[open], .welcome-art::after { animation: none; }
+}

@@ -6,12 +6,16 @@
   <title>Интерактивная ширма мастера</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="tavern.css">
+  <link rel="stylesheet" href="ambience.css">
 </head>
 <body>
   <header class="appbar">
     <canvas class="brand-mark" width="24" height="24" data-pixel="lantern" aria-hidden="true"></canvas>
     <div class="brand"><strong>ШИРМА МАСТЕРА</strong></div>
-    <div class="app-actions"><span id="display-label" hidden></span><button id="return-map" class="small-button" hidden>Карта игрокам</button><button id="updates" class="quiet">↻ Обновления</button><button id="help" class="icon-button" title="Как пользоваться">?</button></div>
+    <button id="screen-tip" class="quiet" type="button" hidden>
+      <span class="tip-label">Совет</span><span id="tip-text"></span><span class="tip-next" aria-hidden="true">›</span>
+    </button>
+    <div class="app-actions"><span id="display-label" hidden></span><button id="return-map" class="small-button" hidden>Карта игрокам</button><button id="updates" class="quiet">↻ Обновления</button><button id="screen-settings" type="button" class="icon-button" title="Оформление и звук" aria-label="Оформление и звук" hidden>⚙</button><button id="help" class="icon-button" title="Как пользоваться">?</button></div>
   </header>
   <main id="workspace" class="workspace">
     <section class="panel combat" data-panel="combat">
@@ -147,9 +151,33 @@
   </dialog>
   <dialog id="text-dialog"><form id="text-form"><div class="dialog-heading"><h2 id="text-dialog-title"></h2><button type="button" data-close-dialog class="icon-button">×</button></div><label id="text-dialog-label" for="text-dialog-input">Название</label><input id="text-dialog-input" required maxlength="500"><p id="text-dialog-hint" class="dialog-hint"></p><button id="text-dialog-submit" type="submit" class="primary-button">Добавить</button></form></dialog>
   <dialog id="help-dialog"><div class="dialog-heading"><h2>Всё под рукой</h2><button data-close-dialog class="icon-button">×</button></div><div class="help-content"><p><b>Справочник.</b> Разделы dnd.su открываются кнопками над страницей. Поиск с вкладки dnd.su ищет по сайту, а «Веб» ищет по всему интернету или открывает HTTPS-адрес. ★ сохраняет текущую страницу. Gemini открывается в обычном браузере, а текст из поля поиска копируется.</p><p><b>Заготовки.</b> Добавь бой или карту кнопкой «＋» рядом со списком. Переключайся между ними в выпадающем списке. Через «⋯» можно переименовать заготовку или привязать карту к бою.</p><p><b>Бойцы → карта.</b> Добавьте участника и нажмите «На карту». Перетаскивайте жетон — он привязывается к клеткам. Двойное нажатие на жетон убирает его с карты.</p><p><b>Инициатива и состояния.</b> После добавления бойца нажми «Инициатива», чтобы вписать число. d20 бросает за противников с их бонусами. Стрелки ↑ и ↓ меняют очередь вручную, а ⇅ возвращает сортировку по инициативе. Через «Состояния» или правый щелчок по жетону можно назначить метки D&D 5e.</p><p><b>Здоровье.</b> Введите −7, +5 или =20 в карточке и нажмите Enter. Нажмите на число ХП или карандаш, чтобы изменить текущие и максимальные ХП. Кнопка «↶ ХП» отменяет изменение здоровья.</p><p><b>Карта.</b> Загрузите файл, перетащите картинку или вставьте через Ctrl+V. Кнопки ↶ и ↷ поворачивают карту на 90°. Колёсико с Ctrl меняет масштаб. Потяните свободный участок для перемещения или нажмите ⊡, чтобы увидеть карту целиком.</p><p><b>Иллюстрации.</b> В правой панели открой галерею и добавь изображения. Нажми на портрет бойца для предпросмотра. «Показать игрокам» выведет выбранное изображение на второй экран, а «Карта игрокам» вернёт карту.</p><p><b>Окна.</b> ↗ выносит панель в отдельное окно. Перетащите окно на другой монитор. Карта остаётся у мастера, а второе окно показывает её игрокам. Shift + щелчок по карте подсвечивает точку на обоих экранах. ⛶ разворачивает панель; Escape возвращает её обратно.</p><p><b>Размеры.</b> Тяните разделители или уголок панели. Если дотянуть уголок до нижнего правого края рабочей области, панель развернётся. Отдельное окно меняет размер за обычные границы Windows; F11 включает полный экран.</p><p><b>Музыка.</b> Импортируйте файл или вставьте ссылку YouTube, чтобы добавить MP3. Треки хранятся на компьютере. Папка каждого трека меняется в его строке.</p><p><b>Сохранения.</b> Кампания и медиа находятся в папке данных приложения и сохраняются при обновлении. Пароли вводятся только на сайтах.</p></div></dialog>
+  <dialog id="welcome-dialog" aria-labelledby="welcome-title">
+    <div class="welcome-art" aria-hidden="true">
+      <img id="welcome-art-image" alt="" width="1120" height="504">
+    </div>
+    <div class="welcome-content">
+      <h2 id="welcome-title">Здравствуйте,<br>гейммастер!</h2>
+      <p>Хорошей игры!</p>
+      <div class="welcome-actions">
+        <button type="button" id="enter-screen" class="primary-button" data-close-dialog autofocus>Открыть ширму <span aria-hidden="true">→</span></button>
+        <button type="button" id="welcome-sound" class="quiet" aria-label="Джингл приветствия" aria-pressed="true"><span aria-hidden="true">♫</span> <span id="welcome-sound-label" aria-hidden="true">Звук вкл.</span></button>
+      </div>
+    </div>
+  </dialog>
+  <dialog id="screen-settings-dialog" aria-labelledby="screen-settings-title">
+    <div class="dialog-heading"><h2 id="screen-settings-title">Оформление и звук</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть">×</button></div>
+    <div class="screen-options">
+      <label><input type="checkbox" data-screen-option="welcome"> Приветствие при запуске</label>
+      <label><input type="checkbox" data-screen-option="sound"> Джингл приветствия</label>
+      <label><input type="checkbox" data-screen-option="tips"> Советы в шапке</label>
+    </div>
+    <button type="button" id="preview-welcome" class="small-button">Показать приветствие</button>
+  </dialog>
+  <audio id="welcome-jingle" preload="none"></audio>
   <audio id="audio" preload="metadata"></audio>
   <script src="tavern-art.js"></script>
   <script src="map-geometry.js"></script>
+  <script src="ambience.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
