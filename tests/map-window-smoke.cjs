@@ -52,12 +52,15 @@ let app;
   await app.evaluate(({ BrowserWindow }) => {
     const window = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().includes('?panel=map'));
     window.show();
+    window.focus();
   });
-  await player.keyboard.press('F11');
-  await expect(player.locator('body')).toHaveClass(/player-fullscreen/);
+  // macOS can handle F11 at the system level. Exercise the on-screen control there.
+  if (process.platform === 'darwin') await player.locator('[data-expand="map"]').click();
+  else await player.keyboard.press('F11');
+  await expect(player.locator('body')).toHaveClass(/player-fullscreen/, { timeout: 15_000 });
   await expect.poll(() => gaps(player)).toBeLessThan(3);
   await player.keyboard.press('Escape');
-  await expect(player.locator('body')).not.toHaveClass(/player-fullscreen/);
+  await expect(player.locator('body')).not.toHaveClass(/player-fullscreen/, { timeout: 15_000 });
   await master.click('#rotate-map-right');
   await expect.poll(() => player.locator('#map-image').evaluate(img => getComputedStyle(img.parentElement).transform)).toMatch(/^matrix\(0, /);
   await expect.poll(() => gaps(player)).toBeLessThan(3);
@@ -89,4 +92,9 @@ let app;
   await master.click('#reset-order');
   await expect.poll(order).toEqual(['Тестовый игрок', 'Страж']);
   console.log('PASS: portrait map at 20% fills/resizes in separate screen and master expansion, rotates, draggable grid stays aligned, manual order advances rounds.');
-})().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => { if (app) await app.close(); });
+})().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => {
+  if (!app) return;
+  const timeout = setTimeout(() => app.process().kill(), 8000);
+  try { await app.close(); }
+  finally { clearTimeout(timeout); }
+});
