@@ -10,6 +10,7 @@ const { publicDndUrl, readPublicResponse } = require('./dnd-import.cjs');
 const { ROLES, CONDITIONS, playerMapActors } = require('./combat-rules.cjs');
 const { DND_HOME, WEB_HOME, GEMINI, REFERENCE_LINKS, safeUrl, searchUrl } = require('./reference.cjs');
 const { autoUpdater } = require('electron-updater');
+const { ScreenThemes, themeIcon } = require('../ui/themes.js');
 const TEST = process.env.DM_SCREEN_TEST === '1';
 const mac = process.platform === 'darwin';
 const appImage = process.platform === 'linux' && !!process.env.APPIMAGE;
@@ -33,6 +34,23 @@ const mapCameras = new Map();
 let playerBlackout = false;
 let presentation = null;
 let recentImages = [];
+let currentTheme = 'tavern';
+let themeStore;
+const themeImages = new Map();
+
+function getThemeImage(id) {
+  if (!themeImages.has(id)) themeImages.set(id, nativeImage.createFromPath(path.join(__dirname, '..', 'ui', themeIcon(id))));
+  return themeImages.get(id);
+}
+
+function applyWindowTheme(window) {
+  window.setBackgroundColor(ScreenThemes[currentTheme].background);
+  if (!mac) window.setIcon(getThemeImage(currentTheme));
+  if (process.platform === 'win32' && window === mainWindow) {
+    const marker = currentTheme === 'tavern' ? null : getThemeImage(currentTheme).resize({ width: 16 });
+    window.setOverlayIcon(marker, `Тема «${ScreenThemes[currentTheme].name}»`);
+  }
+}
 function localSender(event) {
   const url = event.senderFrame?.url || '';
   if (!url.startsWith('dm://app/') || !BrowserWindow.fromWebContents(event.sender)) throw new Error('Недопустимый источник');
@@ -115,11 +133,12 @@ function boundsOnScreen(bounds, defaults) {
   return { x: bounds.x, y: bounds.y, width: Math.max(360, Math.min(bounds.width, 7680)), height: Math.max(300, Math.min(bounds.height, 4320)) };
 }
 function secureWindow(options = {}, showInactive = false) {
-  const icon = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
-  const w = new BrowserWindow({ width: 1500, height: 950, minWidth: 940, minHeight: 640, backgroundColor: '#221711', show: false, icon: path.join(__dirname, '..', 'ui', 'assets', icon), ...options,
+  const w = new BrowserWindow({ width: 1500, height: 950, minWidth: 940, minHeight: 640,
+    backgroundColor: ScreenThemes[currentTheme].background, show: false, icon: getThemeImage(currentTheme), ...options,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required' } });
   w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   w.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('dm://app/')) e.preventDefault(); });
+  if (process.platform === 'win32') w.on('show', () => applyWindowTheme(w));
   w.once('ready-to-show', () => {
     if (TEST) return;
     if (showInactive) w.showInactive();
@@ -301,7 +320,20 @@ function detach(id, focus = true) {
 function setupIPC() {
   handle('init', event => ({ ...windowState(event.sender), version: app.getVersion(), updateStatus, musicStatus,
     playerBlackout, conditionDefinitions: CONDITIONS, combatRoles: ROLES, referenceLinks: REFERENCE_LINKS,
-    reference: referenceState(), test: TEST, mac, welcomeAtStart: !TEST || process.env.DM_SCREEN_WELCOME_TEST === '1' }));
+    reference: referenceState(), test: TEST, mac, theme: currentTheme, welcomeAtStart: !TEST || process.env.DM_SCREEN_WELCOME_TEST === '1' }));
+  handle('set-theme', (event, id) => {
+    if (event.sender !== mainWindow?.webContents || typeof id !== 'string' || !Object.hasOwn(ScreenThemes, id)) {
+      throw new Error('Неизвестная тема оформления');
+    }
+    if (currentTheme === id) return { ok: true };
+    fs.writeFileSync(`${themeStore}.tmp`, JSON.stringify({ theme: id }), 'utf8');
+    fs.renameSync(`${themeStore}.tmp`, themeStore);
+    currentTheme = id;
+    app.dock?.setIcon(getThemeImage(id));
+    for (const window of BrowserWindow.getAllWindows()) applyWindowTheme(window);
+    sendAll('status', { scope: 'appearance-theme', theme: id });
+    return { ok: true };
+  });
   handle('dispatch', (event, action) => {
     if (event.sender === windows.get('map')?.webContents) throw new Error('Экраном управляет мастер');
     if (!action || typeof action.type !== 'string') throw new Error('Неверная команда');
@@ -554,6 +586,14 @@ function setupUpdater() {
 app.whenReady().then(async () => {
   assets = path.join(app.getPath('userData'), 'assets'); fs.mkdirSync(assets, { recursive: true });
   store = path.join(app.getPath('userData'), 'campaign.json');
+  themeStore = path.join(app.getPath('userData'), 'appearance.json');
+  if (fs.existsSync(themeStore)) {
+    try {
+      const { theme } = JSON.parse(fs.readFileSync(themeStore, 'utf8'));
+      if (typeof theme === 'string' && Object.hasOwn(ScreenThemes, theme)) currentTheme = theme;
+    } catch (error) { console.warn('Не удалось прочитать тему оформления:', error.message); }
+  }
+  app.dock?.setIcon(getThemeImage(currentTheme));
   state = initialState();
   if (fs.existsSync(store)) {
     try {
@@ -574,10 +614,12 @@ app.whenReady().then(async () => {
     try {
       if (u.hostname !== 'app') return new Response('Forbidden', { status: 403 });
       let file;
-      const bundledAssets = ['/assets/demo-map.svg', '/assets/PressStart2P-Regular.ttf', '/assets/welcome-tavern.webp', '/assets/welcome-jingle.wav'];
+      const bundledAssets = ['/assets/demo-map.svg', '/assets/PressStart2P-Regular.ttf', '/assets/welcome-tavern.webp', '/assets/welcome-jingle.wav',
+        ...Object.keys(ScreenThemes).map(id => '/' + themeIcon(id))];
       if (u.pathname.startsWith('/assets/') && !bundledAssets.includes(u.pathname)) file = path.join(assets, assetName(decodeURIComponent(u.pathname.slice(8))));
       else {
-        const allowed = ['index.html', 'app.js', 'map-geometry.js', 'map-terrain.js', 'styles.css', 'tavern.css', 'tavern-art.js', 'ambience.css', 'ambience.js', 'scene.css', 'story.js', 'story.css', ...bundledAssets.map(asset => asset.slice(1))];
+        const allowed = ['index.html', 'app.js', 'map-geometry.js', 'map-terrain.js', 'styles.css', 'tavern.css', 'themes.js', 'themes.css',
+          'ambience.css', 'ambience.js', 'scene.css', 'story.js', 'story.css', ...bundledAssets.map(asset => asset.slice(1))];
         const relative = u.pathname.slice(1) || 'index.html';
         if (!allowed.includes(relative)) return new Response('Not found', { status: 404 });
         file = path.join(__dirname, '..', 'ui', relative);

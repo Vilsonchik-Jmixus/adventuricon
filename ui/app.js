@@ -25,6 +25,35 @@ const dispatch = (type, payload = {}, context = currentContext()) => result(api.
 const mirrorMap = (preview, mapId = state.activeMapId) => api.mirrorMap({ ...preview, mapId });
 function openDialog(id) { $(id).showModal(); syncRemoteBounds(); }
 function closeDialog(dialog) { dialog.close(); syncRemoteBounds(); }
+function renderTheme(id) {
+  if (!Object.hasOwn(ScreenThemes, id)) return;
+  const root = document.documentElement;
+  const theme = ScreenThemes[id];
+  if (id === 'tavern') delete root.dataset.theme;
+  else root.dataset.theme = id;
+  root.style.setProperty('--theme-base', theme.background);
+  root.style.setProperty('--theme-accent', theme.accent);
+  $('theme-brand-icon').src = themeIcon(id);
+  for (const button of $('screen-themes').children) {
+    button.setAttribute('aria-pressed', String(button.dataset.themeChoice === id));
+  }
+}
+function populateThemePicker() {
+  $('screen-themes').replaceChildren(...Object.entries(ScreenThemes).map(([id, theme]) => {
+    const button = document.createElement('button');
+    button.className = 'screen-theme';
+    button.type = 'button';
+    button.dataset.themeChoice = id;
+    const swatch = document.createElement('span');
+    swatch.className = 'theme-swatch';
+    swatch.setAttribute('aria-hidden', 'true');
+    swatch.style.setProperty('--swatch-base', theme.background);
+    swatch.style.setProperty('--swatch-accent', theme.accent);
+    button.append(swatch, theme.name);
+    button.onclick = () => result(api.setTheme(id));
+    return button;
+  }));
+}
 function avatar(c, cls = 'avatar') { return `<span class="${cls}">${c.image ? `<img src="${assetURL(c.image)}" alt="">` : escapeHTML(c.name.slice(0, 1).toUpperCase())}</span>`; }
 function combatPortrait(c) {
   if (!c.image) return avatar(c);
@@ -1187,6 +1216,7 @@ async function focusToken(id) {
 $('updates').onclick = () => result(api.update(currentUpdate?.phase === 'available' ? 'download' : currentUpdate?.phase === 'downloaded' ? 'install' : 'check'));
 api.onStatus(status => {
   if (status.scope === 'update') { updateUI(status); if (['available', 'downloaded', 'error', 'latest'].includes(status.phase)) toast(status.text); }
+  else if (status.scope === 'appearance-theme') renderTheme(status.theme);
   else if (status.scope === 'music') updateMusicStatus(status);
   else if (status.scope === 'map-focus') focusToken(status.id);
   else if (status.scope === 'map-place' && !detachedPanel) beginPlacement(status.kind, status.id, status);
@@ -1271,6 +1301,8 @@ function readWindowState(value) {
 api.onState(value => { readWindowState(value); renderAll(); });
 (async () => {
   const initial = await api.init(); readWindowState(initial); updateUI(initial.updateStatus); updateMusicStatus(initial.musicStatus);
+  if (!detachedPanel) populateThemePicker();
+  renderTheme(initial.theme);
   if (initial.mac) {
     document.querySelectorAll('[data-paste-shortcut]').forEach(label => { label.textContent = '⌘V'; });
   }

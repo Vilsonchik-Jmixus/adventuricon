@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="ambience.css">
   <link rel="stylesheet" href="scene.css">
   <link rel="stylesheet" href="story.css">
+  <link rel="stylesheet" href="themes.css">
 </head>
 <body>
   <header class="appbar">
@@ -16,7 +17,7 @@
       <i></i><i></i><i></i><i></i><i></i><i></i><i></i>
       <i></i><i></i><i></i><i></i><i></i><i></i>
     </div>
-    <canvas class="brand-mark" width="24" height="24" data-pixel="lantern" aria-hidden="true"></canvas>
+    <img id="theme-brand-icon" class="brand-mark" src="assets/icon.png" alt="" width="29" height="29">
     <div class="brand"><strong>ШИРМА МАСТЕРА</strong></div>
     <button id="screen-tip" class="quiet" type="button" hidden>
       <span class="tip-label">Совет</span><span id="tip-text"></span><span class="tip-next" aria-hidden="true">›</span>
@@ -259,6 +260,10 @@
   </dialog>
   <dialog id="screen-settings-dialog" aria-labelledby="screen-settings-title">
     <div class="dialog-heading"><h2 id="screen-settings-title">Оформление и звук</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть">×</button></div>
+    <fieldset class="screen-theme-picker">
+      <legend>Цветовая тема</legend>
+      <div id="screen-themes"></div>
+    </fieldset>
     <div class="screen-options">
       <label><input type="checkbox" data-screen-option="welcome"> Приветствие при запуске</label>
       <label><input type="checkbox" data-screen-option="sound"> Джингл приветствия</label>
@@ -268,7 +273,7 @@
   </dialog>
   <audio id="welcome-jingle" preload="none"></audio>
   <audio id="audio" preload="metadata"></audio>
-  <script src="tavern-art.js"></script>
+  <script src="themes.js"></script>
   <script src="map-geometry.js"></script>
   <script src="map-terrain.js"></script>
   <script src="ambience.js"></script>

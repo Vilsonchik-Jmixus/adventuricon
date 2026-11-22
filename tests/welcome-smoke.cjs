@@ -1,4 +1,5 @@
 const { _electron, expect } = require('playwright/test');
+const assert = require('node:assert/strict');
 const path = require('node:path');
 
 const env = {
@@ -47,15 +48,50 @@ let app;
     await master.screenshot({ path: path.join(env.DM_SCREEN_DATA, 'workspace.png'), animations: 'disabled' });
   }
 
+  if (process.platform === 'win32') {
+    await app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      const setIcon = window.setIcon.bind(window);
+      const setOverlayIcon = window.setOverlayIcon.bind(window);
+      window.setIcon = image => { window.testIcon = image.toPNG(); setIcon(image); };
+      window.setOverlayIcon = (image, description) => {
+        window.testOverlay = image?.toPNG();
+        setOverlayIcon(image, description);
+      };
+    });
+  }
+  await settings().click();
+  await expect(master.locator('.screen-theme')).toHaveCount(8);
+  const blue = master.getByRole('button', { name: 'Сумерки', exact: true });
+  await blue.click();
+  await expect(blue).toHaveAttribute('aria-pressed', 'true');
+  await expect(master.locator('html')).toHaveCSS('--theme-base', '#20222b');
+  await expect(master.locator('#theme-brand-icon')).toHaveAttribute('src', 'assets/themes/blue.png');
+  await expect.poll(() => master.locator('#theme-brand-icon').evaluate(img => img.naturalWidth)).toBe(256);
+  if (process.platform === 'win32') {
+    const nativeIcons = await app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      return [window.testIcon?.length, window.testOverlay?.length];
+    });
+    assert.ok(nativeIcons.every(length => length > 0), 'the themed icon and taskbar overlay reach the native window');
+  }
+  if (process.env.DM_SCREEN_CAPTURE) {
+    await master.screenshot({ path: path.join(env.DM_SCREEN_DATA, 'themes.png'), animations: 'disabled' });
+  }
+  await master.keyboard.press('Escape');
+
   const openingPlayer = app.waitForEvent('window');
   await master.locator('[data-detach="map"]').click();
   const player = await openingPlayer;
   await expect(player.locator('body')).toHaveClass(/player-map/);
   await expect(player.locator('#welcome-dialog')).toBeHidden();
   await expect(player.locator('#welcome-jingle')).not.toHaveAttribute('src', /.+/);
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.webContents.getURL().includes('?panel=map')).close());
+  await expect(player.locator('html')).toHaveAttribute('data-theme', 'blue');
 
   await settings().click();
+  await master.getByRole('button', { name: 'Шалфей', exact: true }).click();
+  await expect(player.locator('html')).toHaveAttribute('data-theme', 'green');
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.webContents.getURL().includes('?panel=map')).close());
   await master.getByLabel('Приветствие при запуске').uncheck();
   await master.getByLabel('Советы в шапке').uncheck();
   await app.close();
@@ -66,6 +102,8 @@ let app;
   await expect(welcome()).toBeHidden();
   await expect(master.locator('#screen-tip')).toBeHidden();
   await settings().click();
+  await expect(master.locator('html')).toHaveAttribute('data-theme', 'green');
+  await expect(master.getByRole('button', { name: 'Шалфей', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(master.getByRole('checkbox', { name: 'Джингл приветствия' })).not.toBeChecked();
   await master.emulateMedia({ reducedMotion: 'reduce' });
   await master.getByRole('button', { name: 'Показать приветствие' }).click();
@@ -74,9 +112,13 @@ let app;
   await expect(audio()).not.toHaveAttribute('src', /.+/);
   await master.getByRole('button', { name: 'Открыть ширму' }).click();
   await expect(welcome()).toBeHidden();
+  await settings().click();
+  await master.getByRole('button', { name: 'Таверна', exact: true }).click();
+  await expect(master.locator('html[data-theme]')).toHaveCount(0);
+  await expect(master.locator('#theme-brand-icon')).toHaveAttribute('src', 'assets/icon.png');
   await app.close();
   app = null;
-  console.log('Welcome art, jingle, preferences, tips, detached player window and reduced motion passed.');
+  console.log('Theme picker, native icon, detached window, restart, welcome, tips and reduced motion passed.');
 })().catch(async error => {
   console.error(error);
   await app?.close().catch(() => {});

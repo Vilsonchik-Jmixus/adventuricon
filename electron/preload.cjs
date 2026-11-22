@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('dm', {
   init: () => ipcRenderer.invoke('init'),
+  setTheme: id => ipcRenderer.invoke('set-theme', id),
   dispatch: (type, payload) => ipcRenderer.invoke('dispatch', { type, payload }),
   importFile: kind => ipcRenderer.invoke('import-file', { kind }),
   importDrop: (file, kind) => ipcRenderer.invoke('import-drop', { path: webUtils.getPathForFile(file), kind }),
