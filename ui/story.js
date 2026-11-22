@@ -6,9 +6,17 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
   const dialog = get('story-dialog');
   let tool = 'move', source = null, gesture, ignoreClick = false;
   let editing, newPosition, lastRender;
+  let cameraX = 0, cameraY = 0;
+  const limit = 1000000;
 
   const cardFor = id => cards.querySelector(`[data-story-note="${CSS.escape(id)}"]`);
-  const coordinate = n => Math.max(0, Math.min(12000, Math.round(n)));
+  const coordinate = n => Math.max(-limit, Math.min(limit, Math.round(n)));
+  function moveCamera(x, y) {
+    cameraX = coordinate(x);
+    cameraY = coordinate(y);
+    world.style.transform = `translate(${-cameraX}px, ${-cameraY}px)`;
+    viewport.style.backgroundPosition = `${-cameraX % 18}px ${-cameraY % 18}px`;
+  }
   const pointAt = event => {
     const bounds = world.getBoundingClientRect();
     return { x: coordinate(event.clientX - bounds.left), y: coordinate(event.clientY - bounds.top) };
@@ -44,21 +52,6 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
       const a = nodes.get(link.from), b = nodes.get(link.to);
       return a && b ? [pathElement(ropePath(edgeOf(a, center(b)), edgeOf(b, center(a))), 'story-rope')] : [];
     }));
-  }
-  function resizeWorld() {
-    const { strokes: marks } = getStory();
-    let right = 0, bottom = 0;
-    for (const card of cards.children) {
-      const { x, y, width, height } = cardBounds(card);
-      right = Math.max(right, x + width);
-      bottom = Math.max(bottom, y + height);
-    }
-    for (const mark of marks) for (const [x, y] of mark.points) {
-      right = Math.max(right, x + mark.width);
-      bottom = Math.max(bottom, y + mark.width);
-    }
-    world.style.width = Math.max(viewport.clientWidth, right + 34) + 'px';
-    world.style.height = Math.max(viewport.clientHeight, bottom + 34) + 'px';
   }
   function updateControls() {
     viewport.dataset.tool = tool;
@@ -115,7 +108,7 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
     const story = getStory();
     if (!story) return;
     const signature = JSON.stringify(story);
-    if (lastRender === signature) { resizeWorld(); return; }
+    if (lastRender === signature) return;
     lastRender = signature;
     const focused = document.activeElement?.closest('[data-story-note]')?.dataset.storyNote;
     cards.replaceChildren(...story.notes.map(createCard));
@@ -130,13 +123,12 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
     get('story-empty').hidden = !!story.notes.length || !!story.strokes.length;
     if (source && !story.notes.some(note => note.id === source)) source = null;
     drawRopes();
-    resizeWorld();
     updateControls();
     if (focused) cardFor(focused)?.querySelector('.story-note-title').focus({ preventScroll: true });
     if (dialog.open) fillLinks();
   }
   function firstFreePosition(fields) {
-    const left = viewport.scrollLeft + 16, top = viewport.scrollTop + 16;
+    const left = cameraX + 16, top = cameraY + 16;
     const all = Array.from(cards.children, cardBounds);
     const candidate = createCard({ ...fields, id: '', x: 0, y: 0 });
     candidate.style.visibility = 'hidden';
@@ -149,7 +141,7 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
       x = left + index % columns * (width + 20);
       y = top + Math.floor(index / columns) * (height + 20);
       index++;
-    } while (y < 12000 && all.some(note =>
+    } while (y < limit && all.some(note =>
       x < note.x + note.width + 8 && x + width + 8 > note.x &&
       y < note.y + note.height + 8 && y + height + 8 > note.y));
     return { x, y };
@@ -169,6 +161,13 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
     if (from !== to) await dispatch('story:link', { from, to });
   }
   get('story-add').onclick = () => edit();
+  get('story-home').onclick = () => {
+    const { notes, strokes } = getStory();
+    const marker = notes[0];
+    const [x, y] = marker ? [marker.x, marker.y] : strokes[0]?.points[0] ?? [16, 16];
+    moveCamera(x - 16, y - 16);
+    viewport.focus({ preventScroll: true });
+  };
   get('story-form').onsubmit = async event => {
     event.preventDefault();
     const fields = { title: get('story-title').value, body: get('story-body').value };
@@ -203,7 +202,7 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
     }
   };
   viewport.addEventListener('dblclick', event => {
-    if (tool === 'move' && !event.target.closest('[data-story-note]')) edit(null, pointAt(event));
+    if (!ignoreClick && tool === 'move' && !event.target.closest('[data-story-note]')) edit(null, pointAt(event));
   });
   function eraseAt(event) {
     const hit = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-story-stroke]');
@@ -225,10 +224,9 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
       const { note, offset, card } = gesture;
       gesture.position = { id: note.id, x: coordinate(point.x - offset.x), y: coordinate(point.y - offset.y) };
       placeCard(card, gesture.position);
-      resizeWorld();
       drawRopes();
     }
-    if (gesture.kind === 'pan') viewport.scrollTo(gesture.left - dx, gesture.top - dy);
+    if (gesture.kind === 'pan') moveCamera(gesture.left - dx, gesture.top - dy);
     if (gesture.kind === 'pen' && gesture.points.length < 2000) {
       const [lastX, lastY] = gesture.points.at(-1);
       if (Math.hypot(point.x - lastX, point.y - lastY) >= 2) gesture.points.push([point.x, point.y]);
@@ -241,6 +239,7 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
     const completed = gesture;
     gesture = null;
     completed.card?.classList.remove('moving');
+    viewport.classList.remove('panning');
     if (completed.capture.hasPointerCapture(completed.pointerId)) completed.capture.releasePointerCapture(completed.pointerId);
     draftPath.removeAttribute('d');
     draftPath.removeAttribute('style');
@@ -262,7 +261,7 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
     if (!response?.ok) { lastRender = null; render(); }
   }
   viewport.addEventListener('pointerdown', event => {
-    if (event.button !== 0 && event.button !== 1) return;
+    if (gesture || (event.button !== 0 && event.button !== 1)) return;
     const card = event.target.closest('[data-story-note]');
     const note = card && getStory().notes.find(item => item.id === card.dataset.storyNote);
     if (event.button === 0 && card && (tool !== 'move' || (!event.target.closest('.story-pin, .story-note-title')))) return;
@@ -270,7 +269,8 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
     const capture = card ? event.target : viewport;
     const input = { capture, clientX: event.clientX, clientY: event.clientY, pointerId: event.pointerId, moved: false };
     if (event.button === 1 || (tool === 'move' && !note)) {
-      gesture = { ...input, kind: 'pan', left: viewport.scrollLeft, top: viewport.scrollTop };
+      gesture = { ...input, kind: 'pan', left: cameraX, top: cameraY };
+      viewport.classList.add('panning');
     } else if (note) {
       const kind = event.target.closest('.story-pin') ? 'link' : 'move';
       gesture = { ...input, kind, id: note.id, note, card, offset: { x: point.x - note.x, y: point.y - note.y } };
@@ -286,14 +286,42 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
       eraseAt(event);
     }
     capture.setPointerCapture(event.pointerId);
-    if (!card) { event.preventDefault(); viewport.focus({ preventScroll: true }); }
+    if (!card || event.button === 1) { event.preventDefault(); viewport.focus({ preventScroll: true }); }
+  });
+  viewport.addEventListener('wheel', event => {
+    if (event.ctrlKey) return;
+    event.preventDefault();
+    if (gesture) return;
+    const unit = event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? viewport.clientHeight : 1;
+    const horizontal = event.shiftKey && !event.deltaX;
+    moveCamera(cameraX + (horizontal ? event.deltaY : event.deltaX) * unit,
+      cameraY + (horizontal ? 0 : event.deltaY) * unit);
+  }, { passive: false });
+  cards.addEventListener('focusin', event => {
+    if (gesture) return;
+    const card = event.target.closest('.story-note');
+    const target = card.getBoundingClientRect();
+    const frame = viewport.getBoundingClientRect();
+    if (target.right <= frame.left || target.left >= frame.right ||
+        target.bottom <= frame.top || target.top >= frame.bottom) {
+      moveCamera(card.offsetLeft - 16, card.offsetTop - 16);
+    }
   });
   viewport.addEventListener('pointermove', move);
   viewport.addEventListener('pointerup', event => finish(event, true));
   viewport.addEventListener('pointercancel', event => finish(event, false));
   viewport.addEventListener('lostpointercapture', event => finish(event, false));
   viewport.addEventListener('keydown', event => {
-    if (event.key !== 'Escape') return;
+    if (event.key !== 'Escape') {
+      if (event.target !== viewport || gesture || event.altKey || event.ctrlKey || event.metaKey) return;
+      const offset = { ArrowLeft: [-48, 0], ArrowRight: [48, 0], ArrowUp: [0, -48], ArrowDown: [0, 48],
+        PageUp: [0, -viewport.clientHeight + 32], PageDown: [0, viewport.clientHeight - 32] }[event.key];
+      if (offset) {
+        event.preventDefault();
+        moveCamera(cameraX + offset[0], cameraY + offset[1]);
+      }
+      return;
+    }
     const canceled = finish(null, false) || !!source;
     if (canceled) {
       source = null;
@@ -303,10 +331,7 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
     }
   });
   new ResizeObserver(() => {
-    if (getStory() && viewport.clientWidth) {
-      resizeWorld();
-      drawRopes();
-    }
+    if (getStory() && viewport.clientWidth) drawRopes();
   }).observe(viewport);
   return { render };
 }

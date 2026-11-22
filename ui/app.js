@@ -1117,7 +1117,7 @@ $('map-tokens').addEventListener('pointerdown', e => {
       if (!(await dispatch('token:move', { id, col, row }, context))?.ok) renderMap();
     }
     else if (moved || revision !== state.revision) renderMap();
-    if (commit && blocked) toast('Дальше стена или закрытая дверь');
+    if (commit && blocked) toast('Проход перекрыт');
     if (detached.includes('map')) mirrorMap({ token: null }, context.expectedMapId);
   };
   const cancel = () => finish(false);

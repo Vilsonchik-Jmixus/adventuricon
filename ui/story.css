@@ -14,23 +14,25 @@
 #story-color { width: 25px; height: 24px; padding: 2px; cursor: pointer; }
 #story-viewport {
   flex: 1 1 auto;
+  position: relative;
   min-height: 0;
-  overflow: auto;
+  overflow: clip;
   overscroll-behavior: contain;
-  background: #281c16;
+  background: #281c16 radial-gradient(circle, #b58a5d3c 1px, transparent 1.25px) 0 0 / 18px 18px;
   outline-offset: -2px;
   touch-action: none;
 }
 #story-viewport[data-tool="pen"] { cursor: crosshair; }
 #story-viewport[data-tool="eraser"] { cursor: cell; }
+#story-viewport[data-tool="move"] { cursor: grab; }
+#story-viewport.panning, #story-viewport.panning .story-note-title { cursor: grabbing; user-select: none; }
 #story-world {
-  position: relative;
-  min-width: 100%;
-  min-height: 100%;
-  background-image: radial-gradient(circle, #b58a5d3c 1px, transparent 1.25px);
-  background-size: 18px 18px;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 #story-paper, #story-cards { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#story-paper { overflow: visible; }
 #story-paper path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
 .story-rope { stroke: #daa26a; stroke-width: 2.5px; filter: drop-shadow(1px 2px #160e0a); }
 .story-rope-preview { stroke: #ffe1a7; stroke-width: 2px; stroke-dasharray: 5 4; }

@@ -29,7 +29,8 @@ const MapGeometry = (() => {
   const delta = (a, b) => ({ x: b.x - a.x, y: b.y - a.y });
   const cross = (a, b) => a.x * b.y - a.y * b.x;
   const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-  const blockingWalls = walls => walls.filter(wall => wall.kind === 'wall' || (wall.kind === 'door' && !wall.open));
+  const blockingWalls = walls => walls.filter(wall =>
+    wall.kind === 'wall' || wall.kind === 'window' || (wall.kind === 'door' && !wall.open));
   const cellCenter = (map, col, row) => ({
     x: map.offsetX + (col + 0.5) * map.grid, y: map.offsetY + (row + 0.5) * map.grid,
   });
@@ -55,8 +56,14 @@ const MapGeometry = (() => {
     const t = lengthSquared ? Math.max(0, Math.min(1, (offset.x * edge.x + offset.y * edge.y) / lengthSquared)) : 0;
     return distance(point, { x: a.x + t * edge.x, y: a.y + t * edge.y });
   }
-  function lightPolygon(origin, radius, walls) {
-    const nearby = walls.filter(wall => distanceToSegment(origin, wall.a, wall.b) <= radius);
+  function nearbySightWalls(origin, radius, walls, windowRange) {
+    return walls.filter(wall => {
+      const distance = distanceToSegment(origin, wall.a, wall.b);
+      return distance <= radius && (wall.kind !== 'window' || distance > windowRange);
+    });
+  }
+  function lightPolygon(origin, radius, walls, windowRange = 0) {
+    const nearby = nearbySightWalls(origin, radius, walls, windowRange);
     const angles = Array.from({ length: 72 }, (_, i) => i / 72 * Math.PI * 2 - Math.PI);
     for (const { a, b } of nearby) {
       for (const end of [a, b]) {
@@ -74,7 +81,7 @@ const MapGeometry = (() => {
     const visible = new Set();
     for (const { col: x, row: y } of origins) {
       const origin = cellCenter(map, x, y);
-      const nearby = walls.filter(wall => distanceToSegment(origin, wall.a, wall.b) <= map.grid * range);
+      const nearby = nearbySightWalls(origin, map.grid * range, walls, map.grid);
       for (let row = Math.max(0, y - range); row <= y + range; row++) {
         for (let col = Math.max(0, x - range); col <= x + range; col++) {
           if ((row - y) ** 2 + (col - x) ** 2 > range ** 2) continue;

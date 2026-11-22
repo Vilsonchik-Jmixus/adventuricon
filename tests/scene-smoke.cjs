@@ -138,10 +138,9 @@ async function main() {
   });
   await drag(master, 96, 96, 160, 96);
   assert.equal((await state(master)).tokens[0].col, 1);
-  await master.click('#edit-terrain');
+  await expect(master.locator('#terrain-toolbar')).toBeHidden();
   master.once('dialog', dialog => dialog.accept());
   await master.click('#fog-reset');
-  await master.click('#close-terrain');
   const pending = app.waitForEvent('window');
   await master.click('[data-detach="map"]');
   const player = await pending;
@@ -187,6 +186,19 @@ async function main() {
   await master.click('[data-terrain-tool="eraser"]');
   await click(master, 139, 231);
   await expect(playerStroke).toHaveCount(0);
+  await master.click('[data-terrain-tool="window"]');
+  await drag(master, 256, 128, 256, 320);
+  await expect.poll(async () => (await state(master)).terrain.some(item => item.kind === 'window')).toBe(true);
+  await master.click('[data-terrain-tool="eraser"]');
+  for (const [kind, x, y] of [['light', 96, 96], ['wall', 128, 256], ['door', 128, 96], ['window', 256, 224]]) {
+    const before = (await state(master)).terrain;
+    await master.selectOption('#map-eraser-kind', kind);
+    await click(master, x, y);
+    await expect.poll(async () => (await state(master)).terrain.length).toBe(before.length - 1);
+    const remaining = (await state(master)).terrain;
+    assert.deepEqual(before.filter(item => !remaining.some(other => other.id === item.id)).map(item => item.kind), [kind]);
+  }
+  await expect(master.locator('.scene-light')).toHaveCount(0);
   await master.click('#close-terrain');
   assert.equal(saved.library[0].name, 'Лучник');
   const lssFile = path.join(env.DM_SCREEN_DATA, 'hero.json');

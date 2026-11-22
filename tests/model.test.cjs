@@ -13,16 +13,16 @@ test('Story cards, connections and drawings survive reload while deleting a card
   const second = act('story:save', { title: 'Пароль', body: 'Три стука.', x: 300, y: 50 }).notes[1];
   act('story:link', { from: first.id, to: second.id });
   assert.equal(act('story:link', { from: second.id, to: first.id }).links.length, 1);
-  act('story:move', { id: first.id, x: 83, y: 146 });
+  act('story:move', { id: first.id, x: -83, y: 45146 });
   act('story:save', { id: second.id, title: 'Знак', body: second.body });
-  act('story:draw', { points: [[20, 40], [55, 74]], color: '#cc4422', width: 4 });
+  act('story:draw', { points: [[-20, 44040], [55, 44074]], color: '#cc4422', width: 4 });
   s = migrateState(JSON.parse(JSON.stringify(s)));
   const story = activeView(s).story;
-  assert.deepEqual(story.notes[0], { ...first, x: 83, y: 146 });
+  assert.deepEqual(story.notes[0], { ...first, x: -83, y: 45146 });
   assert.equal(story.notes[1].title, 'Знак');
   assert.equal(story.notes[1].x, 300);
   assert.equal(story.links[0].to, second.id);
-  assert.deepEqual(story.strokes[0].points, [[20, 40], [55, 74]]);
+  assert.deepEqual(story.strokes[0].points, [[-20, 44040], [55, 44074]]);
   assert.equal(act('story:erase', { ids: [story.strokes[0].id] }).strokes.length, 0);
   assert.equal(act('story:remove', { id: first.id }).links.length, 0);
   assert.equal(activeView(s).story.notes[0].id, second.id);
@@ -94,7 +94,7 @@ test('Closed doors block path and sight; fog is optional, remembered and reset p
   assert.ok(closed.fog.explored.includes('1,13'));
   assert.ok(!closed.fog.explored.includes('1,14'));
   assert.ok(!closed.fog.explored.includes('2,1'));
-  assert.throws(() => act('token:move', { id: hero, col: 3, row: 1 }), /стена/);
+  assert.throws(() => act('token:move', { id: hero, col: 3, row: 1 }), /Проход перекрыт/);
   const nearby = MapGeometry.blockingWalls(closed.terrain);
   assert.equal(nearby.length, 3);
   assert.ok(MapGeometry.lightPolygon({ x: 96, y: 96 }, 128, nearby).every(point => point.x <= 128.01 || point.y < 0));
@@ -108,6 +108,23 @@ test('Closed doors block path and sight; fog is optional, remembered and reset p
   assert.ok(act('map:select', { id: mapId }).fog.explored.includes('3,1'));
   assert.equal(act('fog:enabled', { enabled: false }).fog.enabled, false);
   assert.ok(act('fog:enabled', { enabled: true }).fog.explored.includes('3,1'));
+});
+test('Window walls stop tokens and allow sight and light from nearby origins', () => {
+  let s = initialState();
+  const act = (type, payload) => { s = reducer(s, { type, payload }); return activeView(s); };
+  act('fog:enabled', { enabled: true });
+  const hero = act('combatant:add', { name: 'Лучник', role: 'player' }).combatants[0].id;
+  const [window] = act('terrain:add', { kind: 'window', a: { x: 128, y: 0 }, b: { x: 128, y: 1200 } }).terrain;
+  const near = act('token:add', { id: hero, col: 1, row: 2 });
+  assert.ok(near.fog.explored.includes('2,2'));
+  const walls = MapGeometry.blockingWalls(near.terrain);
+  assert.ok(MapGeometry.lightPolygon({ x: 96, y: 160 }, 150, walls, 64).some(point => point.x > 128));
+  assert.ok(MapGeometry.lightPolygon({ x: 32, y: 160 }, 150, walls, 64).every(point => point.x <= 128.01));
+  assert.throws(() => act('token:move', { id: hero, col: 2, row: 2 }), /Проход перекрыт/);
+  act('token:move', { id: hero, col: 0, row: 2 });
+  assert.ok(!act('fog:reset').fog.explored.includes('2,2'));
+  act('terrain:remove', { id: window.id });
+  assert.equal(act('token:move', { id: hero, col: 2, row: 2 }).tokens[0].col, 2);
 });
 test('Long Story Short export imports current and maximum HP, portrait bytes and initiative bonus', () => {
   const data = { name: { value: 'Лучник' }, stats: { dex: { score: 16 } }, proficiency: 2,

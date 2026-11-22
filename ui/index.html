@@ -82,12 +82,14 @@
     <select id="map-select" aria-label="Карта"></select>
     <button id="create-map" type="button" class="icon-button" title="Новая карта" aria-label="Новая карта">＋</button>
     <button id="manage-map" type="button" class="icon-button" title="Настройки и копирование" aria-label="Настройки и копирование: Карта">⋯</button>
+    <button id="fog-reset" type="button" class="icon-button" title="Скрыть исследованные области" aria-label="Сбросить туман войны">↺ Туман</button>
   </div><div class="map-toolbar"><button id="import-map" class="small-button" title="Загрузить изображение на выбранную карту">＋ Файл</button><button id="paste-map" class="quiet" title="Вставить изображение из буфера" data-paste-shortcut>Ctrl+V</button><div class="zoom-controls"><button id="rotate-map-left" title="Повернуть карту влево на 90°" aria-label="Повернуть карту влево на 90°">↶</button><button id="rotate-map-right" title="Повернуть карту вправо на 90°" aria-label="Повернуть карту вправо на 90°">↷</button><button id="fit-map" title="Показать карту целиком" aria-label="Показать карту целиком">⊡</button><button id="zoom-out" title="Уменьшить">−</button><span id="zoom-label">100%</span><button id="zoom-in" title="Увеличить">＋</button></div></div>
         <div id="terrain-toolbar" hidden aria-label="Редактор карты">
           <div class="terrain-tools" role="group" aria-label="Инструменты карты">
             <button type="button" data-terrain-tool="select" aria-pressed="true">Выбор</button>
             <button type="button" data-terrain-tool="wall" aria-pressed="false">Стена</button>
             <button type="button" data-terrain-tool="door" aria-pressed="false">Дверь</button>
+            <button type="button" data-terrain-tool="window" aria-pressed="false">Окно</button>
             <button type="button" data-terrain-tool="light" aria-pressed="false">Свет</button>
             <button type="button" data-terrain-tool="pen" aria-pressed="false">Карандаш</button>
             <button type="button" data-terrain-tool="eraser" aria-pressed="false">Ластик</button>
@@ -98,12 +100,15 @@
               <option value="3">Тонкая</option><option value="6" selected>Средняя</option><option value="12">Толстая</option>
             </select>
           </div>
+          <select id="map-eraser-kind" aria-label="Что стирать на карте" hidden>
+            <option value="all">Всё</option><option value="stroke">Штрихи</option><option value="wall">Стены</option>
+            <option value="door">Двери</option><option value="window">Окна</option><option value="light">Свет</option>
+          </select>
           <span id="terrain-hint"></span>
           <button type="button" id="create-map-item">＋ Предмет</button>
           <button type="button" id="edit-map-item" hidden>Изменить предмет</button>
           <button type="button" id="terrain-door" hidden></button>
           <button type="button" id="terrain-remove" hidden>Удалить</button>
-          <button type="button" id="fog-reset" class="quiet">Сбросить туман</button>
           <button type="button" id="close-terrain" class="small-button">Готово</button>
         </div>
         <div id="map-viewport" class="map-viewport" tabindex="0" aria-label="Карта: вставьте изображение из буфера"><div id="map-frame"><div id="map-world" class="map-world"><img id="map-image" draggable="false" alt="Карта приключения" src="assets/demo-map.svg"><div id="map-lights" aria-hidden="true"></div><div id="map-grid" class="map-grid"></div><svg id="map-drawings" preserveAspectRatio="none" aria-hidden="true"><g id="map-strokes"></g><path id="map-draft-stroke"></path></svg><canvas id="terrain-preview" aria-hidden="true" hidden></canvas><div id="map-doors"></div><div id="map-items"></div><div id="map-tokens" class="map-tokens"></div><canvas id="map-fog" aria-hidden="true" hidden></canvas></div></div></div><div id="placement-hint" role="status" hidden></div></div>
@@ -136,6 +141,7 @@
       <div id="story" class="panel-content story" hidden>
         <div class="story-tools">
           <button id="story-add" type="button" class="small-button">＋ Заметка</button>
+          <button id="story-home" type="button" title="Вернуться к первой карточке">К заметкам</button>
           <div class="story-modes" role="group" aria-label="Инструменты сюжетной доски">
             <button type="button" data-story-tool="move" aria-pressed="true" title="Двигать и связывать карточки">Карточки</button>
             <button type="button" data-story-tool="pen" aria-pressed="false">Карандаш</button>

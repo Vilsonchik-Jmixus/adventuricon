@@ -6,7 +6,7 @@ const finite = (n, fallback) => Number.isFinite(Number(n)) ? Number(n) : fallbac
 const text = (v, max = 120) => String(v ?? '').trim().slice(0, max);
 const newFog = (enabled = false) => ({ enabled, explored: [] });
 const newStory = () => ({ notes: [], links: [], strokes: [] });
-const storyCoordinate = n => clamp(Math.round(finite(n, 0)), 0, 12000);
+const storyCoordinate = n => clamp(Math.round(finite(n, 0)), -1000000, 1000000);
 function newBattle(title = 'Первый бой') {
   return { id: randomUUID(), title, linkedMapId: null, combatants: [], round: 1, turn: null, acted: [], manualOrder: null, history: [] };
 }
@@ -355,14 +355,14 @@ function reducer(state, action) {
       const t = board.tokens.find(t => t.combatantId === p.id);
       if (t) {
         const col = cellIndex(finite(p.col, t.col)), row = cellIndex(finite(p.row, t.row));
-        if (!canMoveToken(board, t, col, row)) throw new Error('Дальше стена или закрытая дверь');
+        if (!canMoveToken(board, t, col, row)) throw new Error('Проход перекрыт');
         Object.assign(t, { col, row });
       }
       break;
     }
     case 'token:remove': board.tokens = board.tokens.filter(t => t.combatantId !== p.id); break;
     case 'terrain:add': {
-      if (!['wall', 'door', 'light', 'item'].includes(p.kind)) throw new Error('Выбери инструмент карты');
+      if (!['wall', 'door', 'window', 'light', 'item'].includes(p.kind)) throw new Error('Выбери инструмент карты');
       const light = p.kind === 'light';
       if (board.terrain.filter(item => (item.kind === 'light') === light).length >= (light ? 24 : 400)) {
         throw new Error('На карте слишком много объектов этого типа');

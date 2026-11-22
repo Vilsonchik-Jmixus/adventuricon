@@ -2,17 +2,21 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
   const get = id => document.getElementById(id);
   const view = get('map-viewport'), toolbar = get('terrain-toolbar');
   const overlay = get('terrain-preview'), fogLayer = get('map-fog');
+  const exploredLayer = document.createElement('canvas');
   const ink = get('map-drawings'), strokes = get('map-strokes'), previewStroke = get('map-draft-stroke');
   const tools = toolbar.querySelectorAll('[data-terrain-tool]');
   let editing = false, tool = 'select', selected = null, draft = null, acceptedMap;
-  let lightsKey = '', inkKey = '', fogKey = '', visible = new Set(), cancelPen;
+  let lightsKey = '', inkKey = '', fogKey = '', exploredKey = '', exploredCells, visible = new Set(), cancelDrawing;
+  let lastDrawings, lastTerrain, lastLightGrid;
+  const terrainColors = { wall: '#e99c75', window: '#8ed0ea' };
   const labels = {
     select: 'Выбери объект щелчком',
     wall: 'Проведи стену между двумя точками · Shift без привязки',
     door: 'Проведи дверь в проёме · Shift без привязки',
+    window: 'Проведи окно в проёме · обзор в пределах одной клетки',
     light: 'Потяни от источника, чтобы задать радиус',
     pen: 'Веди мышью по карте, чтобы рисовать',
-    eraser: 'Щёлкни по линии, чтобы стереть её',
+    eraser: 'Щёлкни по линии или по центру источника света',
   };
 
   function penPath(points) {
@@ -22,6 +26,8 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
 
   function renderDrawings(drawings, layout) {
     ink.setAttribute('viewBox', `0 0 ${layout.width / layout.zoom} ${layout.height / layout.zoom}`);
+    if (lastDrawings === drawings) return;
+    lastDrawings = drawings;
     const key = JSON.stringify(drawings);
     if (key === inkKey) return;
     inkKey = key;
@@ -55,10 +61,13 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
     return ctx;
   }
 
-  function renderLights(terrain, walls, zoom) {
+  function renderLights(terrain, walls, zoom, grid) {
     const layer = get('map-lights');
     layer.style.setProperty('--terrain-zoom', zoom);
-    const key = JSON.stringify(terrain);
+    if (lastTerrain === terrain && lastLightGrid === grid) return;
+    lastTerrain = terrain;
+    lastLightGrid = grid;
+    const key = JSON.stringify([grid, terrain]);
     if (key === lightsKey) return;
     lightsKey = key;
     layer.replaceChildren(...terrain.filter(item => item.kind === 'light').map(({ a, radius }) => {
@@ -67,7 +76,7 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
       light.style.setProperty('--light-left', (a.x - radius) + 'px');
       light.style.setProperty('--light-top', (a.y - radius) + 'px');
       light.style.setProperty('--light-size', (radius * 2) + 'px');
-      const points = MapGeometry.lightPolygon(a, radius, walls).map(point =>
+      const points = MapGeometry.lightPolygon(a, radius, walls, grid).map(point =>
         `${(50 + (point.x - a.x) / radius * 50).toFixed(2)}% ${(50 + (point.y - a.y) / radius * 50).toFixed(2)}%`);
       light.style.clipPath = `polygon(${points.join(',')})`;
       return light;
@@ -82,10 +91,10 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
     const unit = Math.max(1, Math.min(width / zoom, height / zoom) / 550);
     for (const item of draft ? [...terrain, draft] : terrain) {
       const accent = item === draft || item.id === selected;
-      ctx.strokeStyle = accent ? '#fff0b8' : item.kind === 'wall' ? '#e99c75' : item.open ? '#add19a' : '#ffd18e';
+      ctx.strokeStyle = accent ? '#fff0b8' : terrainColors[item.kind] ?? (item.open ? '#add19a' : '#ffd18e');
       ctx.fillStyle = ctx.strokeStyle;
       ctx.lineWidth = unit * (accent ? 3 : 2);
-      ctx.setLineDash(item.kind === 'door' && item.open ? [unit * 5, unit * 4] : []);
+      ctx.setLineDash(item.kind === 'window' || item.kind === 'door' && item.open ? [unit * 5, unit * 4] : []);
       ctx.beginPath();
       if (item.kind === 'item') ctx.arc(item.a.x, item.a.y, unit * 5, 0, Math.PI * 2);
       else if (item.kind === 'light') ctx.arc(item.a.x, item.a.y, Math.max(1, item.radius), 0, Math.PI * 2);
@@ -97,30 +106,45 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
     }
   }
 
-  function renderFog(state, walls, preview, width, height) {
-    fogLayer.hidden = !state.fog.enabled;
-    if (fogLayer.hidden) { fogKey = ''; visible = new Set(); return; }
-    const origins = state.tokens.filter(token => state.visionOrigins.includes(token.combatantId)).map(token =>
-      token.combatantId === preview?.id ? preview : token);
+  function renderExploredFog(state, width, height) {
     const { grid, offsetX, offsetY } = state.map;
-    const key = JSON.stringify([state.activeMapId, grid, offsetX, offsetY, state.fog.explored, walls, origins, width, height]);
-    if (fogKey === key) return;
-    fogKey = key;
-    visible = MapGeometry.visibleCells(state.map, origins, walls);
-    const ctx = prepareCanvas(fogLayer, width, height);
+    const key = JSON.stringify([state.activeMapId, grid, offsetX, offsetY, width, height]);
+    if (exploredKey === key && exploredCells === state.fog.explored) return;
+    exploredKey = key;
+    exploredCells = state.fog.explored;
+    fogKey = '';
+    const ctx = prepareCanvas(exploredLayer, width, height);
     ctx.fillStyle = '#100d0d';
     ctx.fillRect(0, 0, width, height);
     ctx.globalCompositeOperation = 'destination-out';
     ctx.fillStyle = '#ffffff55';
     ctx.beginPath();
-    for (const cell of state.fog.explored) {
+    for (const cell of exploredCells) {
       const [col, row] = cell.split(',').map(Number);
       ctx.rect(col * grid + offsetX, row * grid + offsetY, grid, grid);
     }
     ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  function renderFog(state, walls, preview, width, height) {
+    fogLayer.hidden = !state.fog.enabled;
+    if (fogLayer.hidden) { fogKey = ''; visible = new Set(); return; }
+    const visionIds = new Set(state.visionOrigins);
+    const origins = state.tokens.filter(token => visionIds.has(token.combatantId)).map(token =>
+      token.combatantId === preview?.id ? preview : token);
+    const { grid } = state.map;
+    renderExploredFog(state, width, height);
+    const key = JSON.stringify([walls, origins]);
+    if (fogKey === key) return;
+    fogKey = key;
+    visible = MapGeometry.visibleCells(state.map, origins, walls);
+    const ctx = prepareCanvas(fogLayer, width, height);
+    ctx.drawImage(exploredLayer, 0, 0, width, height);
+    ctx.globalCompositeOperation = 'destination-out';
     ctx.fillStyle = '#fff';
     for (const { col, row } of origins) {
-      const outline = MapGeometry.lightPolygon(MapGeometry.cellCenter(state.map, col, row), grid * 12, walls);
+      const outline = MapGeometry.lightPolygon(MapGeometry.cellCenter(state.map, col, row), grid * 12, walls, grid);
       ctx.beginPath();
       for (const { x, y } of outline) ctx.lineTo(x, y);
       ctx.closePath();
@@ -135,6 +159,7 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
     view.classList.toggle('terrain-editing', editing);
     view.classList.toggle('erasing-map', editing && tool === 'eraser');
     get('map-pen-options').hidden = !editing || tool !== 'pen';
+    get('map-eraser-kind').hidden = !editing || tool !== 'eraser';
     get('edit-terrain').setAttribute('aria-pressed', String(editing));
     get('terrain-hint').textContent = labels[tool];
     get('terrain-remove').hidden = !item;
@@ -145,24 +170,25 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
   }
 
   function render(state, layout, preview) {
-    const terrain = state.terrain, walls = MapGeometry.blockingWalls(terrain.filter(item => item.kind !== 'light'));
+    const terrain = state.terrain, walls = MapGeometry.blockingWalls(terrain);
     if (acceptedMap !== state.activeMapId) {
-      cancelPen?.();
+      cancelDrawing?.();
       acceptedMap = state.activeMapId;
       selected = draft = null;
     }
     if (editing && !isExpanded()) {
-      cancelPen?.();
+      cancelDrawing?.();
       editing = false;
       selected = draft = null;
     }
     get('edit-terrain').hidden = readOnly;
     get('toggle-fog').hidden = readOnly;
+    get('fog-reset').hidden = readOnly;
     get('toggle-fog').setAttribute('aria-pressed', String(state.fog.enabled));
     get('toggle-fog').title = state.fog.enabled ? 'Рассеять туман · F на карте' : 'Наложить туман · F на карте';
     get('fog-reset').disabled = !state.fog.explored.length;
     syncEditor(terrain);
-    renderLights(terrain, walls, layout.zoom);
+    renderLights(terrain, walls, layout.zoom, state.map.grid);
     renderDrawings(state.drawings, layout);
     renderEditor(terrain);
     renderFog(state, walls, preview, layout.width / layout.zoom, layout.height / layout.zoom);
@@ -208,7 +234,7 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
   }
 
   function setEditing(value) {
-    cancelPen?.();
+    cancelDrawing?.();
     editing = value;
     tool = 'select';
     selected = draft = null;
@@ -224,28 +250,47 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
     };
   }
 
+  function nearestTerrain(terrain, point, threshold) {
+    let nearest, distance = threshold;
+    for (const item of terrain) {
+      const current = MapGeometry.distanceToSegment(point, item.a, item.b ?? item.a);
+      if (current <= distance) { nearest = item; distance = current; }
+    }
+    return nearest;
+  }
+
   function pointerDown(event, context) {
     if (!editing || event.button !== 0) return false;
     event.preventDefault();
     view.focus({ preventScroll: true });
     const point = getPoint(event), state = getState();
+    const threshold = Math.max(5, Math.min(22, state.map.grid / 4));
     if (tool === 'eraser') {
-      const id = event.target.closest('[data-map-stroke]')?.dataset.mapStroke;
-      if (id) dispatch('map:erase', { id }, context);
+      const kind = get('map-eraser-kind').value;
+      if (kind === 'all' || kind === 'stroke') {
+        const id = event.target.closest('[data-map-stroke]')?.dataset.mapStroke;
+        if (id) {
+          dispatch('map:erase', { id }, context);
+          return true;
+        }
+      }
+      const candidates = state.terrain.filter(item => kind === 'all' ? item.kind !== 'item' : item.kind === kind);
+      const target = nearestTerrain(candidates, point, threshold);
+      if (target) dispatch('terrain:remove', { id: target.id }, context);
       return true;
     }
     if (tool === 'pen') {
-      if (cancelPen) return true;
+      if (cancelDrawing) return true;
       const start = snap(point, true);
       if (point.x !== start.x || point.y !== start.y) return true;
       const points = [start], color = get('map-pen-color').value, width = Number(get('map-pen-width').value);
       const controller = new AbortController(), options = { signal: controller.signal };
       const pointer = event.pointerId;
-      cancelPen = () => {
+      cancelDrawing = () => {
         controller.abort();
         previewStroke.removeAttribute('d');
         if (view.hasPointerCapture(pointer)) view.releasePointerCapture(pointer);
-        cancelPen = null;
+        cancelDrawing = null;
       };
       previewStroke.setAttribute('stroke', color);
       previewStroke.setAttribute('stroke-width', width);
@@ -258,49 +303,51 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
         previewStroke.setAttribute('d', penPath(points));
       };
       view.addEventListener('pointermove', e => { if (e.pointerId === pointer) collect(e); }, options);
-      view.addEventListener('pointercancel', e => { if (e.pointerId === pointer) cancelPen(); }, options);
-      view.addEventListener('lostpointercapture', e => { if (e.pointerId === pointer) cancelPen(); }, options);
+      view.addEventListener('pointercancel', e => { if (e.pointerId === pointer) cancelDrawing(); }, options);
+      view.addEventListener('lostpointercapture', e => { if (e.pointerId === pointer) cancelDrawing(); }, options);
       view.addEventListener('pointerup', e => {
         if (e.pointerId !== pointer) return;
         collect(e);
-        cancelPen();
+        cancelDrawing();
         dispatch('map:draw', { points, color, width }, context);
       }, options);
       return true;
     }
     if (tool === 'select') {
-      const threshold = Math.max(5, Math.min(22, state.map.grid / 4));
-      const nearest = state.terrain.map(item => {
-        const distance = MapGeometry.distanceToSegment(point, item.a, item.b ?? item.a);
-        return { id: item.id, distance };
-      }).filter(item => item.distance <= threshold).sort((a, b) => a.distance - b.distance)[0];
+      const nearest = nearestTerrain(state.terrain, point, threshold);
       selected = nearest?.id ?? null;
       syncEditor(state.terrain);
       renderEditor();
       return true;
     }
+    if (cancelDrawing) return true;
     const kind = tool, free = event.shiftKey || kind === 'light';
     const start = snap(point, free);
     const make = end => kind === 'light'
       ? { kind, a: start, radius: Math.hypot(end.x - start.x, end.y - start.y) }
       : { kind, a: start, b: end };
     draft = make(start);
+    const pointer = event.pointerId;
     const controller = new AbortController(), options = { signal: controller.signal };
     const move = e => {
+      if (e.pointerId !== pointer) return;
       if (!editing || getState().activeMapId !== context.expectedMapId) return cancel();
       draft = make(snap(getPoint(e), free));
       renderEditor();
     };
-    const cancel = () => {
+    const cancel = cancelDrawing = () => {
       controller.abort();
       draft = null;
+      if (view.hasPointerCapture(pointer)) view.releasePointerCapture(pointer);
+      cancelDrawing = null;
       renderEditor();
     };
-    view.setPointerCapture(event.pointerId);
+    view.setPointerCapture(pointer);
     view.addEventListener('pointermove', move, options);
-    view.addEventListener('pointercancel', cancel, options);
-    view.addEventListener('lostpointercapture', cancel, options);
+    view.addEventListener('pointercancel', e => { if (e.pointerId === pointer) cancel(); }, options);
+    view.addEventListener('lostpointercapture', e => { if (e.pointerId === pointer) cancel(); }, options);
     view.addEventListener('pointerup', e => {
+      if (e.pointerId !== pointer) return;
       if (!editing || getState().activeMapId !== context.expectedMapId) return cancel();
       const item = make(snap(getPoint(e), free));
       cancel();
@@ -329,11 +376,14 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
   get('create-map-item').onclick = () => editItem();
   get('edit-map-item').onclick = () => editItem(getState().terrain.find(item => item.id === selected));
   get('fog-reset').onclick = () => {
-    if (confirm('Сбросить открытые области на этой карте?')) dispatch('fog:reset');
+    const expectedMapId = getState().activeMapId;
+    if (confirm('Скрыть исследованные области этой карты? Текущий обзор жетонов сохранится.')) {
+      dispatch('fog:reset', {}, { expectedMapId });
+    }
   };
   tools.forEach(button => {
     button.onclick = () => {
-      cancelPen?.();
+      cancelDrawing?.();
       tool = button.dataset.terrainTool;
       selected = null;
       syncEditor(getState().terrain);

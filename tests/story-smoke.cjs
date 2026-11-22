@@ -72,21 +72,43 @@ async function main() {
   await expect(page.locator('#story-dialog')).toBeHidden();
   const body = page.locator('.story-note').filter({ hasText: 'Первая встреча' }).locator('.story-note-body');
   assert.equal(await body.textContent(), dialogue);
-  assert.ok(await body.evaluate(element => {
-    const card = element.closest('.story-note');
-    const viewport = element.closest('#story-viewport');
-    const last = document.createRange();
-    last.setStart(element.firstChild, element.textContent.lastIndexOf('—'));
-    last.setEndAfter(element.firstChild);
-    viewport.scrollTop = card.offsetTop + card.offsetHeight;
-    const finalLine = last.getBoundingClientRect();
-    const board = viewport.getBoundingClientRect();
-    return card.offsetHeight > viewport.clientHeight &&
-      finalLine.bottom <= card.getBoundingClientRect().bottom &&
-      finalLine.top >= board.top && finalLine.bottom <= board.bottom &&
-      document.elementFromPoint(finalLine.left + 2, finalLine.top + 5) === element;
-  }), 'the final line is rendered and reachable by scrolling the board');
+  async function lastLine() {
+    return body.evaluate(element => {
+      const card = element.closest('.story-note');
+      const viewport = element.closest('#story-viewport');
+      const last = document.createRange();
+      last.setStart(element.firstChild, element.textContent.lastIndexOf('—'));
+      last.setEndAfter(element.firstChild);
+      const finalLine = last.getBoundingClientRect();
+      const board = viewport.getBoundingClientRect();
+      const readable = card.offsetHeight > viewport.clientHeight &&
+        finalLine.bottom <= card.getBoundingClientRect().bottom &&
+        finalLine.top >= board.top && finalLine.bottom <= board.bottom &&
+        document.elementFromPoint(finalLine.left + 2, finalLine.top + 5) === element;
+      return { scroll: finalLine.bottom - board.bottom + 32, readable };
+    });
+  }
+  await page.mouse.move(bounds.x + 40, bounds.y + 60);
+  await page.mouse.wheel(0, (await lastLine()).scroll);
+  await expect.poll(async () => (await lastLine()).readable).toBe(true);
   assert.equal((await story(page)).notes[0].y, 180);
+  await page.click('#story-home');
+  const blank = { x: bounds.x + 450, y: bounds.y + 125 };
+  await drag(page, blank, { x: blank.x + 180, y: blank.y + 240 });
+  await page.click('#story-add');
+  await page.fill('#story-title', 'Северо-запад');
+  await page.locator('#story-form [type="submit"]').click();
+  await expect.poll(async () => (await story(page)).notes.at(-1).title).toBe('Северо-запад');
+  const northWest = (await story(page)).notes.at(-1);
+  assert.ok(northWest.x < 0 && northWest.y < 0);
+  await page.mouse.move(blank.x, blank.y);
+  await page.mouse.wheel(20000, 20000);
+  await page.click('#story-add');
+  await page.fill('#story-title', 'Далеко на юго-востоке');
+  await page.locator('#story-form [type="submit"]').click();
+  await expect.poll(async () => (await story(page)).notes.at(-1).x).toBeGreaterThan(12000);
+  await page.click('#story-home');
+  await expect(body).toBeInViewport();
   console.log('Story cards, movable ropes, pencil, eraser and campaign reload passed.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => app?.close());

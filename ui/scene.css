@@ -73,7 +73,7 @@
   background: #2b1c14;
   border-bottom: 1px solid #785136;
 }
-.terrain-tools { display: flex; gap: 4px; }
+.terrain-tools { display: flex; flex-wrap: wrap; gap: 4px; }
 #terrain-toolbar button { padding: 4px 7px; font-size: 11px; }
 #terrain-hint { flex-grow: 1; color: var(--muted); font-size: 11px; padding-inline: 4px; }
 #terrain-toolbar [aria-pressed="true"], .map .panel-tools [aria-pressed="true"] {
@@ -103,7 +103,7 @@
 #map-viewport.erasing-map { cursor: cell; }
 .erasing-map .map-stroke-hit { pointer-events: stroke; }
 #map-pen-color { width: 26px; height: 24px; padding: 2px; cursor: pointer; }
-#map-pen-width { font-size: 11px; padding: 3px 5px; }
+#map-pen-width, #map-eraser-kind { font-size: 11px; padding: 3px 5px; }
 #map-doors { z-index: 2; }
 #map-items { z-index: 2; }
 .scene-item {
