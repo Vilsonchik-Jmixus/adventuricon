@@ -4,13 +4,15 @@ const path = require('node:path');
 const { fileURLToPath, pathToFileURL } = require('node:url');
 const { randomUUID } = require('node:crypto');
 const { beginMusicImport, mediaTools } = require('./music-import.cjs');
-const { initialState, migrateState, activeView, reducer, canMoveToken } = require('./model.cjs');
+const { activeView, reducer, canMoveToken } = require('./model.cjs');
 const { readCharacter } = require('./lss-import.cjs');
 const { publicDndUrl, readPublicResponse } = require('./dnd-import.cjs');
 const { ROLES, CONDITIONS, playerMapActors } = require('./combat-rules.cjs');
 const { DND_HOME, WEB_HOME, GEMINI, REFERENCE_LINKS, safeUrl, searchUrl } = require('./reference.cjs');
 const { autoUpdater } = require('electron-updater');
 const { ScreenThemes, themeIcon } = require('../ui/themes.js');
+const { createCampaignStore, writeJSON, assetPattern } = require('./campaigns.cjs');
+const { rememberMapAction, undoMapAction } = require('./map-history.cjs');
 const TEST = process.env.DM_SCREEN_TEST === '1';
 const mac = process.platform === 'darwin';
 const appImage = process.platform === 'linux' && !!process.env.APPIMAGE;
@@ -26,6 +28,8 @@ const remotePanelFor = id => id === 'web' ? 'info' : id;
 let referenceTab = 'info';
 const windows = new Map(), remotes = new Map();
 let mainWindow, state, store, assets, quitting = false, downloadProcess = null;
+let campaigns, campaignBusy = false;
+const mapHistory = new Map();
 let updateStatus = app.isPackaged && !canAutoUpdate
   ? { scope: 'update', phase: 'releases', text: 'Версии на GitHub ↗' }
   : { scope: 'update', phase: 'idle', text: 'Обновления' };
@@ -58,6 +62,14 @@ function localSender(event) {
 function sendAll(channel, payload) {
   for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed() && w.webContents.getURL().startsWith('dm://app/')) w.webContents.send(channel, payload);
 }
+const playerSurface = owner => ['map', 'preview'].some(id => windows.get(id)?.webContents === owner);
+function playerFrame() {
+  const player = windows.get('map');
+  return player && !player.isDestroyed() ? { size: player.getContentSize(), fullscreen: player.isFullScreen() } : null;
+}
+function syncPlayerFrame() {
+  windows.get('preview')?.webContents.send('status', { scope: 'player-frame', frame: playerFrame() });
+}
 function resolveImage(ref) {
   if (!ref) return null;
   const item = ref.source === 'gallery'
@@ -67,17 +79,18 @@ function resolveImage(ref) {
 }
 function windowState(owner, view = activeView(state)) {
   const mapCamera = mapCameras.get(view.activeMapId) ?? null;
-  if (owner === windows.get('map')?.webContents) {
+  if (playerSurface(owner)) {
     return {
       state: { activeMapId: view.activeMapId, map: view.map, tokens: view.tokens,
         mapCombatants: playerMapActors(view.mapCombatants, view.map.playerHealth !== false),
         visionOrigins: view.visionOrigins,
         terrain: view.terrain, drawings: view.drawings, fog: view.fog, turn: view.turn },
-      detached: ['map'], presentation, recentImages: [], mapCamera
+      detached: ['map'], presentation, recentImages: [], mapCamera, campaignId: campaigns.index.active, playerBlackout, playerFrame: playerFrame()
     };
   }
   return {
-    state: view, detached: [...windows.keys()], presentation,
+    state: view, detached: [...windows.keys()], presentation, playerBlackout, campaignId: campaigns.index.active,
+    campaigns: campaigns.index.profiles, canUndoMap: !!mapHistory.get(state.activeMapId)?.length,
     recentImages: recentImages.map(resolveImage).filter(Boolean), mapCamera
   };
 }
@@ -90,11 +103,21 @@ function broadcast() {
   }
 }
 function commit(action) {
+  if (action.payload?.expectedCampaignId && campaigns.index.active !== action.payload.expectedCampaignId) {
+    throw new Error('Кампания переключилась. Повтори действие.');
+  }
   const next = reducer(state, action);
-  fs.writeFileSync(`${store}.tmp`, JSON.stringify(next), 'utf8');
-  fs.renameSync(`${store}.tmp`, store);
+  const board = state.boards.find(entry => entry.id === state.activeMapId);
+  const after = next.boards.find(entry => entry.id === board.id);
+  const undo = after && rememberMapAction(action, board, after);
+  writeJSON(store, next);
   state = next;
-  if (action.type === 'map:remove') mapCameras.delete(action.payload.id);
+  if (action.type === 'scene:open') presentation = null;
+  if (undo) mapHistory.set(board.id, [...(mapHistory.get(board.id) ?? []), undo].slice(-30));
+  if (action.type === 'map:remove') {
+    mapCameras.delete(action.payload.id);
+    mapHistory.delete(action.payload.id);
+  }
   if (action.type === 'map:settings' && 'rotation' in action.payload) mapCameras.delete(state.activeMapId);
   broadcast();
   return { ok: true };
@@ -102,13 +125,19 @@ function commit(action) {
 function handle(name, fn) {
   ipcMain.handle(name, async (event, payload) => {
     localSender(event);
-    try { return await fn(event, payload); }
+    try {
+      if (playerSurface(event.sender) && !['init', 'dock', 'fullscreen'].includes(name)) throw new Error('Экраном управляет мастер');
+      return await fn(event, payload);
+    }
     catch (err) { return { ok: false, error: String(err.message || err).slice(0, 400) }; }
   });
 }
 function assetName(value) {
-  if (typeof value !== 'string' || !/^[a-f0-9-]+\.(png|jpg|jpeg|webp|gif|mp3|wav|ogg|m4a|mp4|webm|flac)$/i.test(value)) throw new Error('Неверное имя файла');
+  if (typeof value !== 'string' || !assetPattern.test(value)) throw new Error('Неверное имя файла');
   return value;
+}
+function checkCampaign(id) {
+  if (id !== campaigns.index.active) throw new Error('Кампания переключилась. Повтори действие.');
 }
 function importAsset(file, kind) {
   const ext = path.extname(file).toLowerCase();
@@ -137,6 +166,9 @@ function secureWindow(options = {}, showInactive = false) {
     backgroundColor: ScreenThemes[currentTheme].background, show: false, icon: getThemeImage(currentTheme), ...options,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required' } });
   w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  if (mac) w.webContents.on('before-input-event', (_, input) => {
+    w.webContents.setIgnoreMenuShortcuts(!!input.meta && !input.shift && input.code === 'KeyZ');
+  });
   w.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('dm://app/')) e.preventDefault(); });
   if (process.platform === 'win32') w.on('show', () => applyWindowTheme(w));
   w.once('ready-to-show', () => {
@@ -275,13 +307,13 @@ async function referenceAction(event, { action, value }) {
   return { ok: true };
 }
 function detach(id, focus = true) {
-  if (!PANELS.includes(id)) throw new Error('Неизвестная панель');
+  if (!PANELS.includes(id) && id !== 'preview') throw new Error('Неизвестная панель');
   if (windows.has(id)) {
     const window = windows.get(id);
     if (focus && !TEST) { window.show(); window.focus(); }
     return { ok: true };
   }
-  const defaults = { width: id === 'map' ? 1000 : 650, height: 750 };
+  const defaults = { width: id === 'map' ? 1000 : 650, height: id === 'preview' ? 420 : 750 };
   if (id === 'map' && mainWindow && !TEST) {
     const primary = screen.getDisplayMatching(mainWindow.getBounds());
     const second = screen.getAllDisplays().find(display => display.id !== primary.id)?.workArea;
@@ -293,13 +325,14 @@ function detach(id, focus = true) {
   const bounds = boundsOnScreen(state.layout.windows[id], defaults);
   const w = secureWindow({ ...bounds, minWidth: 360, minHeight: 300, title: 'Ширма · ' + id, autoHideMenuBar: true }, !focus);
   windows.set(id, w);
-  w.loadURL(`dm://app/index.html?panel=${id}`);
+  w.loadURL(id === 'preview' ? 'dm://app/index.html?panel=map&preview=1' : `dm://app/index.html?panel=${id}`);
   let timer;
   const saveBounds = () => { clearTimeout(timer); timer = setTimeout(() => { if (!w.isDestroyed() && !quitting) commit({ type: 'layout:window', payload: { id, bounds: w.getNormalBounds() } }); }, 300); };
-  w.on('move', saveBounds); w.on('resize', saveBounds);
+  if (id !== 'preview') { w.on('move', saveBounds); w.on('resize', saveBounds); }
+  if (id === 'map') w.on('resize', syncPlayerFrame);
   w.on('close', () => {
     clearTimeout(timer);
-    if (!quitting) commit({ type: 'layout:window', payload: { id, bounds: w.getNormalBounds() } });
+    if (!quitting && id !== 'preview') commit({ type: 'layout:window', payload: { id, bounds: w.getNormalBounds() } });
     for (const remote of remotes.values()) {
       if (remote.owner === w && mainWindow && !mainWindow.isDestroyed()) {
         w.contentView.removeChildView(remote.view); mainWindow.contentView.addChildView(remote.view); remote.owner = mainWindow; remote.view.setVisible(false);
@@ -312,10 +345,24 @@ function detach(id, focus = true) {
     if (!quitting) broadcast();
   });
   if (id === 'map') {
-    w.on('enter-full-screen', () => w.webContents.send('status', { scope: 'player-fullscreen', active: true }));
-    w.on('leave-full-screen', () => w.webContents.send('status', { scope: 'player-fullscreen', active: false }));
+    for (const [event, active] of [['enter-full-screen', true], ['leave-full-screen', false]]) w.on(event, () => {
+      w.webContents.send('status', { scope: 'player-fullscreen', active });
+      syncPlayerFrame();
+    });
   }
   broadcast(); return { ok: true };
+}
+function switchCampaign(id) {
+  if (id === campaigns.index.active) return;
+  if (downloadProcess) throw new Error('Дождись завершения загрузки музыки или отмени её');
+  const next = campaigns.select(id);
+  ({ state, assets, file: store } = next);
+  mapHistory.clear();
+  mapCameras.clear();
+  presentation = null;
+  recentImages = [];
+  playerBlackout = windows.has('map');
+  broadcast();
 }
 function setupIPC() {
   handle('init', event => ({ ...windowState(event.sender), version: app.getVersion(), updateStatus, musicStatus,
@@ -351,8 +398,51 @@ function setupIPC() {
     const result = commit(action);
     return action.type === 'gallery:add' ? { ...result, id: state.gallery[0].id } : result;
   });
+  handle('map-undo', (_, context = {}) => {
+    if (context.expectedCampaignId !== campaigns.index.active || context.expectedMapId !== state.activeMapId) {
+      throw new Error('Карта переключилась');
+    }
+    const history = mapHistory.get(state.activeMapId);
+    if (!history?.length) return { ok: true };
+    const next = undoMapAction(state, history.at(-1));
+    writeJSON(store, next);
+    state = next;
+    if (history.at(-1).field === 'map') mapCameras.delete(state.activeMapId);
+    history.pop();
+    broadcast();
+    return { ok: true };
+  });
+  handle('campaign', async (event, { action, id, name }) => {
+    if (event.sender !== mainWindow.webContents || campaignBusy) throw new Error('Дождись завершения операции с кампанией');
+    if (action === 'select') switchCampaign(id);
+    else if (action === 'create') {
+      if (downloadProcess) throw new Error('Дождись завершения загрузки музыки или отмени её');
+      switchCampaign(campaigns.create(name));
+    } else if (action === 'rename') {
+      campaigns.rename(id, name);
+      broadcast();
+    } else if (action === 'export' || action === 'import') {
+      campaignBusy = true;
+      try {
+        const filters = [{ name: 'Архив кампании', extensions: ['tar.gz'] }];
+        if (action === 'export') {
+          const chosen = await dialog.showSaveDialog(mainWindow, { defaultPath: 'campaign.tar.gz', filters });
+          if (chosen.canceled || !chosen.filePath) return { canceled: true };
+          await campaigns.exportArchive(chosen.filePath, state);
+        } else {
+          if (downloadProcess) throw new Error('Дождись завершения загрузки музыки или отмени её');
+          const chosen = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], filters });
+          if (chosen.canceled) return { canceled: true };
+          switchCampaign(await campaigns.importArchive(chosen.filePaths[0]));
+        }
+      } finally { campaignBusy = false; }
+    } else throw new Error('Неизвестное действие кампании');
+    return { ok: true };
+  });
   handle('import-file', async (event, { kind }) => {
+    const active = campaigns.index.active;
     const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { properties: ['openFile'], filters: [{ name: kind === 'audio' ? 'Музыка' : 'Изображения', extensions: kind === 'audio' ? ['mp3', 'wav', 'ogg', 'm4a', 'webm', 'flac'] : ['png', 'jpg', 'jpeg', 'webp', 'gif'] }] });
+    checkCampaign(active);
     return result.canceled ? { canceled: true } : importAsset(result.filePaths[0], kind);
   });
   handle('import-drop', (_, { path: file, kind }) => importAsset(file, kind));
@@ -367,13 +457,16 @@ function setupIPC() {
     if (event.sender === windows.get('map')?.webContents) throw new Error('Импорт доступен мастеру');
     const source = publicDndUrl(url, 'portrait');
     if (!source) return { ok: true };
+    const active = campaigns.index.active;
     const bytes = await readPublicResponse(net, source, 5 * 1024 * 1024);
+    checkCampaign(active);
     const icon = nativeImage.createFromBuffer(bytes);
     if (icon.isEmpty()) return { ok: true };
     return pasteImageBytes(icon.resize({ width: Math.min(384, icon.getSize().width) }).toPNG(), '.png');
   });
   handle('import-lss', async (event, { file, expectedBattleId }) => {
     if (event.sender === windows.get('map')?.webContents) throw new Error('Экраном управляет мастер');
+    const active = campaigns.index.active;
     if (!file) {
       const chosen = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
         properties: ['openFile'], filters: [{ name: 'Лист Long Story Short', extensions: ['json'] }],
@@ -381,6 +474,7 @@ function setupIPC() {
       if (chosen.canceled) return { canceled: true };
       [file] = chosen.filePaths;
     }
+    checkCampaign(active);
     if (state.activeBattleId !== expectedBattleId) throw new Error('Бой переключился. Повтори импорт.');
     if (path.extname(file).toLowerCase() !== '.json' || fs.statSync(file).size > 12 * 1024 * 1024) {
       throw new Error('Выбери JSON-файл Long Story Short размером до 12 МБ');
@@ -391,11 +485,14 @@ function setupIPC() {
     return { ...commit({ type: 'combatant:import', payload: { ...actor, expectedBattleId } }), initiativeNeedsReview };
   });
   handle('paste-image', async () => {
+    const active = campaigns.index.active;
     const items = await clipboard.read().catch(() => []);
+    checkCampaign(active);
     for (const item of items) {
       const type = item.types.find(t => ['image/png', 'image/jpeg', 'image/webp'].includes(t));
       if (type) {
         const bytes = Buffer.from(await (await item.getType(type)).arrayBuffer());
+        checkCampaign(active);
         const ext = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp' }[type];
         return pasteImageBytes(bytes, ext);
       }
@@ -403,6 +500,7 @@ function setupIPC() {
       const fileType = item.types.find(t => t.includes('osclipboard') && t.includes('FileNameW'));
       if (fileType) {
         const bytes = Buffer.from(await (await item.getType(fileType)).arrayBuffer());
+        checkCampaign(active);
         const file = bytes.toString('utf16le').split('\0')[0];
         if (path.isAbsolute(file)) return importAsset(file, 'image');
       }
@@ -451,24 +549,23 @@ function setupIPC() {
   handle('dock', event => { const w = BrowserWindow.fromWebContents(event.sender); if (w !== mainWindow) w.close(); return { ok: true }; });
   ipcMain.on('mirror-map', (event, preview) => {
     if (event.sender !== mainWindow?.webContents || !preview) return;
-    if (preview.mapId !== state.activeMapId) return;
+    if (preview.mapId !== state.activeMapId || (preview.campaignId && preview.campaignId !== campaigns.index.active)) return;
     const camera = preview.camera;
     if (camera && Number.isFinite(camera.x) && Number.isFinite(camera.y)) mapCameras.set(state.activeMapId, camera);
     if (typeof preview.blackout === 'boolean') playerBlackout = preview.blackout;
     const ping = preview.ping;
-    const mirror = windows.get('map');
-    if (!mirror || mirror.isDestroyed()) return;
     const token = preview.token;
     const board = state.boards.find(item => item.id === state.activeMapId);
     const original = token && board.tokens.find(item => item.combatantId === token.id);
     const valid = original && [token.col, token.row].every(n => Number.isInteger(n) && n >= 0 && n <= 2000) &&
-      canMoveToken(board, original, token.col, token.row);
-    mirror.webContents.send('status', {
+      canMoveToken(board, original, token.col, token.row, token.waypoints);
+    const message = {
       scope: 'map-preview', mapId: state.activeMapId, camera: mapCameras.get(state.activeMapId) ?? null,
       blackout: playerBlackout,
       ...(ping && Number.isFinite(ping.x) && Number.isFinite(ping.y) ? { ping } : {}),
       ...(Object.hasOwn(preview, 'token') ? { token: valid ? token : null } : {})
-    });
+    };
+    for (const id of ['map', 'preview']) windows.get(id)?.webContents.send('status', message);
   });
   handle('fullscreen', event => { const w = BrowserWindow.fromWebContents(event.sender); w.setFullScreen(!w.isFullScreen()); return { ok: true }; });
   ipcMain.on('resize-window', (event, p) => {
@@ -503,7 +600,10 @@ function setupIPC() {
     else if (wc && action === 'home') await wc.loadURL(REMOTE[id]);
     return { ok: true };
   });
-  handle('download-music', (_, p) => downloadMusic(p));
+  handle('download-music', (_, p) => {
+    if (campaignBusy) throw new Error('Дождись завершения операции с кампанией');
+    return downloadMusic(p);
+  });
   handle('cancel-music', () => {
     downloadProcess?.stop('Загрузка отменена');
     return { ok: true };
@@ -584,8 +684,16 @@ function setupUpdater() {
   }
 }
 app.whenReady().then(async () => {
-  assets = path.join(app.getPath('userData'), 'assets'); fs.mkdirSync(assets, { recursive: true });
-  store = path.join(app.getPath('userData'), 'campaign.json');
+  campaigns = createCampaignStore(app.getPath('userData'));
+  let opened;
+  try { opened = campaigns.load(campaigns.index.active, true); }
+  catch (error) {
+    console.warn('Не удалось открыть активную кампанию:', error.message);
+    opened = campaigns.select('main', true);
+    dialog.showErrorBox('Кампания недоступна', 'Открыта первая кампания.');
+  }
+  ({ state, assets, file: store } = opened);
+  if (opened.recovered) dialog.showErrorBox('Не удалось прочитать кампанию', 'Сохранена резервная копия файла. Открыта новая кампания.');
   themeStore = path.join(app.getPath('userData'), 'appearance.json');
   if (fs.existsSync(themeStore)) {
     try {
@@ -594,21 +702,6 @@ app.whenReady().then(async () => {
     } catch (error) { console.warn('Не удалось прочитать тему оформления:', error.message); }
   }
   app.dock?.setIcon(getThemeImage(currentTheme));
-  state = initialState();
-  if (fs.existsSync(store)) {
-    try {
-      const saved = JSON.parse(fs.readFileSync(store, 'utf8'));
-      state = migrateState(saved);
-      if (saved.schema === 1) {
-        try { fs.copyFileSync(store, store + '.v1.bak', fs.constants.COPYFILE_EXCL); }
-        catch (error) { if (error.code !== 'EEXIST') console.warn('Не удалось сохранить копию предыдущего формата:', error.message); }
-      }
-      state.music.playing = false;
-    } catch {
-      fs.copyFileSync(store, store + `.backup-${Date.now()}`);
-      dialog.showErrorBox('Не удалось прочитать кампанию', 'Сохранена резервная копия файла. Открыта новая кампания.');
-    }
-  }
   protocol.handle('dm', async request => {
     const u = new URL(request.url);
     try {
@@ -616,10 +709,15 @@ app.whenReady().then(async () => {
       let file;
       const bundledAssets = ['/assets/demo-map.svg', '/assets/PressStart2P-Regular.ttf', '/assets/welcome-tavern.webp', '/assets/welcome-jingle.wav',
         ...Object.keys(ScreenThemes).map(id => '/' + themeIcon(id))];
-      if (u.pathname.startsWith('/assets/') && !bundledAssets.includes(u.pathname)) file = path.join(assets, assetName(decodeURIComponent(u.pathname.slice(8))));
+      if (u.pathname.startsWith('/assets/') && !bundledAssets.includes(u.pathname)) {
+        const campaign = u.searchParams.get('campaign');
+        if (campaign && campaign !== campaigns.index.active) return new Response('Not found', { status: 404 });
+        file = path.join(assets, assetName(decodeURIComponent(u.pathname.slice(8))));
+      }
       else {
         const allowed = ['index.html', 'app.js', 'map-geometry.js', 'map-terrain.js', 'styles.css', 'tavern.css', 'themes.js', 'themes.css',
-          'ambience.css', 'ambience.js', 'scene.css', 'story.js', 'story.css', ...bundledAssets.map(asset => asset.slice(1))];
+          'ambience.css', 'ambience.js', 'scene.css', 'story.js', 'story.css', 'session.js', 'session.css',
+          ...bundledAssets.map(asset => asset.slice(1))];
         const relative = u.pathname.slice(1) || 'index.html';
         if (!allowed.includes(relative)) return new Response('Not found', { status: 404 });
         file = path.join(__dirname, '..', 'ui', relative);

@@ -63,6 +63,7 @@ jobs:
           node tests/scene-smoke.cjs
           node tests/story-smoke.cjs
           node tests/welcome-smoke.cjs
+          node tests/session-smoke.cjs
       - name: Install native Debian packager
         if: matrix.platform == 'linux' && matrix.arch == 'arm64'
         shell: bash

@@ -34,6 +34,20 @@ const MapGeometry = (() => {
   const cellCenter = (map, col, row) => ({
     x: map.offsetX + (col + 0.5) * map.grid, y: map.offsetY + (row + 0.5) * map.grid,
   });
+  const validCell = cell => !!cell && [cell.col, cell.row].every(n => Number.isInteger(n) && n >= 0 && n <= 2000);
+  function routeDistance(cells, alternating = false) {
+    let straight = 0, diagonal = 0;
+    for (let i = 1; i < cells.length; i++) {
+      const x = Math.abs(cells[i].col - cells[i - 1].col), y = Math.abs(cells[i].row - cells[i - 1].row);
+      diagonal += Math.min(x, y);
+      straight += Math.abs(x - y);
+    }
+    return 5 * (straight + diagonal + (alternating ? Math.floor(diagonal / 2) : 0));
+  }
+  function routeBlocked(map, walls, cells) {
+    const points = cells.map(({ col, row }) => cellCenter(map, col, row));
+    return points.slice(1).some((point, i) => blocked(walls, points[i], point));
+  }
   function hit(origin, ray, { a, b }) {
     const edge = delta(a, b), side = delta(origin, a), det = cross(ray, edge);
     if (Math.abs(det) < epsilon) {
@@ -92,6 +106,7 @@ const MapGeometry = (() => {
     }
     return visible;
   }
-  return { orientedSize, project, inverse, cellCenter, blockingWalls, blocked, lightPolygon, distanceToSegment, visibleCells };
+  return { orientedSize, project, inverse, cellCenter, validCell, routeDistance, routeBlocked,
+    blockingWalls, blocked, lightPolygon, distanceToSegment, visibleCells };
 })();
 if (typeof module !== 'undefined') module.exports = MapGeometry;

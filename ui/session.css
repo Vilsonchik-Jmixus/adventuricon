@@ -1,0 +1,37 @@
+body.detached #open-campaigns, body.detached #open-session-scenes { display: none; }
+.session-dialog { width: min(520px, 93vw); max-height: 90vh; overflow: auto; }
+.session-dialog > label { margin-block: 13px; }
+.session-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-block: 6px; }
+.session-scene { display: flex; gap: 5px; margin-top: 6px; }
+.session-scene button:first-child { width: 100%; text-align: left; overflow-wrap: anywhere; }
+#session-scene-list { max-height: 50vh; overflow: auto; }
+#map-note-pins { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+#map-note-pins button {
+  position: absolute;
+  transform: translate(-50%, -50%) rotate(var(--token-orientation));
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  pointer-events: auto;
+  border: 1px solid var(--mint);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1;
+}
+.placing-token #map-note-pins button { pointer-events: none; }
+.story-note.revealed { outline: 2px solid var(--mint); outline-offset: 3px; }
+#movement-ruler { position: absolute; pointer-events: none; z-index: 12; color: var(--mint); overflow: hidden; }
+#movement-ruler svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+#movement-ruler polyline { fill: none; stroke: currentColor; stroke-width: 2.5px; stroke-linejoin: round; filter: drop-shadow(0 1px 2px #000); }
+#movement-ruler[data-blocked="true"] { color: #df9b91; }
+#movement-ruler[data-blocked="true"] polyline { stroke-dasharray: 5 4; }
+#movement-ruler output {
+  position: absolute;
+  border: 1px solid currentColor;
+  padding: 3px 6px;
+  background: var(--shadow);
+  white-space: nowrap;
+  font-size: 12px;
+}
+body.preview-screen { position: absolute; transform-origin: 0 0; }
+body.preview-screen .workspace { height: var(--preview-height, 100vh); }

@@ -1,6 +1,6 @@
 const { randomUUID, randomInt } = require('node:crypto');
 const { roleOf, effectsFor, MANUAL_IDS, revealsFog } = require('./combat-rules.cjs');
-const { blockingWalls, blocked, cellCenter, distanceToSegment, visibleCells } = require('../ui/map-geometry.js');
+const { blockingWalls, validCell, routeBlocked, distanceToSegment, visibleCells } = require('../ui/map-geometry.js');
 const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
 const finite = (n, fallback) => Number.isFinite(Number(n)) ? Number(n) : fallback;
 const text = (v, max = 120) => String(v ?? '').trim().slice(0, max);
@@ -12,7 +12,7 @@ function newBattle(title = 'Первый бой') {
 }
 function newBoard(title = 'Первая карта', demo = false) {
   return {
-    id: randomUUID(), title, tokens: [], terrain: [], drawings: [], fog: newFog(),
+    id: randomUUID(), title, tokens: [], terrain: [], drawings: [], notePins: [], fog: newFog(),
     map: { image: null, demo, grid: 64, offsetX: 0, offsetY: 0, opacity: 0.3, color: '#d8e6e0', visible: true, zoom: 1 }
   };
 }
@@ -20,7 +20,7 @@ function initialState() {
   const battle = newBattle(), board = newBoard(undefined, true);
   return {
     schema: 2, revision: 0, battles: [battle], boards: [board],
-    activeBattleId: battle.id, activeMapId: board.id, gallery: [], bookmarks: [], library: [], story: newStory(),
+    activeBattleId: battle.id, activeMapId: board.id, gallery: [], bookmarks: [], library: [], story: newStory(), scenes: [],
     music: { folders: ['Общее', 'Бой', 'Атмосфера'], tracks: [], current: null, playing: false, volume: 0.55, loop: true },
     layout: { left: 32, middle: 34, top: 52, windows: {} }
   };
@@ -36,7 +36,8 @@ function migrateState(saved) {
     return { ...saved, battles: saved.battles.map(restoreRound), bookmarks: Array.isArray(saved.bookmarks) ? saved.bookmarks : [],
       library: Array.isArray(saved.library) ? saved.library : [],
       story: { ...newStory(), ...saved.story },
-      boards: saved.boards.map(board => ({ terrain: [], drawings: [], fog: newFog(), ...board })) };
+      scenes: Array.isArray(saved.scenes) ? saved.scenes : [],
+      boards: saved.boards.map(board => ({ terrain: [], drawings: [], notePins: [], fog: newFog(), ...board })) };
   }
   if (saved.schema !== 1 || !Array.isArray(saved.combatants) || !Array.isArray(saved.tokens) || !saved.map) {
     throw new Error('Неверный формат сохранения');
@@ -46,7 +47,7 @@ function migrateState(saved) {
     combatants, round: round ?? 1, turn: turn ?? null, history: history ?? [] });
   const board = { ...newBoard('Текущая карта'), map, tokens };
   return {
-    ...base, schema: 2, gallery: gallery ?? [], bookmarks: [], library: [], story: newStory(),
+    ...base, schema: 2, gallery: gallery ?? [], bookmarks: [], library: [], story: newStory(), scenes: [],
     battles: [battle], boards: [board], activeBattleId: battle.id, activeMapId: board.id
   };
 }
@@ -74,7 +75,7 @@ function activeView(state) {
   const mapCombatants = state.battles.flatMap(entry => entry.combatants.filter(c => placed.has(c.id)).map(describe));
   return {
     revision: state.revision, music: state.music, layout: state.layout, gallery: state.gallery, bookmarks: state.bookmarks, library: state.library, story: state.story,
-    activeBattleId: battle.id, activeMapId: board.id,
+    activeBattleId: battle.id, activeMapId: board.id, scenes: state.scenes, notePins: board.notePins,
     battleChoices: state.battles.map(({ id, title, linkedMapId }) => ({ id, title, linkedMapId })),
     mapChoices: state.boards.map(({ id, title }) => ({ id, title })),
     combatants: battle.combatants.map(describe), order: battleOrder(battle).map(c => c.id), manualOrder: !!battle.manualOrder,
@@ -125,8 +126,9 @@ function placeToken(board, id, { col, row }) {
   }
   board.tokens.push({ combatantId: id, col, row });
 }
-function canMoveToken(board, token, col, row) {
-  return !blocked(blockingWalls(board.terrain), cellCenter(board.map, token.col, token.row), cellCenter(board.map, col, row));
+function canMoveToken(board, token, col, row, waypoints = []) {
+  return Array.isArray(waypoints) && waypoints.length <= 32 && waypoints.every(validCell) &&
+    !routeBlocked(board.map, blockingWalls(board.terrain), [token, ...waypoints, { col, row }]);
 }
 function updateExploration(state, board) {
   if (!board.fog.enabled) return;
@@ -149,7 +151,7 @@ function reducer(state, action) {
     throw new Error('Бой переключился. Открой действие заново.');
   }
   if (p.expectedMapId && p.expectedMapId !== board.id &&
-      /^(token:|terrain:|fog:|map:(draw|erase|image|settings|save|duplicate)|library:deploy)/.test(action.type)) {
+      /^(token:|terrain:|fog:|map:(draw|erase|image|settings|save|duplicate|pin|unpin)|library:deploy)/.test(action.type)) {
     throw new Error('Карта переключилась. Открой действие заново.');
   }
   switch (action.type) {
@@ -183,6 +185,7 @@ function reducer(state, action) {
       const index = s.battles.findIndex(entry => entry.id === p.id);
       if (index < 0 || s.battles.length === 1) throw new Error('Оставь хотя бы один бой');
       const removed = s.battles.splice(index, 1)[0];
+      for (const scene of s.scenes) if (scene.battleId === removed.id) scene.battleId = null;
       const ids = new Set(removed.combatants.map(c => c.id));
       for (const savedBoard of s.boards) savedBoard.tokens = savedBoard.tokens.filter(t => !ids.has(t.combatantId));
       if (removed.id === s.activeBattleId) {
@@ -208,7 +211,8 @@ function reducer(state, action) {
       break;
     case 'map:duplicate': {
       const next = { ...newBoard(text(p.title) || (board.title + ' · копия')), map: { ...board.map },
-        terrain: structuredClone(board.terrain), drawings: structuredClone(board.drawings), fog: newFog(board.fog.enabled) };
+        terrain: structuredClone(board.terrain), drawings: structuredClone(board.drawings),
+        notePins: structuredClone(board.notePins), fog: newFog(board.fog.enabled) };
       s.boards.push(next);
       s.activeMapId = next.id;
       break;
@@ -217,10 +221,40 @@ function reducer(state, action) {
       const index = s.boards.findIndex(entry => entry.id === p.id);
       if (index < 0 || s.boards.length === 1) throw new Error('Оставь хотя бы одну карту');
       s.boards.splice(index, 1);
+      for (const scene of s.scenes) if (scene.mapId === p.id) scene.mapId = null;
       for (const entry of s.battles) if (entry.linkedMapId === p.id) entry.linkedMapId = null;
       if (s.activeMapId === p.id) s.activeMapId = s.boards[Math.min(index, s.boards.length - 1)].id;
       break;
     }
+    case 'scene:save': {
+      const reference = (value, entries) => {
+        if (!value) return null;
+        if (!entries.some(entry => entry.id === value)) throw new Error('Элемент сцены уже удалён');
+        return value;
+      };
+      const fields = { title: text(p.title) || 'Новая сцена',
+        mapId: reference(p.mapId, s.boards), battleId: reference(p.battleId, s.battles),
+        trackId: reference(p.trackId, s.music.tracks), noteId: reference(p.noteId, s.story.notes) };
+      const scene = s.scenes.find(entry => entry.id === p.id);
+      if (p.id && !scene) throw new Error('Сцена уже удалена');
+      if (scene) Object.assign(scene, fields);
+      else s.scenes.push({ id: randomUUID(), ...fields });
+      break;
+    }
+    case 'scene:open': {
+      const scene = s.scenes.find(entry => entry.id === p.id);
+      if (!scene) throw new Error('Сцена уже удалена');
+      if (scene.mapId && s.boards.some(entry => entry.id === scene.mapId)) s.activeMapId = scene.mapId;
+      if (scene.battleId && s.battles.some(entry => entry.id === scene.battleId)) s.activeBattleId = scene.battleId;
+      const track = s.music.tracks.find(entry => entry.id === scene.trackId);
+      s.music.current = track?.id ?? null;
+      s.music.playing = !!track;
+      s.music.reset = (s.music.reset || 0) + 1;
+      break;
+    }
+    case 'scene:remove':
+      s.scenes = s.scenes.filter(entry => entry.id !== p.id);
+      break;
     case 'combatant:add': {
       battle.combatants.push(newCombatant(characterFields(p)));
       break;
@@ -355,7 +389,7 @@ function reducer(state, action) {
       const t = board.tokens.find(t => t.combatantId === p.id);
       if (t) {
         const col = cellIndex(finite(p.col, t.col)), row = cellIndex(finite(p.row, t.row));
-        if (!canMoveToken(board, t, col, row)) throw new Error('Проход перекрыт');
+        if (!canMoveToken(board, t, col, row, p.waypoints)) throw new Error('Проход перекрыт');
         Object.assign(t, { col, row });
       }
       break;
@@ -407,6 +441,14 @@ function reducer(state, action) {
     case 'map:erase':
       board.drawings = board.drawings.filter(stroke => stroke.id !== p.id);
       break;
+    case 'map:pin':
+      if (!s.story.notes.some(note => note.id === p.noteId)) throw new Error('Заметка уже удалена');
+      if (board.notePins.length >= 500) throw new Error('На карте слишком много заметок');
+      board.notePins.push({ id: randomUUID(), noteId: p.noteId, ...terrainPoint(p) });
+      break;
+    case 'map:unpin':
+      board.notePins = board.notePins.filter(pin => pin.id !== p.id);
+      break;
     case 'fog:enabled':
       board.fog.enabled = p.enabled === true;
       break;
@@ -419,6 +461,7 @@ function reducer(state, action) {
       if (typeof p.visible === 'boolean') board.map.visible = p.visible;
       if (typeof p.playerHealth === 'boolean') board.map.playerHealth = p.playerHealth;
       if (['fit', 'fill', 'follow'].includes(p.playerFit)) board.map.playerFit = p.playerFit;
+      if (['equal', 'alternating'].includes(p.diagonals)) board.map.diagonals = p.diagonals;
       if ([0, 90, 180, 270].includes(p.rotation)) board.map.rotation = p.rotation;
       if (/^#[0-9a-f]{6}$/i.test(p.color)) board.map.color = p.color;
       break;
@@ -453,6 +496,8 @@ function reducer(state, action) {
     case 'story:remove':
       s.story.notes = s.story.notes.filter(note => note.id !== p.id);
       s.story.links = s.story.links.filter(link => link.from !== p.id && link.to !== p.id);
+      for (const savedBoard of s.boards) savedBoard.notePins = savedBoard.notePins.filter(pin => pin.noteId !== p.id);
+      for (const scene of s.scenes) if (scene.noteId === p.id) scene.noteId = null;
       break;
     case 'story:link': {
       const { from, to } = p;
@@ -510,6 +555,7 @@ function reducer(state, action) {
     }
     case 'music:remove':
       s.music.tracks = s.music.tracks.filter(t => t.id !== p.id);
+      for (const scene of s.scenes) if (scene.trackId === p.id) scene.trackId = null;
       if (s.music.current === p.id) { s.music.current = null; s.music.playing = false; } break;
     case 'music:play':
       if (s.music.tracks.some(t => t.id === p.id)) { s.music.current = p.id; s.music.playing = true; } break;
@@ -530,7 +576,7 @@ function reducer(state, action) {
       ['grid', 'offsetX', 'offsetY'].some(key => board.map[key] !== state.boards.find(item => item.id === board.id).map[key])) {
     board.fog.explored = [];
   }
-  if (/^(token:|terrain:|fog:|map:(image|settings|select)|battle:select|library:deploy|combatant:(edit|hp|undo))/.test(action.type)) {
+  if (/^(token:|terrain:|fog:|map:(image|settings|select)|battle:select|scene:open|library:deploy|combatant:(edit|hp|undo))/.test(action.type)) {
     updateExploration(s, s.boards.find(item => item.id === s.activeMapId));
   }
   s.revision++;

@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="scene.css">
   <link rel="stylesheet" href="story.css">
   <link rel="stylesheet" href="themes.css">
+  <link rel="stylesheet" href="session.css">
 </head>
 <body>
   <header class="appbar">
@@ -22,7 +23,7 @@
     <button id="screen-tip" class="quiet" type="button" hidden>
       <span class="tip-label">Совет</span><span id="tip-text"></span><span class="tip-next" aria-hidden="true">›</span>
     </button>
-    <div class="app-actions"><span id="display-label" hidden></span><button id="return-map" class="small-button" hidden>Карта игрокам</button><button id="updates" class="quiet">↻ Обновления</button><button id="screen-settings" type="button" class="icon-button" title="Оформление и звук" aria-label="Оформление и звук" hidden>⚙</button><button id="help" class="icon-button" title="Как пользоваться">?</button></div>
+    <div class="app-actions"><button id="open-campaigns" type="button">Кампании</button><button id="open-session-scenes" type="button">Сцены</button><span id="display-label" hidden></span><button id="return-map" class="small-button" hidden>Карта игрокам</button><button id="updates" class="quiet">↻ Обновления</button><button id="screen-settings" type="button" class="icon-button" title="Оформление и звук" aria-label="Оформление и звук" hidden>⚙</button><button id="help" class="icon-button" title="Как пользоваться">?</button></div>
   </header>
   <main id="workspace" class="workspace">
     <section class="panel combat" data-panel="combat">
@@ -84,6 +85,8 @@
     <button id="create-map" type="button" class="icon-button" title="Новая карта" aria-label="Новая карта">＋</button>
     <button id="manage-map" type="button" class="icon-button" title="Настройки и копирование" aria-label="Настройки и копирование: Карта">⋯</button>
     <button id="fog-reset" type="button" class="icon-button" title="Скрыть исследованные области" aria-label="Сбросить туман войны">↺ Туман</button>
+    <button id="undo-map" type="button" class="icon-button" title="Отменить действие на карте" aria-label="Отменить действие на карте">↶</button>
+    <button id="open-player-preview" type="button" class="icon-button" title="Предпросмотр экрана игроков" aria-label="Предпросмотр экрана игроков">◈</button>
   </div><div class="map-toolbar"><button id="import-map" class="small-button" title="Загрузить изображение на выбранную карту">＋ Файл</button><button id="paste-map" class="quiet" title="Вставить изображение из буфера" data-paste-shortcut>Ctrl+V</button><div class="zoom-controls"><button id="rotate-map-left" title="Повернуть карту влево на 90°" aria-label="Повернуть карту влево на 90°">↶</button><button id="rotate-map-right" title="Повернуть карту вправо на 90°" aria-label="Повернуть карту вправо на 90°">↷</button><button id="fit-map" title="Показать карту целиком" aria-label="Показать карту целиком">⊡</button><button id="zoom-out" title="Уменьшить">−</button><span id="zoom-label">100%</span><button id="zoom-in" title="Увеличить">＋</button></div></div>
         <div id="terrain-toolbar" hidden aria-label="Редактор карты">
           <div class="terrain-tools" role="group" aria-label="Инструменты карты">
@@ -107,12 +110,15 @@
           </select>
           <span id="terrain-hint"></span>
           <button type="button" id="create-map-item">＋ Предмет</button>
+          <button type="button" id="pin-map-note">＋ Заметка</button>
           <button type="button" id="edit-map-item" hidden>Изменить предмет</button>
           <button type="button" id="terrain-door" hidden></button>
           <button type="button" id="terrain-remove" hidden>Удалить</button>
           <button type="button" id="close-terrain" class="small-button">Готово</button>
         </div>
-        <div id="map-viewport" class="map-viewport" tabindex="0" aria-label="Карта: вставьте изображение из буфера"><div id="map-frame"><div id="map-world" class="map-world"><img id="map-image" draggable="false" alt="Карта приключения" src="assets/demo-map.svg"><div id="map-lights" aria-hidden="true"></div><div id="map-grid" class="map-grid"></div><svg id="map-drawings" preserveAspectRatio="none" aria-hidden="true"><g id="map-strokes"></g><path id="map-draft-stroke"></path></svg><canvas id="terrain-preview" aria-hidden="true" hidden></canvas><div id="map-doors"></div><div id="map-items"></div><div id="map-tokens" class="map-tokens"></div><canvas id="map-fog" aria-hidden="true" hidden></canvas></div></div></div><div id="placement-hint" role="status" hidden></div></div>
+        <div id="map-viewport" class="map-viewport" tabindex="0" aria-label="Карта: вставьте изображение из буфера"><div id="map-frame"><div id="map-world" class="map-world"><img id="map-image" draggable="false" alt="Карта приключения" src="assets/demo-map.svg"><div id="map-lights" aria-hidden="true"></div><div id="map-grid" class="map-grid"></div><svg id="map-drawings" preserveAspectRatio="none" aria-hidden="true"><g id="map-strokes"></g><path id="map-draft-stroke"></path></svg><canvas id="terrain-preview" aria-hidden="true" hidden></canvas><div id="map-doors"></div><div id="map-items"></div><div id="map-tokens" class="map-tokens"></div><canvas id="map-fog" aria-hidden="true" hidden></canvas><div id="map-note-pins"></div></div></div>
+          <div id="movement-ruler" hidden><svg aria-hidden="true"><polyline></polyline></svg><output></output></div>
+        </div><div id="placement-hint" role="status" hidden></div></div>
       <div id="map-condition-legend" class="condition-legend" aria-label="Обозначения состояний" hidden></div><div id="player-art" hidden><img id="presented-image" alt=""></div><div id="player-blackout" hidden></div><button class="resize-grip" title="Потяните для изменения размера"></button>
     </section>
     <section class="panel characters" data-panel="characters">
@@ -186,7 +192,7 @@
   </dialog>
   <dialog id="editor"><form id="combatant-form"><div class="dialog-heading"><div><h2 id="editor-title">Добавить участника</h2></div><button type="button" data-close-dialog class="icon-button">×</button></div><button id="choose-portrait" type="button" class="portrait-picker"><span id="portrait-preview">＋</span><span>Добавить портрет<small>PNG, JPG или WebP</small></span></button><label>Имя<input name="name" required maxlength="120" placeholder="Например, гоблин-разведчик" autofocus></label><div class="form-row"><label id="current-hp-field" hidden>Текущие ХП<input name="hp" type="number" min="0" max="999999" disabled></label><label>Максимум ХП<input name="maxHp" type="number" min="1" max="999999" value="12" required></label></div><div class="form-row"><label>Сторона<select name="role" id="combatant-role"></select></label><label id="initiative-bonus-field">Бонус инициативы<input name="initiativeBonus" type="number" min="-50" max="50" value="0" required></label></div><div class="scene-confirm editor-actions"><button id="editor-submit" type="submit" class="primary-button">Добавить в трекер</button><button id="save-template-copy" type="button" class="quiet" hidden>В заготовки</button></div></form></dialog>
   <dialog id="player-dialog"><div class="dialog-heading"><h2>Экран игроков</h2><button type="button" data-close-dialog class="icon-button">×</button></div><div class="player-options"><label class="checkbox-label"><input id="toggle-player-health" type="checkbox"> Показывать ХП игроков и союзников</label><label>Карта на экране игроков<select id="player-fit"><option value="fill">Заполнить экран</option><option value="fit">Вписать без растягивания</option><option value="follow">Следовать за мастером</option></select></label><label class="checkbox-label"><input id="toggle-player-blackout" type="checkbox"> Затемнить экран игроков</label><p class="dialog-hint">Shift + щелчок по карте подсвечивает точку у игроков.</p></div></dialog>
-  <dialog id="grid-dialog"><form id="grid-form"><div class="dialog-heading"><h2>Сетка карты</h2><button type="button" data-close-dialog class="icon-button">×</button></div><label class="checkbox-label"><input name="visible" type="checkbox">Показывать сетку</label><label>Размер клетки, пикс.<input name="grid" type="number" min="16" max="256"></label><div class="form-row"><label>Сдвиг X<input name="offsetX" type="number" min="-512" max="512"></label><label>Сдвиг Y<input name="offsetY" type="number" min="-512" max="512"></label></div><label>Прозрачность<input name="opacity" type="range" min="0" max="1" step="0.05"></label><label>Цвет линий<input name="color" type="color"></label><button class="primary-button" type="submit">Применить</button></form></dialog>
+  <dialog id="grid-dialog"><form id="grid-form"><div class="dialog-heading"><h2>Сетка карты</h2><button type="button" data-close-dialog class="icon-button">×</button></div><label class="checkbox-label"><input name="visible" type="checkbox">Показывать сетку</label><label>Размер клетки, пикс.<input name="grid" type="number" min="16" max="256"></label><div class="form-row"><label>Сдвиг X<input name="offsetX" type="number" min="-512" max="512"></label><label>Сдвиг Y<input name="offsetY" type="number" min="-512" max="512"></label></div><label>Диагонали<select name="diagonals"><option value="equal">5 футов за клетку</option><option value="alternating">Чередовать 5 и 10 футов</option></select></label><label>Прозрачность<input name="opacity" type="range" min="0" max="1" step="0.05"></label><label>Цвет линий<input name="color" type="color"></label><button class="primary-button" type="submit">Применить</button></form></dialog>
   <dialog id="initiative-dialog">
     <div class="dialog-heading"><h2>Инициатива</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть">×</button></div>
     <div class="initiative-actions"><button type="button" data-roll-role="enemy">Бросить за противников</button></div>
@@ -272,12 +278,42 @@
     <button type="button" id="preview-welcome" class="small-button">Показать приветствие</button>
   </dialog>
   <audio id="welcome-jingle" preload="none"></audio>
+  <dialog id="campaign-dialog" class="session-dialog">
+    <div class="dialog-heading"><h2>Кампании</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть">×</button></div>
+    <label>Текущая кампания<select id="campaign-select"></select></label>
+    <div class="session-actions"><button id="campaign-create" type="button">＋ Создать</button><button id="campaign-rename" type="button">Переименовать</button></div>
+    <div class="session-actions"><button id="campaign-export" type="button">Экспорт архива</button><button id="campaign-import" type="button">Импорт архива</button></div>
+    <p id="campaign-status" class="dialog-hint" role="status" hidden></p>
+  </dialog>
+  <dialog id="session-scenes" class="session-dialog">
+    <div class="dialog-heading"><h2>Сцены</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть">×</button></div>
+    <button id="new-session-scene" type="button">＋ Сцена</button>
+    <div id="session-scene-list"></div>
+  </dialog>
+  <dialog id="session-scene-edit" class="session-dialog">
+    <form id="session-scene-form">
+      <div class="dialog-heading"><h2>Сцена</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть">×</button></div>
+      <label>Название<input name="title" maxlength="120" required autofocus></label>
+      <div class="form-row"><label>Карта<select name="mapId"></select></label><label>Бой<select name="battleId"></select></label></div>
+      <label>Музыка<select name="trackId"></select></label>
+      <label>Заметка<select name="noteId"></select></label>
+      <div class="session-actions"><button id="delete-session-scene" type="button" class="quiet" hidden>Удалить</button><button type="submit" class="primary-button">Сохранить</button></div>
+    </form>
+  </dialog>
+  <dialog id="map-note-dialog" class="session-dialog">
+    <form id="map-note-form">
+      <div class="dialog-heading"><h2>Заметка на карте</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть">×</button></div>
+      <label>Заметка<select id="map-note-choice" required></select></label>
+      <button type="submit" class="primary-button">Выбрать место</button>
+    </form>
+  </dialog>
   <audio id="audio" preload="metadata"></audio>
   <script src="themes.js"></script>
   <script src="map-geometry.js"></script>
   <script src="map-terrain.js"></script>
   <script src="ambience.js"></script>
   <script src="story.js"></script>
+  <script src="session.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

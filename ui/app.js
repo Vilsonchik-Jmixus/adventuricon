@@ -1,12 +1,15 @@
 /* The renderer never reads local files directly. All mutations go through validated IPC. */
 const $ = id => document.getElementById(id);
 const api = window.dm;
-const detachedPanel = new URLSearchParams(location.search).get('panel');
+const windowParams = new URLSearchParams(location.search);
+const detachedPanel = windowParams.get('panel');
+const isPreview = windowParams.has('preview');
 const isPlayerMap = detachedPanel === 'map';
 let state, detached = [], currentFolder = 'Общее', portrait = null, expanded = null;
 let editingCombatant = null, editingContext, gridContext, playerSettingsContext, managedSlot;
 let toastTimer, textSubmit, draggingToken = false, animating = false, musicBusy = false, currentUpdate;
 let mapCamera = null, previewToken = null, pendingMapFrame = 0;
+let previewFrameInfo, campaignId, campaignChoices, canUndoMap = false, rulerShortcut;
 let restoreMapCamera = false, cancelTokenDrag = null;
 let masterAutoFit = false, expandedMapMode = 'fill', boardLayout, boardProjection;
 let playerBlackout = false;
@@ -16,13 +19,13 @@ const tokenDragType = 'application/x-dm-screen-token';
 let combatRoles = {}, conditionDefinitions = [], conditionEdit, initiativeContext;
 let reference = { tab: 'info', pages: {} };
 let presentation = null, recentImages = [], charactersTab = 'sheets', selectedImage = null, previewImage = null;
-const assetURL = name => `dm://app/assets/${encodeURIComponent(name)}`;
+const assetURL = name => `dm://app/assets/${encodeURIComponent(name)}?campaign=${encodeURIComponent(campaignId ?? 'main')}`;
 const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 function toast(message) { $('toast').textContent = message; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 4500); }
 async function result(promise) { const value = await promise; if (value?.error) toast(value.error); return value; }
-const currentContext = () => ({ expectedBattleId: state?.activeBattleId, expectedMapId: state?.activeMapId });
+const currentContext = () => ({ expectedBattleId: state?.activeBattleId, expectedMapId: state?.activeMapId, expectedCampaignId: campaignId });
 const dispatch = (type, payload = {}, context = currentContext()) => result(api.dispatch(type, { ...payload, ...context }));
-const mirrorMap = (preview, mapId = state.activeMapId) => api.mirrorMap({ ...preview, mapId });
+const mirrorMap = (preview, mapId = state.activeMapId) => api.mirrorMap({ ...preview, mapId, campaignId });
 function openDialog(id) { $(id).showModal(); syncRemoteBounds(); }
 function closeDialog(dialog) { dialog.close(); syncRemoteBounds(); }
 function renderTheme(id) {
@@ -144,9 +147,11 @@ function renderMap() {
   world.style.setProperty('--grid-opacity', m.visible ? m.opacity : 0);
   $('zoom-label').textContent = mode === 'follow' ? `${Math.round(zoom * 100)}%` : 'Авто';
   $('token-count').textContent = state.tokens.length;
-  $('player-settings').hidden = !!detachedPanel || !detached.includes('map');
+  $('player-settings').hidden = !!detachedPanel || !detached.some(id => id === 'map' || id === 'preview');
+  $('undo-map').disabled = !canUndoMap;
   layoutMap();
   mapScene.render(state, boardLayout, previewToken);
+  if (!isPlayerMap) renderNotePins(zoom);
   if (draggingToken) return;
   if (selectedToken && !state.tokens.some(t => t.combatantId === selectedToken)) selectedToken = null;
   const focusedToken = document.activeElement?.dataset.token;
@@ -198,7 +203,15 @@ function renderMusic() {
     if (!current) { audio.pause(); audio.removeAttribute('src'); delete audio.dataset.asset; }
     else {
       if (audio.dataset.asset !== current.asset) { audio.src = assetURL(current.asset); audio.dataset.asset = current.asset; }
-      if (state.music.playing && audio.paused) audio.play().catch(() => { toast('Не удалось воспроизвести файл. Попробуйте другой формат.'); dispatch('music:settings', { playing: false }); });
+      if (state.music.playing && audio.paused) {
+        const context = currentContext();
+        const currentTrack = current.id;
+        audio.play().catch(error => {
+          if (error.name === 'AbortError' || context.expectedCampaignId !== campaignId || state.music.current !== currentTrack) return;
+          toast('Не удалось воспроизвести файл. Попробуйте другой формат.');
+          dispatch('music:settings', { playing: false }, context);
+        });
+      }
       else if (!state.music.playing && !audio.paused) audio.pause();
     }
   }
@@ -220,6 +233,7 @@ function renderAll() {
   if ($('library-dialog').open) renderLibrary();
   if (charactersTab === 'gallery') renderGallery();
   if (charactersTab === 'notes') storyBoard.render();
+  if (!detachedPanel) sessionTools.render();
   requestAnimationFrame(syncRemoteBounds);
 }
 function syncRemoteBounds() {
@@ -444,6 +458,16 @@ function selectCharacters(tab) {
   if (tab === 'notes') storyBoard.render();
   syncRemoteBounds();
 }
+async function openStoryNote(id) {
+  if (!state.story.notes.some(note => note.id === id)) return;
+  if (expanded && expanded !== 'characters') await expandPanel(expanded);
+  selectCharacters('notes');
+  storyBoard.reveal(id);
+}
+const sessionTools = createSessionTools({
+  getState: () => state, getCampaigns: () => ({ profiles: campaignChoices, active: campaignId }),
+  dispatch, campaign: api.campaign, openDialog, closeDialog, askText, showNote: openStoryNote,
+});
 function selectedGalleryImage() {
   return state.gallery.find(item => item.id === selectedImage);
 }
@@ -761,11 +785,14 @@ $('map-settings').onclick = () => {
   gridContext = currentContext();
   const form = $('grid-form');
   for (const key of ['grid', 'offsetX', 'offsetY', 'opacity', 'color']) form.elements[key].value = state.map[key];
+  form.elements.diagonals.value = state.map.diagonals ?? 'equal';
   form.elements.visible.checked = state.map.visible; openDialog('grid-dialog');
 };
 $('grid-form').onsubmit = async e => {
   e.preventDefault(); const f = e.target;
-  const response = await dispatch('map:settings', { grid: Number(f.elements.grid.value), offsetX: Number(f.elements.offsetX.value), offsetY: Number(f.elements.offsetY.value), opacity: Number(f.elements.opacity.value), color: f.elements.color.value, visible: f.elements.visible.checked }, gridContext);
+  const response = await dispatch('map:settings', { grid: Number(f.elements.grid.value), offsetX: Number(f.elements.offsetX.value),
+    offsetY: Number(f.elements.offsetY.value), opacity: Number(f.elements.opacity.value), color: f.elements.color.value,
+    visible: f.elements.visible.checked, diagonals: f.elements.diagonals.value }, gridContext);
   if (response?.ok) closeDialog($('grid-dialog'));
 };
 const viewport = $('map-viewport');
@@ -872,12 +899,51 @@ async function putItem(item, cell, map, context) {
   const a = MapGeometry.cellCenter(map, cell.col, cell.row);
   return dispatch('terrain:add', { kind: 'item', name: item.name, image: item.image, a }, context);
 }
+function renderNotePins(zoom) {
+  const notes = new Map(state.story.notes.map(note => [note.id, note.title]));
+  const layer = $('map-note-pins');
+  const focused = document.activeElement?.dataset.notePin;
+  layer.replaceChildren(...state.notePins.filter(pin => notes.has(pin.noteId)).map(pin => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.notePin = pin.id;
+    button.textContent = '✎';
+    button.title = notes.get(pin.noteId) + ' · ПКМ — убрать метку';
+    button.setAttribute('aria-label', notes.get(pin.noteId));
+    button.style.left = pin.x * zoom + 'px';
+    button.style.top = pin.y * zoom + 'px';
+    button.onclick = () => openStoryNote(pin.noteId);
+    button.oncontextmenu = event => {
+      event.preventDefault();
+      if (confirm('Убрать метку с карты?')) dispatch('map:unpin', { id: pin.id });
+    };
+    return button;
+  }));
+  if (focused) [...layer.children].find(button => button.dataset.notePin === focused)?.focus({ preventScroll: true });
+}
+$('pin-map-note').onclick = () => {
+  if (!state.story.notes.length) return toast('Сначала создай заметку на сюжетной доске');
+  $('map-note-choice').replaceChildren(...state.story.notes.map(note => new Option(note.title, note.id)));
+  openDialog('map-note-dialog');
+};
+$('map-note-form').onsubmit = event => {
+  event.preventDefault();
+  const note = state.story.notes.find(entry => entry.id === $('map-note-choice').value);
+  if (!note) return;
+  closeDialog($('map-note-dialog'));
+  mapScene.hideEditor();
+  setPlacement({ kind: 'note', id: note.id, context: currentContext(), name: note.title });
+  viewport.focus({ preventScroll: true });
+};
+$('undo-map').onclick = () => result(api.undoMap(currentContext()));
+$('open-player-preview').onclick = () => result(api.detach('preview'));
 async function placeAt(event, entry) {
   const cell = placementCell(event);
   if (!cell || !entry) return;
   const payload = { id: entry.id, ...cell };
   const alreadyOnMap = state.tokens.some(token => token.combatantId === entry.id);
-  const response = entry.kind === 'item' ? await putItem(entry, cell, state.map, entry.context)
+  const response = entry.kind === 'note' ? await dispatch('map:pin', { noteId: entry.id, ...MapGeometry.cellCenter(state.map, cell.col, cell.row) }, entry.context)
+    : entry.kind === 'item' ? await putItem(entry, cell, state.map, entry.context)
     : entry.kind === 'template' ? await dispatch('library:deploy', { ...payload, place: true }, entry.context)
     : await dispatch(alreadyOnMap ? 'token:move' : 'token:add', payload, entry.context);
   if (response?.ok) {
@@ -908,6 +974,17 @@ function paintPlayerMap() {
   const token = [...$('map-tokens').children].find(button => button.dataset.token === previewToken.id);
   if (token) positionToken(token, state.map, previewToken.col, previewToken.row, zoom);
 }
+function resizePreview() {
+  if (!isPreview) return;
+  const [width, height] = previewFrameInfo?.size ?? [innerWidth, innerHeight];
+  const scale = Math.min(innerWidth / width, innerHeight / height);
+  document.body.style.width = width + 'px';
+  document.body.style.height = height + 'px';
+  document.body.style.setProperty('--preview-height', height + 'px');
+  document.body.style.transform = `translate(${(innerWidth - width * scale) / 2}px, ${(innerHeight - height * scale) / 2}px) scale(${scale})`;
+  document.body.classList.toggle('player-fullscreen', !!previewFrameInfo?.fullscreen);
+}
+if (isPreview) addEventListener('resize', () => { resizePreview(); if (state) renderMap(); });
 function mapDrawingZoom() {
   return mapMode() === 'follow' ? state.map.zoom : 1;
 }
@@ -986,7 +1063,7 @@ viewport.addEventListener('wheel', e => {
   changeZoom(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - rect.left, e.clientY - rect.top);
 }, { passive: false });
 viewport.addEventListener('pointerdown', e => {
-  if (isPlayerMap || e.button !== 0 || e.target.closest('[data-door-id]') || !boardProjection) return;
+  if (isPlayerMap || e.button !== 0 || e.target.closest('[data-door-id], [data-note-pin]') || !boardProjection) return;
   if (placement) {
     e.preventDefault();
     placeAt(e, placement);
@@ -1065,6 +1142,17 @@ viewport.addEventListener('drop', async e => {
 document.addEventListener('keydown', e => {
   const modal = document.querySelector('dialog[open]');
   const onMap = !isPlayerMap && !modal && e.target.closest('#map-viewport');
+  if (onMap && draggingToken && !e.repeat && e.code === 'KeyF' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    rulerShortcut?.(e.altKey);
+    return;
+  }
+  if (!isPlayerMap && !modal && e.target.closest('.map') && !draggingToken &&
+      (e.ctrlKey || e.metaKey) && !e.shiftKey && e.code === 'KeyZ') {
+    e.preventDefault();
+    result(api.undoMap(currentContext()));
+    return;
+  }
   if (onMap && !e.altKey && !e.ctrlKey && !e.metaKey && !e.repeat) {
     if (e.key === 'Backspace' && selectedToken && !draggingToken && !mapScene.isEditing()) {
       e.preventDefault();
@@ -1081,6 +1169,7 @@ document.addEventListener('keydown', e => {
     $('reference-query').select();
   }
   if (e.key === 'Escape' && !modal) {
+    if (cancelTokenDrag) { e.preventDefault(); cancelTokenDrag(); return; }
     if (placement) { e.preventDefault(); setPlacement(null); return; }
     if (mapScene.hideEditor()) { e.preventDefault(); return; }
     if (expanded) { e.preventDefault(); expandPanel(expanded); }
@@ -1102,6 +1191,28 @@ $('map-tokens').addEventListener('dblclick', e => {
 $('map-tokens').addEventListener('focusin', e => {
   if (!isPlayerMap && e.target.dataset.token) pickToken(e.target.dataset.token);
 });
+function drawMovementRuler(map, cells, blocked) {
+  const layer = $('movement-ruler');
+  const frame = $('map-frame').getBoundingClientRect(), view = viewport.getBoundingClientRect();
+  const [a, b, c, d, x, y] = boardProjection.matrix;
+  const points = cells.map(cell => {
+    const center = MapGeometry.cellCenter(map, cell.col, cell.row);
+    return { x: (a * center.x + c * center.y) * boardLayout.zoom + x + frame.left - view.left,
+      y: (b * center.x + d * center.y) * boardLayout.zoom + y + frame.top - view.top };
+  });
+  layer.hidden = false;
+  layer.style.left = viewport.scrollLeft + 'px';
+  layer.style.top = viewport.scrollTop + 'px';
+  layer.style.width = viewport.clientWidth + 'px';
+  layer.style.height = viewport.clientHeight + 'px';
+  layer.dataset.blocked = String(blocked);
+  layer.querySelector('polyline').setAttribute('points', points.map(point => `${point.x},${point.y}`).join(' '));
+  const label = layer.querySelector('output');
+  label.textContent = MapGeometry.routeDistance(cells, map.diagonals === 'alternating') + ' фут.' + (blocked ? ' · преграда' : '');
+  const end = points.at(-1);
+  label.style.left = Math.max(0, Math.min(end.x + 10, viewport.clientWidth - label.offsetWidth - 2)) + 'px';
+  label.style.top = Math.max(0, Math.min(end.y - 32, viewport.clientHeight - label.offsetHeight - 2)) + 'px';
+}
 $('map-tokens').addEventListener('pointerdown', e => {
   const token = e.target.closest('[data-token]'); if (!token || isPlayerMap || placement || mapScene.isEditing() || e.button !== 0 || !boardProjection) return;
   const id = token.dataset.token, m = { ...state.map }, z = mapDrawingZoom();
@@ -1112,42 +1223,60 @@ $('map-tokens').addEventListener('pointerdown', e => {
   e.preventDefault(); draggingToken = true; token.classList.add('dragging'); token.setPointerCapture(e.pointerId);
   const context = currentContext();
   const revision = state.revision;
-  const from = MapGeometry.cellCenter(m, original.col, original.row);
   const previewsFog = state.fog.enabled && state.visionOrigins.includes(id);
   const listeners = new AbortController();
   const options = { signal: listeners.signal };
-  let { col, row } = original;
-  let moved = false, blocked = false, previewFrame = 0;
-  const move = event => {
-    const point = mapPointAt(event.clientX, event.clientY);
-    const nextCol = Math.max(0, Math.min(2000, Math.floor((point.x / z - m.offsetX) / m.grid)));
-    const nextRow = Math.max(0, Math.min(2000, Math.floor((point.y / z - m.offsetY) / m.grid)));
-    blocked = MapGeometry.blocked(MapGeometry.blockingWalls(state.terrain), from, MapGeometry.cellCenter(m, nextCol, nextRow));
-    if (blocked || (nextCol === col && nextRow === row)) return;
-    moved = true;
-    col = nextCol;
-    row = nextRow;
-    positionToken(token, m, col, row, z);
-    if ((previewsFog || detached.includes('map')) && !previewFrame) {
+  const waypoints = [];
+  let position = original, cursor = original, moved = false, blocked = false, previewFrame = 0;
+  const mirrors = () => detached.some(panel => panel === 'map' || panel === 'preview');
+  const sameCell = (a, b) => a.col === b.col && a.row === b.row;
+  const refresh = () => {
+    blocked = MapGeometry.routeBlocked(m, MapGeometry.blockingWalls(state.terrain), [original, ...waypoints, cursor]);
+    if (!blocked && !sameCell(position, cursor)) {
+      moved = true;
+      position = cursor;
+    }
+    drawMovementRuler(m, [original, ...waypoints, position], blocked);
+    positionToken(token, m, position.col, position.row, z);
+    if ((previewsFog || mirrors()) && !previewFrame) {
       previewFrame = requestAnimationFrame(() => {
         previewFrame = 0;
-        const preview = { id, col, row };
+        const preview = { id, ...position, waypoints };
         if (previewsFog) mapScene.previewFog(state, boardLayout, preview);
-        if (detached.includes('map')) mirrorMap({ token: preview }, context.expectedMapId);
+        if (mirrors()) mirrorMap({ token: preview }, context.expectedMapId);
       });
     }
+  };
+  const move = event => {
+    const point = mapPointAt(event.clientX, event.clientY);
+    const target = { col: Math.max(0, Math.min(2000, Math.floor((point.x / z - m.offsetX) / m.grid))),
+      row: Math.max(0, Math.min(2000, Math.floor((point.y / z - m.offsetY) / m.grid))) };
+    if (sameCell(target, cursor)) return;
+    cursor = target;
+    refresh();
+  };
+  rulerShortcut = undo => {
+    if (undo && waypoints.length) {
+      waypoints.pop();
+      position = waypoints.at(-1) ?? original;
+    } else if (!undo && waypoints.length < 32 && !sameCell(position, waypoints.at(-1) ?? original)) {
+      waypoints.push({ col: position.col, row: position.row });
+    }
+    refresh();
   };
   const finish = async commit => {
     listeners.abort();
     draggingToken = false; token.classList.remove('dragging');
     cancelTokenDrag = null;
+    rulerShortcut = null;
+    $('movement-ruler').hidden = true;
     cancelAnimationFrame(previewFrame);
-    if (commit && moved) {
-      if (!(await dispatch('token:move', { id, col, row }, context))?.ok) renderMap();
+    if (commit && (waypoints.length || !sameCell(position, original))) {
+      if (!(await dispatch('token:move', { id, col: position.col, row: position.row, waypoints }, context))?.ok) renderMap();
     }
     else if (moved || revision !== state.revision) renderMap();
     if (commit && blocked) toast('Проход перекрыт');
-    if (detached.includes('map')) mirrorMap({ token: null }, context.expectedMapId);
+    if (mirrors()) mirrorMap({ token: null }, context.expectedMapId);
   };
   const cancel = () => finish(false);
   cancelTokenDrag = cancel;
@@ -1217,6 +1346,11 @@ $('updates').onclick = () => result(api.update(currentUpdate?.phase === 'availab
 api.onStatus(status => {
   if (status.scope === 'update') { updateUI(status); if (['available', 'downloaded', 'error', 'latest'].includes(status.phase)) toast(status.text); }
   else if (status.scope === 'appearance-theme') renderTheme(status.theme);
+  else if (status.scope === 'player-frame' && isPreview) {
+    previewFrameInfo = status.frame;
+    resizePreview();
+    if (state) renderMap();
+  }
   else if (status.scope === 'music') updateMusicStatus(status);
   else if (status.scope === 'map-focus') focusToken(status.id);
   else if (status.scope === 'map-place' && !detachedPanel) beginPlacement(status.kind, status.id, status);
@@ -1279,7 +1413,8 @@ document.querySelectorAll('.resize-grip').forEach(el => el.addEventListener('poi
 new ResizeObserver(syncRemoteBounds).observe($('workspace'));
 window.addEventListener('resize', syncRemoteBounds);
 function readWindowState(value) {
-  const switched = state?.activeMapId !== value.state.activeMapId;
+  const changingCampaign = !!campaignId && campaignId !== value.campaignId;
+  const switched = changingCampaign || state?.activeMapId !== value.state.activeMapId;
   const rotated = !switched && (state?.map.rotation ?? 0) !== (value.state.map.rotation ?? 0);
   if (switched || state?.activeBattleId !== value.state.activeBattleId) setPlacement(null);
   if (switched) selectedToken = null;
@@ -1293,7 +1428,24 @@ function readWindowState(value) {
     if (!isPlayerMap) masterAutoFit = rotated && expanded !== 'map';
     $('map-world').querySelector('.map-ping')?.remove();
   }
+  if (changingCampaign && !isPlayerMap) {
+    for (const dialog of document.querySelectorAll('dialog[open]:not(#campaign-dialog)')) closeDialog(dialog);
+    selectedImage = previewImage = null;
+    currentFolder = 'Общее';
+    $('audio').pause();
+    delete $('audio').dataset.asset;
+  }
   state = value.state;
+  campaignId = value.campaignId;
+  campaignChoices = value.campaigns;
+  canUndoMap = value.canUndoMap;
+  playerBlackout = value.playerBlackout;
+  $('player-blackout').hidden = !playerBlackout;
+  $('player-settings').setAttribute('aria-pressed', String(playerBlackout));
+  if (isPreview) {
+    previewFrameInfo = value.playerFrame;
+    resizePreview();
+  }
   detached = value.detached;
   presentation = value.presentation;
   recentImages = value.recentImages;
@@ -1323,10 +1475,12 @@ api.onState(value => { readWindowState(value); renderAll(); });
     document.title = title + ' · Ширма мастера';
     if (isPlayerMap) {
       document.body.classList.add('player-map');
+      if (isPreview) document.body.classList.add('preview-screen');
       document.querySelector('.map h1').textContent = 'Карта игроков';
-      document.title = 'Карта игроков · Ширма мастера';
+      document.title = isPreview ? 'Предпросмотр экрана игроков' : 'Карта игроков · Ширма мастера';
       viewport.inert = true;
       $('player-blackout').hidden = !playerBlackout;
+      resizePreview();
     }
   }
   renderAll();

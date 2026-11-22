@@ -333,5 +333,13 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
   new ResizeObserver(() => {
     if (getStory() && viewport.clientWidth) drawRopes();
   }).observe(viewport);
-  return { render };
+  function reveal(id) {
+    const card = cardFor(id);
+    if (!card) return;
+    moveCamera(card.offsetLeft - 16, card.offsetTop - 16);
+    card.classList.add('revealed');
+    card.querySelector('.story-note-title').focus({ preventScroll: true });
+    setTimeout(() => card.classList.remove('revealed'), 1600);
+  }
+  return { render, reveal };
 }
