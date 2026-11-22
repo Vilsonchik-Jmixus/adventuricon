@@ -2,15 +2,48 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
   const get = id => document.getElementById(id);
   const view = get('map-viewport'), toolbar = get('terrain-toolbar');
   const overlay = get('terrain-preview'), fogLayer = get('map-fog');
+  const ink = get('map-drawings'), strokes = get('map-strokes'), previewStroke = get('map-draft-stroke');
   const tools = toolbar.querySelectorAll('[data-terrain-tool]');
   let editing = false, tool = 'select', selected = null, draft = null, acceptedMap;
-  let lightsKey = '', fogKey = '', visible = new Set();
+  let lightsKey = '', inkKey = '', fogKey = '', visible = new Set(), cancelPen;
   const labels = {
     select: 'Выбери объект щелчком',
     wall: 'Проведи стену между двумя точками · Shift без привязки',
     door: 'Проведи дверь в проёме · Shift без привязки',
     light: 'Потяни от источника, чтобы задать радиус',
+    pen: 'Веди мышью по карте, чтобы рисовать',
+    eraser: 'Щёлкни по линии, чтобы стереть её',
   };
+
+  function penPath(points) {
+    const line = points.map(({ x, y }) => `${x} ${y}`).join(' L ');
+    return `M ${line}${points.length === 1 ? ' h .1' : ''}`;
+  }
+
+  function renderDrawings(drawings, layout) {
+    ink.setAttribute('viewBox', `0 0 ${layout.width / layout.zoom} ${layout.height / layout.zoom}`);
+    const key = JSON.stringify(drawings);
+    if (key === inkKey) return;
+    inkKey = key;
+    const svg = 'http://www.w3.org/2000/svg';
+    strokes.replaceChildren(...drawings.map(stroke => {
+      const group = document.createElementNS(svg, 'g');
+      const line = document.createElementNS(svg, 'path');
+      line.setAttribute('d', penPath(stroke.points));
+      line.setAttribute('stroke', stroke.color);
+      line.setAttribute('stroke-width', stroke.width);
+      group.append(line);
+      if (!readOnly) {
+        const hit = line.cloneNode();
+        hit.setAttribute('class', 'map-stroke-hit');
+        hit.setAttribute('stroke', 'transparent');
+        hit.setAttribute('stroke-width', Math.max(stroke.width, 14));
+        hit.dataset.mapStroke = stroke.id;
+        group.append(hit);
+      }
+      return group;
+    }));
+  }
 
   function prepareCanvas(canvas, width, height) {
     const scale = Math.min(1, 1800 / Math.max(width, height));
@@ -65,7 +98,7 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
   }
 
   function renderFog(state, walls, preview, width, height) {
-    fogLayer.hidden = !readOnly || !state.fog.enabled;
+    fogLayer.hidden = !state.fog.enabled;
     if (fogLayer.hidden) { fogKey = ''; visible = new Set(); return; }
     const origins = state.tokens.filter(token => state.visionOrigins.includes(token.combatantId)).map(token =>
       token.combatantId === preview?.id ? preview : token);
@@ -100,6 +133,8 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
     const item = terrain.find(object => object.id === selected);
     toolbar.hidden = !editing;
     view.classList.toggle('terrain-editing', editing);
+    view.classList.toggle('erasing-map', editing && tool === 'eraser');
+    get('map-pen-options').hidden = !editing || tool !== 'pen';
     get('edit-terrain').setAttribute('aria-pressed', String(editing));
     get('terrain-hint').textContent = labels[tool];
     get('terrain-remove').hidden = !item;
@@ -111,8 +146,16 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
 
   function render(state, layout, preview) {
     const terrain = state.terrain, walls = MapGeometry.blockingWalls(terrain.filter(item => item.kind !== 'light'));
-    if (acceptedMap !== state.activeMapId) { acceptedMap = state.activeMapId; selected = draft = null; }
-    if (editing && !isExpanded()) { editing = false; selected = draft = null; }
+    if (acceptedMap !== state.activeMapId) {
+      cancelPen?.();
+      acceptedMap = state.activeMapId;
+      selected = draft = null;
+    }
+    if (editing && !isExpanded()) {
+      cancelPen?.();
+      editing = false;
+      selected = draft = null;
+    }
     get('edit-terrain').hidden = readOnly;
     get('toggle-fog').hidden = readOnly;
     get('toggle-fog').setAttribute('aria-pressed', String(state.fog.enabled));
@@ -120,13 +163,14 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
     get('fog-reset').disabled = !state.fog.explored.length;
     syncEditor(terrain);
     renderLights(terrain, walls, layout.zoom);
+    renderDrawings(state.drawings, layout);
     renderEditor(terrain);
     renderFog(state, walls, preview, layout.width / layout.zoom, layout.height / layout.zoom);
     get('map-items').replaceChildren(...terrain.filter(item => {
       if (item.kind !== 'item') return false;
       const { grid, offsetX, offsetY } = state.map;
       const col = Math.floor((item.a.x - offsetX) / grid), row = Math.floor((item.a.y - offsetY) / grid);
-      return fogLayer.hidden || visible.has(`${col},${row}`);
+      return !readOnly || fogLayer.hidden || visible.has(`${col},${row}`);
     }).map(item => {
       const marker = document.createElement('div'), icon = document.createElement('span'), name = document.createElement('span');
       marker.className = 'scene-item';
@@ -164,6 +208,7 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
   }
 
   function setEditing(value) {
+    cancelPen?.();
     editing = value;
     tool = 'select';
     selected = draft = null;
@@ -184,6 +229,45 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
     event.preventDefault();
     view.focus({ preventScroll: true });
     const point = getPoint(event), state = getState();
+    if (tool === 'eraser') {
+      const id = event.target.closest('[data-map-stroke]')?.dataset.mapStroke;
+      if (id) dispatch('map:erase', { id }, context);
+      return true;
+    }
+    if (tool === 'pen') {
+      if (cancelPen) return true;
+      const start = snap(point, true);
+      if (point.x !== start.x || point.y !== start.y) return true;
+      const points = [start], color = get('map-pen-color').value, width = Number(get('map-pen-width').value);
+      const controller = new AbortController(), options = { signal: controller.signal };
+      const pointer = event.pointerId;
+      cancelPen = () => {
+        controller.abort();
+        previewStroke.removeAttribute('d');
+        if (view.hasPointerCapture(pointer)) view.releasePointerCapture(pointer);
+        cancelPen = null;
+      };
+      previewStroke.setAttribute('stroke', color);
+      previewStroke.setAttribute('stroke-width', width);
+      previewStroke.setAttribute('d', penPath(points));
+      view.setPointerCapture(pointer);
+      const collect = e => {
+        const end = snap(getPoint(e), true);
+        const last = points.at(-1);
+        if (points.length < 2000 && Math.hypot(end.x - last.x, end.y - last.y) >= 1) points.push(end);
+        previewStroke.setAttribute('d', penPath(points));
+      };
+      view.addEventListener('pointermove', e => { if (e.pointerId === pointer) collect(e); }, options);
+      view.addEventListener('pointercancel', e => { if (e.pointerId === pointer) cancelPen(); }, options);
+      view.addEventListener('lostpointercapture', e => { if (e.pointerId === pointer) cancelPen(); }, options);
+      view.addEventListener('pointerup', e => {
+        if (e.pointerId !== pointer) return;
+        collect(e);
+        cancelPen();
+        dispatch('map:draw', { points, color, width }, context);
+      }, options);
+      return true;
+    }
     if (tool === 'select') {
       const threshold = Math.max(5, Math.min(22, state.map.grid / 4));
       const nearest = state.terrain.map(item => {
@@ -248,9 +332,19 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
     if (confirm('Сбросить открытые области на этой карте?')) dispatch('fog:reset');
   };
   tools.forEach(button => {
-    button.onclick = () => { tool = button.dataset.terrainTool; selected = null; syncEditor(getState().terrain); renderEditor(); };
+    button.onclick = () => {
+      cancelPen?.();
+      tool = button.dataset.terrainTool;
+      selected = null;
+      syncEditor(getState().terrain);
+      renderEditor();
+    };
   });
 
-  return { render, pointerDown, toggleFog, hideEditor: () => editing && (setEditing(false), true),
+  function previewFog(state, layout, preview) {
+    renderFog(state, MapGeometry.blockingWalls(state.terrain), preview, layout.width / layout.zoom, layout.height / layout.zoom);
+  }
+
+  return { render, pointerDown, toggleFog, previewFog, hideEditor: () => editing && (setEditing(false), true),
     isEditing: () => editing, tokenVisible: token => fogLayer.hidden || visible.has(`${token.col},${token.row}`) };
 }

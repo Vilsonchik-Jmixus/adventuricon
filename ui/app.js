@@ -381,11 +381,7 @@ document.addEventListener('click', async e => {
   else if (button.dataset.tokenRemove) {
     const id = button.dataset.tokenRemove;
     if (e.shiftKey) await result(api.showToken(id));
-    else {
-      removal = { id, context: currentContext() };
-      $('remove-token-name').textContent = state.combatants.find(actor => actor.id === id)?.name ?? '';
-      openDialog('remove-token-dialog');
-    }
+    else askRemoveToken(id);
   }
   else if (button.dataset.libraryBattle) await dispatch('library:deploy', { id: button.dataset.libraryBattle });
   else if (button.dataset.libraryMap) {
@@ -525,6 +521,13 @@ function renderLibrary() {
 }
 $('open-library').onclick = () => { renderLibrary(); openDialog('library-dialog'); };
 $('create-character-template').onclick = () => openCombatantEditor(null, true);
+function askRemoveToken(id) {
+  const actor = state.mapCombatants.find(entry => entry.id === id);
+  if (!actor) return;
+  removal = { id, context: currentContext() };
+  $('remove-token-name').textContent = actor.name;
+  openDialog('remove-token-dialog');
+}
 $('confirm-remove-token').onclick = () => {
   const { id, context } = removal;
   closeDialog($('remove-token-dialog'));
@@ -1063,7 +1066,10 @@ document.addEventListener('keydown', e => {
     } else loadMap(api.pasteImage());
   }
 });
-$('map-tokens').addEventListener('dblclick', e => { const token = e.target.closest('[data-token]'); if (token && !isPlayerMap) dispatch('token:remove', { id: token.dataset.token }); });
+$('map-tokens').addEventListener('dblclick', e => {
+  const token = e.target.closest('[data-token]');
+  if (token && !isPlayerMap && !placement && !mapScene.isEditing()) askRemoveToken(token.dataset.token);
+});
 $('map-tokens').addEventListener('focusin', e => {
   if (!isPlayerMap && e.target.dataset.token) pickToken(e.target.dataset.token);
 });
@@ -1076,7 +1082,11 @@ $('map-tokens').addEventListener('pointerdown', e => {
   pickToken(id);
   e.preventDefault(); draggingToken = true; token.classList.add('dragging'); token.setPointerCapture(e.pointerId);
   const context = currentContext();
+  const revision = state.revision;
   const from = MapGeometry.cellCenter(m, original.col, original.row);
+  const previewsFog = state.fog.enabled && state.visionOrigins.includes(id);
+  const listeners = new AbortController();
+  const options = { signal: listeners.signal };
   let { col, row } = original;
   let moved = false, blocked = false, previewFrame = 0;
   const move = event => {
@@ -1089,28 +1099,33 @@ $('map-tokens').addEventListener('pointerdown', e => {
     col = nextCol;
     row = nextRow;
     positionToken(token, m, col, row, z);
-    if (detached.includes('map') && !previewFrame) {
+    if ((previewsFog || detached.includes('map')) && !previewFrame) {
       previewFrame = requestAnimationFrame(() => {
         previewFrame = 0;
-        mirrorMap({ token: { id, col, row } }, context.expectedMapId);
+        const preview = { id, col, row };
+        if (previewsFog) mapScene.previewFog(state, boardLayout, preview);
+        if (detached.includes('map')) mirrorMap({ token: preview }, context.expectedMapId);
       });
     }
   };
-  const stop = async () => {
-    token.removeEventListener('pointermove', move); token.removeEventListener('pointerup', stop); token.removeEventListener('pointercancel', cancel);
+  const finish = async commit => {
+    listeners.abort();
     draggingToken = false; token.classList.remove('dragging');
     cancelTokenDrag = null;
     cancelAnimationFrame(previewFrame);
-    if (moved) {
+    if (commit && moved) {
       if (!(await dispatch('token:move', { id, col, row }, context))?.ok) renderMap();
     }
-    else renderMap();
-    if (blocked) toast('Дальше стена или закрытая дверь');
+    else if (moved || revision !== state.revision) renderMap();
+    if (commit && blocked) toast('Дальше стена или закрытая дверь');
     if (detached.includes('map')) mirrorMap({ token: null }, context.expectedMapId);
   };
-  const cancel = () => { moved = blocked = false; stop(); };
+  const cancel = () => finish(false);
   cancelTokenDrag = cancel;
-  token.addEventListener('pointermove', move); token.addEventListener('pointerup', stop); token.addEventListener('pointercancel', cancel);
+  token.addEventListener('pointermove', move, options);
+  token.addEventListener('pointerup', () => finish(true), options);
+  token.addEventListener('pointercancel', cancel, options);
+  token.addEventListener('lostpointercapture', cancel, options);
 });
 $('import-audio').onclick = async () => { const r = await result(api.importFile('audio')); if (r?.asset) dispatch('music:add', { title: r.title, asset: r.asset, folder: currentFolder }); };
 $('add-folder').onclick = () => askText('Новая папка', 'Название папки', '', async name => { await dispatch('music:folder', { name }); currentFolder = name; renderMusic(); });

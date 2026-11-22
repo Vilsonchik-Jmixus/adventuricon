@@ -66,6 +66,27 @@ async function main() {
   await expect(page.locator('#story-body')).toHaveValue('— Входи.\n— Добрый вечер.');
   await page.getByRole('button', { name: 'Убрать связь с заметкой «Погоня»' }).click();
   await expect(page.locator('.story-rope')).toHaveCount(0);
+  const dialogue = Array.from({ length: 50 }, (_, i) => `— Реплика ${i + 1}.`).join('\n');
+  await page.fill('#story-body', dialogue);
+  await page.locator('#story-form [type="submit"]').click();
+  await expect(page.locator('#story-dialog')).toBeHidden();
+  const body = page.locator('.story-note').filter({ hasText: 'Первая встреча' }).locator('.story-note-body');
+  assert.equal(await body.textContent(), dialogue);
+  assert.ok(await body.evaluate(element => {
+    const card = element.closest('.story-note');
+    const viewport = element.closest('#story-viewport');
+    const last = document.createRange();
+    last.setStart(element.firstChild, element.textContent.lastIndexOf('—'));
+    last.setEndAfter(element.firstChild);
+    viewport.scrollTop = card.offsetTop + card.offsetHeight;
+    const finalLine = last.getBoundingClientRect();
+    const board = viewport.getBoundingClientRect();
+    return card.offsetHeight > viewport.clientHeight &&
+      finalLine.bottom <= card.getBoundingClientRect().bottom &&
+      finalLine.top >= board.top && finalLine.bottom <= board.bottom &&
+      document.elementFromPoint(finalLine.left + 2, finalLine.top + 5) === element;
+  }), 'the final line is rendered and reachable by scrolling the board');
+  assert.equal((await story(page)).notes[0].y, 180);
   console.log('Story cards, movable ropes, pencil, eraser and campaign reload passed.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => app?.close());

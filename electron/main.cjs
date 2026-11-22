@@ -53,8 +53,8 @@ function windowState(owner, view = activeView(state)) {
     return {
       state: { activeMapId: view.activeMapId, map: view.map, tokens: view.tokens,
         mapCombatants: playerMapActors(view.mapCombatants, view.map.playerHealth !== false),
-        visionOrigins: view.mapCombatants.filter(actor => actor.role === 'player' && actor.hp > 0).map(actor => actor.id),
-        terrain: view.terrain, fog: view.fog, turn: view.turn },
+        visionOrigins: view.visionOrigins,
+        terrain: view.terrain, drawings: view.drawings, fog: view.fog, turn: view.turn },
       detached: ['map'], presentation, recentImages: [], mapCamera
     };
   }
@@ -305,7 +305,7 @@ function setupIPC() {
   handle('dispatch', (event, action) => {
     if (event.sender === windows.get('map')?.webContents) throw new Error('Экраном управляет мастер');
     if (!action || typeof action.type !== 'string') throw new Error('Неверная команда');
-    const limit = ['story:save', 'story:draw'].includes(action.type) ? 125000 : 10000;
+    const limit = ['story:save', 'story:draw', 'map:draw'].includes(action.type) ? 125000 : 10000;
     if (JSON.stringify(action).length > limit) throw new Error('Неверная команда');
     if (['map:image', 'combatant:add', 'combatant:edit', 'library:save', 'terrain:add', 'terrain:edit-item'].includes(action.type) && action.payload?.image) assetName(action.payload.image);
     if (action.type === 'music:add') assetName(action.payload?.asset);

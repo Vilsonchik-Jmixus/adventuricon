@@ -4,7 +4,6 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
   const cards = get('story-cards'), ropes = get('story-ropes'), strokes = get('story-strokes');
   const draftPath = get('story-draft'), message = get('story-instruction');
   const dialog = get('story-dialog');
-  const width = 214, height = 132;
   let tool = 'move', source = null, gesture, ignoreClick = false;
   let editing, newPosition, lastRender;
 
@@ -24,11 +23,14 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
     if (points.length === 1) return `M ${points[0].join(' ')} h .1`;
     return 'M ' + points.map(point => point.join(' ')).join(' L ');
   }
-  function center(note) { return { x: note.x + width / 2, y: note.y + height / 2 }; }
+  function cardBounds(card) {
+    return { x: card.offsetLeft, y: card.offsetTop, width: card.offsetWidth, height: card.offsetHeight };
+  }
+  function center({ x, y, width, height }) { return { x: x + width / 2, y: y + height / 2 }; }
   function edgeOf(note, target) {
     const origin = center(note), dx = target.x - origin.x, dy = target.y - origin.y;
     if (dx === 0 && dy === 0) return origin;
-    const ratio = Math.min(width / (2 * Math.abs(dx)), height / (2 * Math.abs(dy)));
+    const ratio = Math.min(note.width / (2 * Math.abs(dx)), note.height / (2 * Math.abs(dy)));
     return { x: origin.x + dx * ratio, y: origin.y + dy * ratio };
   }
   function ropePath(a, b) {
@@ -36,21 +38,20 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
     return `M ${a.x} ${a.y} Q ${(a.x + b.x) / 2} ${(a.y + b.y) / 2 + sag} ${b.x} ${b.y}`;
   }
   function drawRopes() {
-    const { notes, links } = getStory();
-    const nodes = new Map(notes.map(note => [note.id, note]));
-    if (gesture?.kind === 'move' && gesture.position) nodes.set(gesture.id, gesture.position);
+    const { links } = getStory();
+    const nodes = new Map(Array.from(cards.children, card => [card.dataset.storyNote, cardBounds(card)]));
     ropes.replaceChildren(...links.flatMap(link => {
       const a = nodes.get(link.from), b = nodes.get(link.to);
       return a && b ? [pathElement(ropePath(edgeOf(a, center(b)), edgeOf(b, center(a))), 'story-rope')] : [];
     }));
   }
   function resizeWorld() {
-    const { notes, strokes: marks } = getStory();
+    const { strokes: marks } = getStory();
     let right = 0, bottom = 0;
-    for (const stored of notes) {
-      const note = gesture?.kind === 'move' && gesture.id === stored.id && gesture.position ? gesture.position : stored;
-      right = Math.max(right, note.x + width);
-      bottom = Math.max(bottom, note.y + height);
+    for (const card of cards.children) {
+      const { x, y, width, height } = cardBounds(card);
+      right = Math.max(right, x + width);
+      bottom = Math.max(bottom, y + height);
     }
     for (const mark of marks) for (const [x, y] of mark.points) {
       right = Math.max(right, x + mark.width);
@@ -90,6 +91,25 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
     card.style.left = note.x + 'px';
     card.style.top = note.y + 'px';
   }
+  function createCard(note) {
+    const card = document.createElement('article'), title = document.createElement('button');
+    const body = document.createElement('p'), pin = document.createElement('button');
+    card.className = 'story-note';
+    card.dataset.storyNote = note.id;
+    placeCard(card, note);
+    title.type = 'button';
+    title.className = 'story-note-title';
+    title.title = 'Щёлкни для редактирования, потяни для перемещения';
+    title.textContent = note.title;
+    body.className = 'story-note-body';
+    body.textContent = note.body;
+    pin.type = 'button';
+    pin.className = 'story-pin';
+    pin.title = 'Потяни к другой карточке, чтобы связать';
+    pin.setAttribute('aria-label', 'Связать заметку «' + note.title + '»');
+    card.append(title, body, pin);
+    return card;
+  }
   function render() {
     if (gesture) return;
     const story = getStory();
@@ -98,25 +118,7 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
     if (lastRender === signature) { resizeWorld(); return; }
     lastRender = signature;
     const focused = document.activeElement?.closest('[data-story-note]')?.dataset.storyNote;
-    cards.replaceChildren(...story.notes.map(note => {
-      const card = document.createElement('article'), title = document.createElement('button');
-      const body = document.createElement('p'), pin = document.createElement('button');
-      card.className = 'story-note';
-      card.dataset.storyNote = note.id;
-      placeCard(card, note);
-      title.type = 'button';
-      title.className = 'story-note-title';
-      title.title = 'Щёлкни для редактирования, потяни для перемещения';
-      title.textContent = note.title;
-      body.className = 'story-note-body';
-      body.textContent = note.body;
-      pin.type = 'button';
-      pin.className = 'story-pin';
-      pin.title = 'Потяни к другой карточке, чтобы связать';
-      pin.setAttribute('aria-label', 'Связать заметку «' + note.title + '»');
-      card.append(title, body, pin);
-      return card;
-    }));
+    cards.replaceChildren(...story.notes.map(createCard));
     strokes.replaceChildren(...story.strokes.flatMap(mark => {
       const d = drawStroke(mark.points), path = pathElement(d, 'story-mark'), hit = pathElement(d, 'story-hit');
       path.style.stroke = mark.color;
@@ -133,21 +135,28 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
     if (focused) cardFor(focused)?.querySelector('.story-note-title').focus({ preventScroll: true });
     if (dialog.open) fillLinks();
   }
-  function firstFreePosition() {
+  function firstFreePosition(fields) {
     const left = viewport.scrollLeft + 16, top = viewport.scrollTop + 16;
+    const all = Array.from(cards.children, cardBounds);
+    const candidate = createCard({ ...fields, id: '', x: 0, y: 0 });
+    candidate.style.visibility = 'hidden';
+    cards.append(candidate);
+    const { width, height } = cardBounds(candidate);
+    candidate.remove();
     const columns = Math.max(1, Math.floor(viewport.clientWidth / (width + 20)));
-    const all = getStory().notes;
     let index = 0, x, y;
     do {
       x = left + index % columns * (width + 20);
       y = top + Math.floor(index / columns) * (height + 20);
       index++;
-    } while (all.some(note => Math.abs(note.x - x) < width + 8 && Math.abs(note.y - y) < height + 8));
+    } while (y < 12000 && all.some(note =>
+      x < note.x + note.width + 8 && x + width + 8 > note.x &&
+      y < note.y + note.height + 8 && y + height + 8 > note.y));
     return { x, y };
   }
   function edit(note, position) {
     editing = note?.id ?? null;
-    newPosition = position ?? (note ? null : firstFreePosition());
+    newPosition = position;
     get('story-title').value = note?.title ?? '';
     get('story-body').value = note?.body ?? '';
     get('story-delete').hidden = !note;
@@ -162,9 +171,9 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
   get('story-add').onclick = () => edit();
   get('story-form').onsubmit = async event => {
     event.preventDefault();
-    const response = await dispatch('story:save', {
-      id: editing, ...newPosition, title: get('story-title').value, body: get('story-body').value,
-    });
+    const fields = { title: get('story-title').value, body: get('story-body').value };
+    const position = editing ? null : newPosition ?? firstFreePosition(fields);
+    const response = await dispatch('story:save', { id: editing, ...position, ...fields });
     if (response?.ok) closeDialog(dialog);
   };
   get('story-delete').onclick = async () => {
@@ -210,7 +219,7 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
     gesture.moved ||= Math.hypot(dx, dy) > 3;
     if (gesture.kind === 'link' && gesture.moved) {
       draftPath.setAttribute('class', 'story-rope-preview');
-      draftPath.setAttribute('d', ropePath(edgeOf(gesture.note, point), point));
+      draftPath.setAttribute('d', ropePath(edgeOf(cardBounds(gesture.card), point), point));
     }
     if (gesture.kind === 'move' && gesture.moved) {
       const { note, offset, card } = gesture;
@@ -293,6 +302,11 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
       updateControls();
     }
   });
-  new ResizeObserver(() => { if (getStory() && viewport.clientWidth) resizeWorld(); }).observe(viewport);
+  new ResizeObserver(() => {
+    if (getStory() && viewport.clientWidth) {
+      resizeWorld();
+      drawRopes();
+    }
+  }).observe(viewport);
   return { render };
 }

@@ -26,6 +26,7 @@ const CONDITIONS = [
 const MANUAL_IDS = new Set(CONDITIONS.filter(item => item.id !== 'exhaustion').map(item => item.id));
 const roleOf = value => Object.hasOwn(ROLES, value) ? value : 'enemy';
 const mayShareHp = actor => roleOf(actor.role) !== 'enemy';
+const revealsFog = actor => mayShareHp(actor) && actor.hp > 0;
 function effectsFor(actor) {
   const active = new Set(actor.conditions ?? []);
   if (actor.hp === 0) active.add('unconscious');
@@ -41,4 +42,4 @@ function playerMapActors(actors, shareHealth) {
     ...(shareHealth && mayShareHp({ role }) ? { hp, maxHp } : {})
   }));
 }
-module.exports = { ROLES, CONDITIONS, MANUAL_IDS, roleOf, effectsFor, playerMapActors };
+module.exports = { ROLES, CONDITIONS, MANUAL_IDS, roleOf, effectsFor, playerMapActors, revealsFog };

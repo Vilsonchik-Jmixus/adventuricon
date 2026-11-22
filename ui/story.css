@@ -39,7 +39,7 @@
 .story-note {
   position: absolute;
   width: 214px;
-  height: 132px;
+  min-height: 132px;
   pointer-events: auto;
   background: #3f2a1f;
   border: 1px solid #956846;
@@ -49,11 +49,10 @@
 .story-note.moving, .story-note:focus-within { z-index: 2; }
 .story-note.connecting { border-color: #f0be83; box-shadow: 0 0 0 1px #f0be83; }
 .story-note-title {
+  display: block;
   width: 100%;
   padding: 6px 8px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   cursor: grab;
   background: #65412b;
   border: 0;
@@ -67,14 +66,10 @@
 .story-note.moving .story-note-title { cursor: grabbing; }
 .story-note-body {
   margin: 7px 9px;
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 12px;
-  line-height: 17px;
+  font-size: 13px;
+  line-height: 19px;
 }
 .story-pin {
   position: absolute;

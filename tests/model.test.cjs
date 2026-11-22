@@ -35,6 +35,23 @@ test('HP commands, bounds and invalid expressions', () => {
   assert.throws(() => hpValue(12, 20, '7+4'));
   assert.throws(() => hpValue(12, 20, 'NaN'));
 });
+test('Map drawings migrate, stay attached to their map and can be erased from a copy', () => {
+  const previous = initialState();
+  delete previous.boards[0].drawings;
+  let s = migrateState(previous);
+  const act = (type, payload) => { s = reducer(s, { type, payload }); return activeView(s); };
+  const original = s.activeMapId;
+  assert.deepEqual(activeView(s).drawings, []);
+  const points = [{ x: 25, y: 40 }, { x: 70, y: 45 }];
+  const [stroke] = act('map:draw', { points, expectedMapId: original, color: '#e7354c', width: 12 }).drawings;
+  const copy = act('map:duplicate', {}).activeMapId;
+  assert.notEqual(copy, original);
+  assert.deepEqual(activeView(s).drawings, [stroke]);
+  assert.throws(() => act('map:draw', { points, expectedMapId: original }), /Карта переключилась/);
+  assert.deepEqual(act('map:erase', { id: stroke.id, expectedMapId: copy }).drawings, []);
+  s = migrateState(JSON.parse(JSON.stringify(s)));
+  assert.deepEqual(act('map:select', { id: original }).drawings, [stroke]);
+});
 test('A combatant can be placed once; occupied cells are skipped', () => {
   let s = initialState();
   for (let i = 0; i < 10; i++) s = reducer(s, { type: 'combatant:add', payload: { name: `Гоблин ${i}`, maxHp: 12 } });

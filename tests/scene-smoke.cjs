@@ -27,6 +27,13 @@ async function drag(page, x1, y1, x2, y2) {
   await page.mouse.move(end.x, end.y, { steps: 6 });
   await page.mouse.up();
 }
+function fogAlpha(page, x, y) {
+  return page.locator('#map-fog').evaluate((canvas, { x, y }) => {
+    const [, , width, height] = document.querySelector('#map-drawings').getAttribute('viewBox').split(' ').map(Number);
+    return canvas.getContext('2d').getImageData(Math.floor(x * canvas.width / width),
+      Math.floor(y * canvas.height / height), 1, 1).data[3];
+  }, { x, y });
+}
 async function main() {
   app = await _electron.launch({ executablePath: require('electron'), args: [path.resolve('.')], env, timeout: 45_000 });
   const master = await app.firstWindow();
@@ -52,7 +59,7 @@ async function main() {
   await master.click('#open-library');
   await master.click('#create-character-template');
   await master.fill('#combatant-form [name="name"]', 'Лучник');
-  await master.selectOption('#combatant-role', 'player');
+  await master.selectOption('#combatant-role', 'ally');
   await master.click('#editor-submit');
   await master.click('[data-library-map]');
   await click(master, 96, 96);
@@ -76,6 +83,20 @@ async function main() {
     }));
   }, target);
   await expect(master.locator('#map-tokens .token')).toHaveCount(1);
+  await master.locator('#map-tokens .token').dblclick();
+  await expect(master.locator('#remove-token-dialog')).toBeVisible();
+  await expect(master.locator('#remove-token-name')).toHaveText('Лучник');
+  await master.keyboard.press('Escape');
+  await expect(master.locator('#map-tokens .token')).toHaveCount(1);
+  const destination = await point(master, 160, 96);
+  await master.mouse.move(target.x, target.y);
+  await master.mouse.down();
+  await master.mouse.move(destination.x, destination.y);
+  await expect(master.locator('#map-tokens .token.dragging')).toHaveCount(1);
+  await master.locator('#map-tokens .token').dispatchEvent('lostpointercapture');
+  await master.mouse.up();
+  await expect(master.locator('#map-tokens .token.dragging')).toHaveCount(0);
+  assert.equal((await state(master)).tokens[0].col, 1);
 
   await master.click('#edit-terrain');
   await expect(master.locator('#terrain-toolbar')).toBeVisible();
@@ -117,15 +138,25 @@ async function main() {
   });
   await drag(master, 96, 96, 160, 96);
   assert.equal((await state(master)).tokens[0].col, 1);
+  await master.click('#edit-terrain');
+  master.once('dialog', dialog => dialog.accept());
+  await master.click('#fog-reset');
+  await master.click('#close-terrain');
   const pending = app.waitForEvent('window');
   await master.click('[data-detach="map"]');
   const player = await pending;
+  await expect(master.locator('#map-fog')).toBeVisible();
   await expect(player.locator('#map-fog')).toBeVisible();
+  for (const view of [master, player]) {
+    await expect.poll(() => fogAlpha(view, 96, 96)).toBe(0);
+    await expect.poll(() => fogAlpha(view, 160, 96)).toBe(255);
+  }
   await expect(player.locator('#map-tokens [aria-label="Скелет"]')).toHaveCount(0);
   await expect(player.locator('.scene-item-name')).toHaveText('Кованый ключ');
   await expect.poll(() => player.locator('.scene-item-icon img').evaluate(img => img.naturalWidth)).toBe(24);
   await master.locator('[data-door-id]').click();
   await expect(player.locator('#map-tokens [aria-label="Скелет"]')).toBeVisible();
+  await expect.poll(() => fogAlpha(player, 160, 96)).toBe(0);
   await drag(master, 96, 96, 160, 96);
   await expect.poll(async () => (await state(master)).tokens[0].col).toBe(2);
   await master.click('#toggle-fog');
@@ -133,12 +164,30 @@ async function main() {
   await master.locator('#map-viewport').focus();
   await master.keyboard.press('f');
   await expect(player.locator('#map-fog')).toBeVisible();
+  await master.click('#edit-terrain');
+  await master.click('[data-terrain-tool="pen"]');
+  await master.fill('#map-pen-color', '#e7354c');
+  await master.selectOption('#map-pen-width', '12');
+  await drag(master, 70, 210, 208, 252);
+  const playerStroke = player.locator('#map-strokes path');
+  await expect(playerStroke).toHaveAttribute('stroke', '#e7354c');
+  await expect(playerStroke).toHaveAttribute('stroke-width', '12');
+  assert.ok((await state(master)).drawings[0].points.length > 2);
+  await master.click('#close-terrain');
   await master.selectOption('#map-select', firstMap);
+  await expect(playerStroke).toHaveCount(0);
   await master.selectOption('#map-select', dungeon);
+  await expect(playerStroke).toHaveCount(1);
   await expect.poll(async () => (await state(master)).tokens[0].col).toBe(2);
   await expect(master.locator('.scene-item-name')).toHaveText('Кованый ключ');
   const saved = JSON.parse(fs.readFileSync(path.join(env.DM_SCREEN_DATA, 'campaign.json'), 'utf8'));
   assert.equal(saved.boards.find(board => board.id === dungeon).tokens[0].col, 2);
+  assert.equal(saved.boards.find(board => board.id === dungeon).drawings[0].color, '#e7354c');
+  await master.click('#edit-terrain');
+  await master.click('[data-terrain-tool="eraser"]');
+  await click(master, 139, 231);
+  await expect(playerStroke).toHaveCount(0);
+  await master.click('#close-terrain');
   assert.equal(saved.library[0].name, 'Лучник');
   const lssFile = path.join(env.DM_SCREEN_DATA, 'hero.json');
   fs.writeFileSync(lssFile, JSON.stringify({ jsonType: 'character', data: JSON.stringify({
