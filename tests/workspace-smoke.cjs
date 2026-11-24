@@ -113,6 +113,8 @@ async function main() {
   await page.screenshot({ path: path.join(directory, 'workspace-wide.png') });
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(965, 680));
   await expect.poll(() => page.evaluate(() => innerWidth)).toBeLessThan(980);
+  await expect(page.locator('#screen-tip')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.fonts.check('12px "Tavern Pixel"'))).toBe(true);
   const visible = await page.evaluate(() => {
     const map = document.querySelector('.map').getBoundingClientRect();
     const left = document.querySelector('.combat').getBoundingClientRect();

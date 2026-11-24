@@ -73,6 +73,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .work-tabs button { border-color: transparent; background: none; font-size: 12px; }
 .work-tabs button[aria-pressed="true"] { background: var(--raised); border-color: var(--line); color: var(--text); }
 .statusbar, [data-theme] .statusbar { background: var(--bg); border-color: var(--line); }
+#version { font: 8px/1 var(--pixel); }
 .portrait-tools { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
 .portrait-tools kbd { margin-left: 3px; color: var(--muted); font: inherit; font-size: .9em; }
 #portrait-status, #story-image-status { color: var(--muted); font-size: 12px; }
@@ -89,7 +90,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 body.player-map .map { border: 0; border-radius: 0; box-shadow: none; }
 
 @media (max-width: 1080px) {
-  #screen-tip { display: none; }
+  #screen-tip { max-width: 25vw; margin-inline: 4px auto; }
   .map .slot-bar { flex-wrap: wrap; }
   .map .slot-bar select { flex-basis: 38%; }
   :is(.combat-toolbar, .map .slot-bar) .control-label { display: none; }
