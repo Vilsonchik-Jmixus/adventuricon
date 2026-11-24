@@ -33,7 +33,8 @@ function effectsFor(actor) {
   if (actor.exhaustion > 0) active.add('exhaustion');
   return CONDITIONS.filter(({ id }) => active.has(id)).map(({ id, name, badge }) => ({
     id, name: id === 'exhaustion' ? `${name} · ${actor.exhaustion}` : name,
-    badge: id === 'exhaustion' ? `${badge} ${actor.exhaustion}` : badge
+    badge: id === 'exhaustion' ? `${badge} ${actor.exhaustion}` : badge,
+    ...(actor.durations?.[id] > 0 ? { rounds: actor.durations[id] } : {})
   }));
 }
 function playerMapActors(actors, shareHealth) {

@@ -3,6 +3,7 @@ function createSessionTools({ getState, getCampaigns, dispatch, campaign, openDi
   const campaignDialog = get('campaign-dialog'), scenesDialog = get('session-scenes');
   const campaignSelect = get('campaign-select'), campaignStatus = get('campaign-status');
   const scenes = get('session-scene-list'), sceneEditor = get('session-scene-edit'), form = get('session-scene-form');
+  const preparationScene = get('preparation-scene'), preparationOpen = get('preparation-open-scene');
   let editingScene;
 
   function renderCampaigns() {
@@ -68,19 +69,31 @@ function createSessionTools({ getState, getCampaigns, dispatch, campaign, openDi
       title.type = edit.type = 'button';
       title.textContent = entry.title;
       title.title = 'Открыть сцену';
-      title.onclick = async () => {
-        if (!(await dispatch('scene:open', { id: entry.id }))?.ok) return;
-        closeDialog(scenesDialog);
-        if (entry.noteId) showNote(entry.noteId);
-      };
-      edit.textContent = '✎';
+      title.onclick = () => openScene(entry);
+      edit.dataset.pixelIcon = 'pen';
       edit.setAttribute('aria-label', 'Изменить сцену ' + entry.title);
       edit.onclick = () => editScene(entry);
       row.append(title, edit);
       return row;
     }));
   }
+  async function openScene(entry) {
+    if (!entry || !(await dispatch('scene:open', { id: entry.id }))?.ok) return;
+    if (scenesDialog.open) closeDialog(scenesDialog);
+    if (entry.noteId) showNote(entry.noteId);
+  }
+  function renderPreparationScenes() {
+    const selected = preparationScene.value, entries = getState().scenes;
+    preparationScene.replaceChildren(new Option(entries.length ? 'Выбери сцену' : 'Пока нет сцен', ''),
+      ...entries.map(entry => new Option(entry.title, entry.id)));
+    preparationScene.value = entries.some(entry => entry.id === selected) ? selected : '';
+    preparationScene.disabled = !entries.length;
+    preparationOpen.disabled = !preparationScene.value;
+  }
   get('open-session-scenes').onclick = () => { renderScenes(); openDialog(scenesDialog.id); };
+  get('preparation-manage-scenes').onclick = get('open-session-scenes').onclick;
+  preparationScene.onchange = () => { preparationOpen.disabled = !preparationScene.value; };
+  preparationOpen.onclick = () => openScene(getState().scenes.find(entry => entry.id === preparationScene.value));
   get('new-session-scene').onclick = () => editScene();
   form.onsubmit = async event => {
     event.preventDefault();
@@ -98,5 +111,6 @@ function createSessionTools({ getState, getCampaigns, dispatch, campaign, openDi
   return { render() {
     if (campaignDialog.open) renderCampaigns();
     if (scenesDialog.open) renderScenes();
+    if (!get('preparation-scenes').hidden) renderPreparationScenes();
   } };
 }

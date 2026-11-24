@@ -192,7 +192,7 @@ let application;
   await expect(page.locator('#initiative-results')).toContainText(/d20 \d+ \+ 4 = \d+/);
   await page.locator('#initiative-dialog [data-close-dialog]').click();
   await page.click('[data-conditions]');
-  await expect(page.locator('#condition-list input')).toHaveCount(14);
+  await expect(page.locator('#condition-list input[type="checkbox"]')).toHaveCount(14);
   await page.check('#condition-list [value="poisoned"]');
   await page.selectOption('#exhaustion-level', '2');
   await page.locator('#condition-form [type="submit"]').click();

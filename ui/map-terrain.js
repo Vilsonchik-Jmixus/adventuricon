@@ -223,7 +223,7 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
         image.src = assetURL(item.image);
         image.alt = '';
         icon.append(image);
-      } else icon.textContent = '◆';
+      } else icon.dataset.pixelIcon = 'bag';
       marker.append(icon, name);
       return marker;
     }));
@@ -243,7 +243,7 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
       button.title = door.open ? 'Закрыть дверь' : 'Открыть дверь';
       button.setAttribute('aria-label', button.title);
       button.setAttribute('aria-pressed', String(door.open));
-      button.textContent = door.open ? '◇' : '◆';
+      button.dataset.pixelIcon = door.open ? 'check' : 'door';
       button.style.left = (door.a.x + door.b.x) / 2 * layout.zoom + 'px';
       button.style.top = (door.a.y + door.b.y) / 2 * layout.zoom + 'px';
       return button;

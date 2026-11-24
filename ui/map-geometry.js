@@ -25,6 +25,9 @@ const MapGeometry = (() => {
     const det = a * d - b * c;
     return { x: (d * (x - dx) - c * (y - dy)) / det, y: (a * (y - dy) - b * (x - dx)) / det };
   }
+  function transform([a, b, c, d, dx, dy], x, y) {
+    return { x: a * x + c * y + dx, y: b * x + d * y + dy };
+  }
   const epsilon = 0.000001;
   const delta = (a, b) => ({ x: b.x - a.x, y: b.y - a.y });
   const cross = (a, b) => a.x * b.y - a.y * b.x;
@@ -106,7 +109,7 @@ const MapGeometry = (() => {
     }
     return visible;
   }
-  return { orientedSize, project, inverse, cellCenter, validCell, routeDistance, routeBlocked,
+  return { orientedSize, project, inverse, transform, cellCenter, validCell, routeDistance, routeBlocked,
     blockingWalls, blocked, lightPolygon, distanceToSegment, visibleCells };
 })();
 if (typeof module !== 'undefined') module.exports = MapGeometry;

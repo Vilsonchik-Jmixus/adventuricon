@@ -19,6 +19,9 @@ const tokenDragType = 'application/x-dm-screen-token';
 let combatRoles = {}, conditionDefinitions = [], conditionEdit, initiativeContext;
 let reference = { tab: 'info', pages: {} };
 let presentation = null, recentImages = [], charactersTab = 'sheets', selectedImage = null, previewImage = null;
+const workspaceTabs = { game: 'sheets', preparation: 'notes' };
+const workspaceMode = () => state?.layout.mode ?? 'game';
+const workspaceSizes = () => workspaceMode() === 'preparation' ? state.layout.preparation : state.layout;
 const assetURL = name => `dm://app/assets/${encodeURIComponent(name)}?campaign=${encodeURIComponent(campaignId ?? 'main')}`;
 const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 function toast(message) { $('toast').textContent = message; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 4500); }
@@ -110,7 +113,7 @@ const noteDraft = imageDraft($('story-dialog'), {
       image.src = assetURL(asset);
       image.alt = `Изображение ${index + 1}`;
       remove.type = 'button';
-      remove.textContent = '×';
+      remove.dataset.pixelIcon = 'trash';
       remove.setAttribute('aria-label', `Убрать изображение ${index + 1}`);
       remove.onclick = () => noteDraft.remove(asset);
       tile.append(image, remove);
@@ -153,8 +156,8 @@ function combatPortrait(c) {
   return `<button class="portrait-button" data-preview-portrait="${c.id}" title="Открыть портрет" aria-label="Открыть портрет: ${escapeHTML(c.name)}">${avatar(c)}</button>`;
 }
 function conditionChips(actor, compact = false) {
-  return actor.effects.map(effect => `<span class="condition-chip" data-condition="${effect.id}" title="${escapeHTML(effect.name)}">
-    ${escapeHTML(compact ? effect.badge : effect.name)}
+  return actor.effects.map(effect => `<span class="condition-chip" data-condition="${effect.id}" title="${escapeHTML(effect.name)}${effect.rounds ? ` · Раундов осталось ${effect.rounds}` : ''}">
+    ${escapeHTML(compact ? effect.badge : effect.name)}${effect.rounds ? ` · ${effect.rounds}` : ''}
   </span>`).join('');
 }
 function rollText(c) {
@@ -168,22 +171,22 @@ function combatCard(c, placed, index, count, acted) {
     acted.has(c.id) && 'Ход завершён'].filter(Boolean);
   return `<article class="combat-card ${state.turn === c.id ? 'active-turn' : ''} ${c.hp === 0 ? 'dead' : ''}" data-id="${c.id}" draggable="true">
     <div class="combat-main">${combatPortrait(c)}<div class="combat-details">
-      <strong class="combat-name">${escapeHTML(c.name)}</strong>
+      <strong class="combat-name" title="${escapeHTML(c.name)}">${escapeHTML(c.name)}</strong>
       <div class="combat-meta" title="${escapeHTML(details.join(' · '))}">${escapeHTML(details.join(' · '))}</div>
     </div><div class="queue-arrows">
-      <button type="button" class="card-menu" data-order-id="${c.id}" data-order-delta="-1" aria-label="Выше в очереди: ${escapeHTML(c.name)}" ${index === 0 ? 'disabled' : ''}>↑</button>
-      <button type="button" class="card-menu" data-order-id="${c.id}" data-order-delta="1" aria-label="Ниже в очереди: ${escapeHTML(c.name)}" ${index + 1 === count ? 'disabled' : ''}>↓</button>
-    </div><button type="button" class="hp-readout" data-edit="${c.id}" title="Изменить ХП">${c.hp}<small> / ${c.maxHp}</small></button></div>
+      <button type="button" class="card-menu" data-order-id="${c.id}" data-order-delta="-1" aria-label="Выше в очереди: ${escapeHTML(c.name)}" ${index === 0 ? 'disabled' : ''} data-pixel-icon="turn"></button>
+      <button type="button" class="card-menu" data-order-id="${c.id}" data-order-delta="1" aria-label="Ниже в очереди: ${escapeHTML(c.name)}" ${index + 1 === count ? 'disabled' : ''} data-pixel-icon="turn"></button>
+    </div><button type="button" class="hp-readout" data-pixel-icon="heart" data-edit="${c.id}" title="Изменить ХП">${c.hp}<small> / ${c.maxHp}</small></button></div>
     <div class="hp-bar"><div style="width:${c.hp / c.maxHp * 100}%"></div></div>
     <div class="combat-bottom">
-      <form class="hp-form" data-id="${c.id}"><input aria-label="Изменение ХП ${escapeHTML(c.name)}" placeholder="−7 / +5" maxlength="12"><button title="Применить ХП">↵</button></form>
-      <button class="to-map" ${placed ? `data-token-remove="${c.id}" title="Убрать с карты · Shift + щелчок показывает жетон"` : `data-token-add="${c.id}" title="Выбрать клетку на карте"`}>${placed ? '✓ На карте' : '◇ На карту'}</button>
-      <button class="card-menu condition-button" data-conditions="${c.id}" title="Состояния" aria-label="Состояния ${escapeHTML(c.name)}">◆</button>
-      <button class="card-menu initiative-value" data-initiative="${c.id}" title="Вписать инициативу" aria-label="Инициатива ${escapeHTML(c.name)}">${c.initiative ?? '—'}</button>
-      ${c.role === 'enemy' ? `<button class="card-menu initiative-icon" data-roll-actor="${c.id}" title="Бросить инициативу" aria-label="Бросить инициативу ${escapeHTML(c.name)}">d20</button>` : ''}
-      <button class="card-menu" data-edit="${c.id}" title="Редактировать участника" aria-label="Редактировать участника">✎</button>
-      <button class="card-menu" data-duplicate="${c.id}" title="Дублировать">⧉</button>
-      <button class="card-menu" data-remove="${c.id}" title="Удалить">×</button>
+      <form class="hp-form" data-id="${c.id}"><input aria-label="Изменение ХП ${escapeHTML(c.name)}" placeholder="−7 / +5" maxlength="12"><button title="Применить ХП" data-pixel-icon="check"></button></form>
+      <button class="to-map" ${placed ? `data-token-remove="${c.id}" title="Убрать с карты · Shift + щелчок показывает жетон"` : `data-token-add="${c.id}" title="Выбрать клетку на карте"`} data-pixel-icon="${placed ? 'check' : 'token'}">${placed ? 'На карте' : 'На карту'}</button>
+      <button class="card-menu condition-button" data-conditions="${c.id}" title="Состояния" aria-label="Состояния ${escapeHTML(c.name)}" data-pixel-icon="shield"></button>
+      <button class="card-menu initiative-value" data-initiative="${c.id}" title="Вписать инициативу" aria-label="Инициатива ${escapeHTML(c.name)}" data-pixel-icon="${c.role === 'enemy' ? 'pen' : 'dice'}">${c.initiative ?? '—'}</button>
+      ${c.role === 'enemy' ? `<button class="card-menu initiative-icon" data-roll-actor="${c.id}" title="Бросить инициативу" aria-label="Бросить инициативу ${escapeHTML(c.name)}" data-pixel-icon="dice"></button>` : ''}
+      <button class="card-menu" data-edit="${c.id}" title="Редактировать участника" aria-label="Редактировать участника" data-pixel-icon="pen"></button>
+      <button class="card-menu" data-duplicate="${c.id}" title="Дублировать" data-pixel-icon="copy"></button>
+      <button class="card-menu" data-remove="${c.id}" title="Удалить" data-pixel-icon="trash"></button>
     </div>
     ${c.effects.length ? `<div class="card-conditions">${conditionChips(c)}</div>` : ''}
   </article>`;
@@ -237,6 +240,16 @@ function renderCombat() {
   const focus = document.activeElement;
   const focused = focus?.closest('.hp-form')?.dataset.id;
   const byId = new Map(state.combatants.map(c => [c.id, c]));
+  const current = byId.get(state.turn);
+  $('current-turn').hidden = !current;
+  if (current) {
+    $('turn-actor').textContent = current.name;
+    $('turn-actor').title = `Ходит ${current.name} · Перейти к карточке`;
+    $('turn-hp').textContent = `${current.hp}/${current.maxHp}`;
+    for (const button of $('current-turn').querySelectorAll('[data-quick-hp]')) {
+      button.disabled = button.dataset.quickHp.startsWith('-') ? current.hp === 0 : current.hp === current.maxHp;
+    }
+  }
   const placed = new Set(state.tokens.map(t => t.combatantId));
   const acted = new Set(state.acted);
   const cards = state.order.flatMap((id, index) => {
@@ -270,7 +283,7 @@ function renderMap() {
   boardLayout = {
     width: (mode === 'follow' ? Math.max(width, ...state.tokens.map(t => (t.col + 2) * m.grid + m.offsetX)) : width) * zoom,
     height: (mode === 'follow' ? Math.max(height, ...state.tokens.map(t => (t.row + 2) * m.grid + m.offsetY)) : height) * zoom,
-    rotation: m.rotation ?? 0, mode, zoom
+    rotation: (isPlayerMap ? m.playerRotation : null) ?? m.rotation ?? 0, mode, zoom
   };
   img.style.width = `${width * zoom}px`; img.style.height = `${height * zoom}px`;
   const world = $('map-world');
@@ -281,6 +294,7 @@ function renderMap() {
   world.style.setProperty('--grid-x', m.offsetX * zoom + 'px'); world.style.setProperty('--grid-y', m.offsetY * zoom + 'px');
   world.style.setProperty('--grid-opacity', m.visible ? m.opacity : 0);
   $('zoom-label').textContent = mode === 'follow' ? `${Math.round(zoom * 100)}%` : 'Авто';
+  $('fit-map').setAttribute('aria-pressed', String(mode === 'fit'));
   $('token-count').textContent = state.tokens.length;
   $('player-settings').hidden = !!detachedPanel || !detached.some(id => id === 'map' || id === 'preview');
   $('undo-map').disabled = !canUndoMap;
@@ -290,10 +304,8 @@ function renderMap() {
   renderMapTokens(zoom);
   if (restoreMapCamera && img.complete) {
     restoreMapCamera = false;
-    viewport.scrollTo(
-      mapCamera ? mapCamera.x * zoom - viewport.clientWidth / 2 : 0,
-      mapCamera ? mapCamera.y * zoom - viewport.clientHeight / 2 : 0
-    );
+    if (mapCamera && mode === 'follow') centerMapCamera(mapCamera);
+    else viewport.scrollTo(0, 0);
     if (!isPlayerMap) queueMapCamera();
   }
   if (isPlayerMap) paintPlayerMap();
@@ -337,13 +349,14 @@ function renderMusic() {
   const listKey = JSON.stringify([currentFolder, state.music.current, state.music.folders, state.music.tracks]);
   if (renderedMusic !== listKey) {
     renderedMusic = listKey;
-    $('folders').innerHTML = state.music.folders.map(f => `<button class="folder ${f === currentFolder ? 'selected' : ''}" data-folder="${escapeHTML(f)}">${escapeHTML(f)}</button>`).join('');
+    $('folders').innerHTML = state.music.folders.map(f => `<button class="folder ${f === currentFolder ? 'selected' : ''}" data-folder="${escapeHTML(f)}" data-pixel-icon="folder">${escapeHTML(f)}</button>`).join('');
     const tracks = state.music.tracks.filter(t => t.folder === currentFolder);
-    $('track-list').innerHTML = tracks.length ? tracks.map(t => `<div class="track ${state.music.current === t.id ? 'current' : ''}"><button class="track-play" data-play="${t.id}" title="Воспроизвести">▶</button><span class="track-title" title="${escapeHTML(t.title)}">${escapeHTML(t.title)}</span><select data-move-track="${t.id}" aria-label="Папка трека">${state.music.folders.map(f => `<option ${t.folder === f ? 'selected' : ''}>${escapeHTML(f)}</option>`).join('')}</select><button class="track-delete" data-delete-track="${t.id}" title="Удалить трек">×</button></div>`).join('') : '<div class="empty-state"><strong>В этой папке пока нет треков</strong></div>';
+    $('track-list').innerHTML = tracks.length ? tracks.map(t => `<div class="track ${state.music.current === t.id ? 'current' : ''}"><button class="track-play" data-play="${t.id}" title="Воспроизвести" data-pixel-icon="play"></button><span class="track-title" title="${escapeHTML(t.title)}">${escapeHTML(t.title)}</span><select data-move-track="${t.id}" aria-label="Папка трека">${state.music.folders.map(f => `<option ${t.folder === f ? 'selected' : ''}>${escapeHTML(f)}</option>`).join('')}</select><button class="track-delete" data-delete-track="${t.id}" title="Удалить трек" data-pixel-icon="trash"></button></div>`).join('') : '<div class="empty-state"><strong>В этой папке пока нет треков</strong></div>';
   }
   const current = state.music.tracks.find(t => t.id === state.music.current);
   $('current-title').textContent = current?.title || 'Выберите трек';
-  $('play-pause').textContent = state.music.playing ? 'Ⅱ' : '▶';
+  $('play-pause').dataset.pixelIcon = state.music.playing ? 'pause' : 'play';
+  $('play-pause').setAttribute('aria-label', state.music.playing ? 'Пауза' : 'Воспроизвести');
   $('loop-music').classList.toggle('enabled', state.music.loop);
   if (document.activeElement !== $('volume')) $('volume').value = state.music.volume * 100;
   // One permanent audio owner prevents double playback when the music panel detaches.
@@ -366,12 +379,32 @@ function renderMusic() {
     }
   }
 }
-function renderLayout() {
-  const w = $('workspace'); w.style.setProperty('--left', state.layout.left + '%'); w.style.setProperty('--middle', state.layout.middle + '%'); w.style.setProperty('--top', state.layout.top + '%');
+function renderDetachedPanels() {
   document.querySelectorAll('[data-panel]').forEach(panel =>
     panel.classList.toggle('is-detached', !detachedPanel && panel.dataset.panel !== 'map' &&
       !(panel.dataset.panel === 'characters' && charactersTab !== 'sheets') && detached.includes(panel.dataset.panel)));
 }
+function renderLayout() {
+  const w = $('workspace'), sizes = workspaceSizes();
+  w.style.setProperty('--left', sizes.left + '%');
+  w.style.setProperty('--middle', sizes.middle + '%');
+  w.style.setProperty('--top', sizes.top + '%');
+  if (!detachedPanel && w.dataset.mode !== workspaceMode()) {
+    w.dataset.mode = workspaceMode();
+    $('workspace-modes').hidden = false;
+    $('preparation-scenes').hidden = workspaceMode() !== 'preparation';
+    document.querySelectorAll('[data-workspace-mode]').forEach(button =>
+      button.setAttribute('aria-pressed', String(button.dataset.workspaceMode === workspaceMode())));
+    selectCharacters(workspaceTabs[workspaceMode()]);
+  }
+  renderDetachedPanels();
+}
+$('workspace-modes').addEventListener('click', async event => {
+  const mode = event.target.closest('[data-workspace-mode]')?.dataset.workspaceMode;
+  if (!mode || mode === workspaceMode()) return;
+  if (expanded) await expandPanel(expanded);
+  await dispatch('layout:mode', { mode });
+});
 function renderAll() {
   if (isPlayerMap) {
     renderMap();
@@ -410,7 +443,8 @@ function renderReference() {
   const drag = $('drag-dnd-card');
   drag.hidden = !card;
   if (card) {
-    drag.textContent = card.kind === 'creature' ? 'В бой ↗' : 'На карту ↗';
+    drag.textContent = card.kind === 'creature' ? 'В бой' : 'На карту';
+    drag.dataset.pixelIcon = card.kind === 'creature' ? 'swords' : 'bag';
     drag.title = card.kind === 'creature' ? 'Добавить или перетащить существо в трекер'
       : 'Добавить или перетащить предмет на карту';
   }
@@ -426,7 +460,7 @@ function renderBookmarks() {
   $('bookmarks-empty').hidden = !!state.bookmarks.length;
   $('bookmarks-list').innerHTML = state.bookmarks.map(item => `<div class="bookmark-row">
     <button type="button" class="quiet" data-bookmark="${item.id}" title="${escapeHTML(item.url)}">${escapeHTML(item.title)}</button>
-    <button type="button" class="quiet" data-remove-bookmark="${item.id}" aria-label="Удалить закладку: ${escapeHTML(item.title)}">×</button>
+    <button type="button" class="quiet" data-remove-bookmark="${item.id}" aria-label="Удалить закладку: ${escapeHTML(item.title)}" data-pixel-icon="trash"></button>
   </div>`).join('');
 }
 $('reference-form').onsubmit = async event => {
@@ -598,12 +632,13 @@ document.addEventListener('click', async e => {
 const storyBoard = createStoryBoard({ getStory: () => state?.story, dispatch, openDialog, closeDialog, assetURL, imageDraft: noteDraft });
 function selectCharacters(tab) {
   charactersTab = tab;
+  if (!detachedPanel) workspaceTabs[workspaceMode()] = tab;
   for (const [id, panel] of [['sheets', 'sheet-content'], ['gallery', 'gallery'], ['notes', 'story']]) {
     const selected = id === tab;
     $(`show-${id}`).setAttribute('aria-pressed', String(selected));
     $(panel).hidden = !selected;
   }
-  renderLayout();
+  renderDetachedPanels();
   if (tab === 'gallery') renderGallery();
   if (tab === 'notes') storyBoard.render();
   syncRemoteBounds();
@@ -716,10 +751,10 @@ function renderLibrary() {
     <div class="library-entry">${avatar(entry)}<div class="library-name">
       <b>${escapeHTML(entry.name)}</b><small>${escapeHTML(combatRoles[entry.role])} · ${entry.maxHp} ХП</small>
     </div>
-    <button type="button" data-library-battle="${entry.id}">В бой</button>
-    <button type="button" data-library-map="${entry.id}">На карту</button>
-    <button type="button" class="card-menu" data-library-edit="${entry.id}" aria-label="Редактировать заготовку">✎</button>
-    <button type="button" class="card-menu" data-library-remove="${entry.id}" aria-label="Удалить заготовку">×</button>
+    <button type="button" data-library-battle="${entry.id}" data-pixel-icon="swords">В бой</button>
+    <button type="button" data-library-map="${entry.id}" data-pixel-icon="map">На карту</button>
+    <button type="button" class="card-menu" data-library-edit="${entry.id}" aria-label="Редактировать заготовку" data-pixel-icon="pen"></button>
+    <button type="button" class="card-menu" data-library-remove="${entry.id}" aria-label="Удалить заготовку" data-pixel-icon="trash"></button>
     </div>`).join('');
 }
 $('open-library').onclick = () => { renderLibrary(); openDialog('library-dialog'); };
@@ -896,7 +931,7 @@ $('combat-list').addEventListener('input', event => {
 });
 $('combat-search').oninput = renderCombat;
 $('combat-role-filter').onchange = renderCombat;
-$('jump-to-turn').onclick = () => {
+function jumpToTurn() {
   if (!state.turn) return;
   const selector = `.combat-card[data-id="${CSS.escape(state.turn)}"] .initiative-value`;
   if (!$('combat-list').querySelector(selector)) {
@@ -904,7 +939,12 @@ $('jump-to-turn').onclick = () => {
     renderCombat();
   }
   $('combat-list').querySelector(selector)?.focus();
-};
+}
+$('jump-to-turn').onclick = $('turn-actor').onclick = jumpToTurn;
+$('current-turn').addEventListener('click', event => {
+  const expression = event.target.closest('[data-quick-hp]')?.dataset.quickHp;
+  if (expression && state.turn) dispatch('combatant:hp', { id: state.turn, expression });
+});
 $('next-turn').onclick = () => dispatch('combat:next');
 $('reset-order').onclick = () => dispatch('combat:sort');
 function renderInitiative() {
@@ -946,17 +986,26 @@ function openConditions(id) {
   $('condition-actor').textContent = actor.name;
   $('auto-unconscious').hidden = actor.hp !== 0;
   $('exhaustion-level').value = actor.exhaustion ?? 0;
+  $('exhaustion-duration').value = actor.durations?.exhaustion ?? '';
+  $('exhaustion-duration').disabled = !actor.exhaustion;
   const selected = new Set(actor.conditions ?? []);
   $('condition-list').innerHTML = conditionDefinitions.filter(effect => effect.id !== 'exhaustion').map(effect =>
-    `<label class="checkbox-label"><input type="checkbox" name="condition" value="${effect.id}" ${selected.has(effect.id) ? 'checked' : ''}> ${escapeHTML(effect.name)}</label>`
+    `<div class="condition-duration"><label class="checkbox-label"><input type="checkbox" name="condition" value="${effect.id}" ${selected.has(effect.id) ? 'checked' : ''}> ${escapeHTML(effect.name)}</label><input type="number" name="duration-${effect.id}" data-duration min="1" max="99" placeholder="—" aria-label="Раундов для состояния ${escapeHTML(effect.name)}" value="${Number(actor.durations?.[effect.id]) || ''}" ${selected.has(effect.id) ? '' : 'disabled'}></div>`
   ).join('');
   openDialog('condition-dialog');
 }
+$('condition-list').onchange = event => {
+  if (event.target.name === 'condition') event.target.closest('.condition-duration').querySelector('[data-duration]').disabled = !event.target.checked;
+};
+$('exhaustion-level').onchange = event => { $('exhaustion-duration').disabled = event.target.value === '0'; };
 $('condition-form').onsubmit = async event => {
   event.preventDefault();
   const data = new FormData(event.target);
+  const conditions = data.getAll('condition'), exhaustion = Number($('exhaustion-level').value);
+  const durations = Object.fromEntries(conditions.map(id => [id, Number(data.get('duration-' + id))]));
+  if (exhaustion) durations.exhaustion = Number(data.get('exhaustion-duration'));
   const response = await dispatch('combatant:conditions', {
-    id: conditionEdit.id, conditions: data.getAll('condition'), exhaustion: Number($('exhaustion-level').value)
+    id: conditionEdit.id, conditions, exhaustion, durations
   }, conditionEdit.context);
   if (response?.ok) closeDialog($('condition-dialog'));
 };
@@ -1100,7 +1149,7 @@ function renderNotePins(zoom) {
     const button = document.createElement('button');
     button.type = 'button';
     button.dataset.notePin = pin.id;
-    button.textContent = '✎';
+    button.dataset.pixelIcon = 'scroll';
     button.title = notes.get(pin.noteId) + ' · ПКМ — убрать метку';
     button.setAttribute('aria-label', notes.get(pin.noteId));
     button.style.left = pin.x * zoom + 'px';
@@ -1151,19 +1200,23 @@ function queueMapCamera() {
   const mapId = state.activeMapId;
   pendingMapFrame = requestAnimationFrame(() => {
     pendingMapFrame = 0;
-    if (mapId !== state.activeMapId || mapMode() !== 'follow' || !viewport.clientWidth || !viewport.clientHeight) return;
-    const zoom = state.map.zoom;
-    mirrorMap({ camera: {
-      x: (viewport.scrollLeft + viewport.clientWidth / 2) / zoom,
-      y: (viewport.scrollTop + viewport.clientHeight / 2) / zoom
-    } }, mapId);
+    if (mapId !== state.activeMapId || !boardProjection || mapMode() !== 'follow' || !viewport.clientWidth || !viewport.clientHeight) return;
+    // Share the center in image coordinates so each window can project it through its own rotation.
+    const center = MapGeometry.inverse(boardProjection.matrix,
+      viewport.scrollLeft + viewport.clientWidth / 2, viewport.scrollTop + viewport.clientHeight / 2);
+    mirrorMap({ camera: { x: center.x / boardLayout.zoom, y: center.y / boardLayout.zoom } }, mapId);
   });
+}
+function centerMapCamera(camera) {
+  if (!boardProjection) return;
+  const { x, y } = MapGeometry.transform(boardProjection.matrix, camera.x * boardLayout.zoom, camera.y * boardLayout.zoom);
+  viewport.scrollTo(x - viewport.clientWidth / 2, y - viewport.clientHeight / 2);
 }
 function paintPlayerMap() {
   if (!state) return;
   const zoom = mapDrawingZoom();
   layoutMap();
-  if (mapMode() === 'follow' && mapCamera) viewport.scrollTo(mapCamera.x * zoom - viewport.clientWidth / 2, mapCamera.y * zoom - viewport.clientHeight / 2);
+  if (mapMode() === 'follow' && mapCamera) centerMapCamera(mapCamera);
   if (!previewToken) return;
   const token = [...$('map-tokens').children].find(button => button.dataset.token === previewToken.id);
   if (token) positionToken(token, state.map, previewToken.col, previewToken.row, zoom);
@@ -1228,11 +1281,8 @@ async function changeZoom(factor, anchorX = viewport.clientWidth / 2, anchorY = 
   expandedMapMode = 'follow';
   const response = await dispatch('map:settings', { zoom });
   if (response?.ok && request === zoomRequest && mapId === state.activeMapId) {
-    const [aa, bb, cc, dd, dx, dy] = boardProjection.matrix;
-    const x = original.x / oldZoom * zoom;
-    const y = original.y / oldZoom * zoom;
-    viewport.scrollLeft = aa * x + cc * y + dx - anchorX;
-    viewport.scrollTop = bb * x + dd * y + dy - anchorY;
+    const { x, y } = MapGeometry.transform(boardProjection.matrix, original.x / oldZoom * zoom, original.y / oldZoom * zoom);
+    viewport.scrollTo(x - anchorX, y - anchorY);
     queueMapCamera();
   }
 }
@@ -1249,6 +1299,9 @@ function rotateMap(delta) {
 }
 $('rotate-map-left').onclick = () => rotateMap(-90);
 $('rotate-map-right').onclick = () => rotateMap(90);
+const rotatePlayerMap = delta => result(api.rotatePlayerMap(delta, currentContext()));
+$('rotate-player-left').onclick = () => rotatePlayerMap(-90);
+$('rotate-player-right').onclick = () => rotatePlayerMap(90);
 viewport.addEventListener('wheel', e => {
   if (isPlayerMap) { e.preventDefault(); return; }
   if (!e.ctrlKey) return;
@@ -1301,10 +1354,17 @@ $('player-settings').onclick = () => {
   $('toggle-player-health').checked = state.map.playerHealth !== false;
   $('toggle-player-blackout').checked = playerBlackout;
   $('player-fit').value = state.map.playerFit ?? 'fill';
+  $('player-rotation').value = state.map.playerRotation ?? '';
   openDialog('player-dialog');
 };
 $('toggle-player-health').onchange = e => dispatch('map:settings', { playerHealth: e.target.checked }, playerSettingsContext);
 $('player-fit').onchange = e => dispatch('map:settings', { playerFit: e.target.value }, playerSettingsContext);
+$('player-rotation').onchange = async e => {
+  const value = e.target.value;
+  if (!(await dispatch('map:settings', { playerRotation: value === '' ? null : Number(value) }, playerSettingsContext))?.ok) {
+    e.target.value = state.map.playerRotation ?? '';
+  }
+};
 $('toggle-player-blackout').onchange = e => {
   playerBlackout = e.target.checked;
   $('player-settings').setAttribute('aria-pressed', String(playerBlackout));
@@ -1335,6 +1395,12 @@ viewport.addEventListener('drop', async e => {
 });
 document.addEventListener('keydown', e => {
   const modal = document.querySelector('dialog[open]');
+  if (isPlayerMap && !isPreview && !modal && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey &&
+      ['ArrowLeft', 'ArrowRight'].includes(e.key)) {
+    e.preventDefault();
+    if (!e.repeat && state) rotatePlayerMap(e.key === 'ArrowLeft' ? -90 : 90);
+    return;
+  }
   const onMap = !isPlayerMap && !modal && e.target.closest('#map-viewport');
   if (onMap && draggingToken && !e.repeat && e.code === 'KeyF' && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
@@ -1526,7 +1592,14 @@ document.querySelectorAll('dialog').forEach(dialog => {
   });
   dialog.addEventListener('close', () => { startedOnBackdrop = false; syncRemoteBounds(); });
 });
-function updateUI(status) { currentUpdate = status; $('updates').textContent = status.phase === 'available' ? `↓ Версия ${status.version}` : status.phase === 'downloaded' ? '↻ Установить обновление' : ['checking', 'downloading', 'releases'].includes(status.phase) ? status.text : '↻ Обновления'; }
+function updateUI(status) {
+  currentUpdate = status;
+  const button = $('updates');
+  button.dataset.pixelIcon = status.phase === 'available' ? 'download' : status.phase === 'releases' ? 'external' : 'repeat';
+  button.textContent = status.phase === 'available' ? `Версия ${status.version}`
+    : status.phase === 'downloaded' ? 'Установить обновление'
+      : ['checking', 'downloading', 'releases'].includes(status.phase) ? status.text.replace(/\s+↗$/, '') : 'Обновления';
+}
 function updateMusicStatus(status) {
   musicBusy = ['loading', 'stopping'].includes(status.phase);
   $('music-transfer').hidden = !status.text;
@@ -1598,24 +1671,28 @@ function beginResize(e, kind, panel) {
   }
   if (expanded) return;
   e.preventDefault(); const target = e.currentTarget, work = $('workspace'), bounds = work.getBoundingClientRect();
-  const initial = { ...state.layout }; let next = { ...initial }, lastX = e.clientX, lastY = e.clientY;
+  const mode = workspaceMode(), { left, middle, top } = workspaceSizes();
+  const initial = { left, middle, top };
+  const centerPanel = mode === 'preparation' ? 'characters' : 'map';
+  const topRight = mode === 'preparation' ? 'map' : 'characters';
+  let next = { ...initial }, lastX = e.clientX, lastY = e.clientY;
   work.classList.add('dragging'); target.setPointerCapture(e.pointerId);
   const move = event => {
     lastX = event.clientX; lastY = event.clientY;
     const x = (event.clientX - bounds.left) / bounds.width * 100, y = (event.clientY - bounds.top) / bounds.height * 100;
     if (kind === 'left' || (kind === 'corner' && ['combat', 'music'].includes(panel))) next.left = Math.max(18, Math.min(45, x));
     if (kind === 'middle' || (kind === 'corner' && ['characters', 'map', 'info'].includes(panel))) {
-      const width = panel === 'map' || kind === 'middle' ? x - next.left : initial.middle + (event.clientX - e.clientX) / bounds.width * 100;
+      const width = panel === centerPanel || kind === 'middle' ? x - next.left : initial.middle + (event.clientX - e.clientX) / bounds.width * 100;
       next.middle = Math.max(18, Math.min(82 - next.left, width));
     }
-    if (kind === 'top' || (kind === 'corner' && ['combat', 'characters'].includes(panel))) next.top = Math.max(25, Math.min(75, y));
+    if (kind === 'top' || (kind === 'corner' && ['combat', topRight].includes(panel))) next.top = Math.max(25, Math.min(75, y));
     work.style.setProperty('--left', next.left + '%'); work.style.setProperty('--middle', next.middle + '%'); work.style.setProperty('--top', next.top + '%'); syncRemoteBounds();
   };
   const finish = () => {
     target.removeEventListener('pointermove', move); target.removeEventListener('pointerup', finish); target.removeEventListener('pointercancel', cancel);
     work.classList.remove('dragging');
     if (kind === 'corner' && lastX > bounds.right - 45 && lastY > bounds.bottom - 45) { renderLayout(); expandPanel(panel); }
-    else dispatch('layout:settings', next);
+    else dispatch('layout:settings', { ...next, mode });
   };
   const cancel = () => { next = initial; finish(); };
   target.addEventListener('pointermove', move); target.addEventListener('pointerup', finish); target.addEventListener('pointercancel', cancel);
@@ -1629,7 +1706,8 @@ function readWindowState(value) {
   const previous = windowSnapshot;
   const changingCampaign = !!campaignId && campaignId !== value.campaignId;
   const switched = changingCampaign || state?.activeMapId !== value.state.activeMapId;
-  const rotated = !switched && (state?.map.rotation ?? 0) !== (value.state.map.rotation ?? 0);
+  const rotated = !switched && !isPlayerMap && (state?.map.rotation ?? 0) !== (value.state.map.rotation ?? 0);
+  if (switched && $('player-dialog').open) closeDialog($('player-dialog'));
   if (switched || state?.activeBattleId !== value.state.activeBattleId) setPlacement(null);
   if (switched) selectedToken = null;
   if (switched || rotated) {
@@ -1651,6 +1729,7 @@ function readWindowState(value) {
     combatBattle = null;
   }
   state = value.state;
+  if ($('player-dialog').open) $('player-rotation').value = state.map.playerRotation ?? '';
   campaignId = value.campaignId;
   campaignChoices = value.campaigns;
   canUndoMap = value.canUndoMap;
@@ -1696,7 +1775,8 @@ function applyWindowPatch(patch) {
   if (updated('library') && $('library-dialog').open) renderLibrary();
   if ((updated('gallery') || metadata('recentImages')) && charactersTab === 'gallery') renderGallery();
   if (updated('story') && charactersTab === 'notes') storyBoard.render();
-  if (!detachedPanel && (slotsChanged || updated('scenes', 'story', 'music') || metadata('campaigns', 'detached'))) sessionTools.render();
+  if (!detachedPanel && (slotsChanged || before.layout.mode !== next.layout.mode ||
+      updated('scenes', 'story', 'music') || metadata('campaigns', 'detached'))) sessionTools.render();
   if (layoutChanged || slotsChanged) requestAnimationFrame(syncRemoteBounds);
 }
 let initialized = false;
@@ -1714,15 +1794,20 @@ api.onState(value => initialized ? applyWindowPatch(value) : pendingState.push(v
   reference = initial.reference;
   $('combatant-role').replaceChildren(...Object.entries(combatRoles).map(([id, label]) => new Option(label, id)));
   $('combat-role-filter').append(...Object.entries(combatRoles).map(([id, label]) => new Option(label, id)));
+  const referenceIcons = { classes: 'people', races: 'people', spells: 'spark', monsters: 'swords', armor: 'shield',
+    weapons: 'swords', gear: 'bag', items: 'spark', conditions: 'heart' };
   $('reference-links').innerHTML = initial.referenceLinks.map(link =>
-    `<button type="button" data-reference-link="${link.id}" title="${escapeHTML(link.name)}">${escapeHTML(link.name)}</button>`
+    `<button type="button" data-pixel-icon="${referenceIcons[link.id] ?? 'book'}" data-reference-link="${link.id}" title="${escapeHTML(link.name)}">${escapeHTML(link.name)}</button>`
   ).join('');
   playerBlackout = initial.playerBlackout;
   $('version').textContent = `v${initial.version}`;
   if (detachedPanel) {
     document.body.classList.add('detached');
     document.querySelectorAll('[data-panel]').forEach(panel => { panel.hidden = panel.dataset.panel !== detachedPanel; });
-    const dock = document.querySelector(`[data-detach="${detachedPanel}"]`); dock.textContent = '↙'; dock.title = 'Вернуть в ширму';
+    const dock = document.querySelector(`[data-detach="${detachedPanel}"]`);
+    dock.dataset.pixelIcon = 'dock';
+    dock.title = 'Вернуть в ширму';
+    dock.setAttribute('aria-label', dock.title);
     const title = document.querySelector(`[data-panel="${detachedPanel}"] h1`)?.textContent ?? 'Листы персонажей';
     document.title = title + ' · Ширма мастера';
     if (isPlayerMap) {
@@ -1731,6 +1816,7 @@ api.onState(value => initialized ? applyWindowPatch(value) : pendingState.push(v
       document.querySelector('.map h1').textContent = 'Карта игроков';
       document.title = isPreview ? 'Предпросмотр экрана игроков' : 'Карта игроков · Ширма мастера';
       viewport.inert = true;
+      $('rotate-player-left').hidden = $('rotate-player-right').hidden = isPreview;
       $('player-blackout').hidden = !playerBlackout;
       resizePreview();
     }

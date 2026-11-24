@@ -1,0 +1,146 @@
+/* Both atlases use square cells. The icons are decorative; the controls carry their labels. */
+[data-pixel-icon] {
+  --icon-size: 16px;
+  --icon-sheet: url('assets/control-pixels.svg');
+  --icon-columns: 8;
+  --icon-rows: 6;
+}
+[data-pixel-icon]::before {
+  content: '';
+  display: inline-block;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  margin-inline-end: .35em;
+  vertical-align: -.22em;
+  background: var(--icon-sheet) no-repeat;
+  background-size: calc(var(--icon-size) * var(--icon-columns)) calc(var(--icon-size) * var(--icon-rows));
+  background-position: calc(var(--icon-size) * var(--icon-column) * -1) calc(var(--icon-size) * var(--icon-row) * -1);
+  image-rendering: pixelated;
+  filter: drop-shadow(0 1px 1px #0008);
+  transform: var(--icon-transform, none);
+  pointer-events: none;
+}
+[data-pixel-icon]:empty::before { margin: 0; }
+.panel-title h1[data-pixel-icon] { --icon-size: 18px; white-space: nowrap; }
+:where(.hp-readout, #roll-initiative, .zoom-controls button)[data-pixel-icon] { --icon-size: 18px; }
+:where(.card-menu, .work-tabs button, .reference-form button, .queue-arrows button)[data-pixel-icon] { --icon-size: 14px; }
+[data-order-delta="-1"] { --icon-transform: rotate(-90deg); }
+[data-order-delta="1"] { --icon-transform: rotate(90deg); }
+:where(.panel-tools, .zoom-controls, .queue-arrows, .reference-form, .browser-toolbar) button[data-pixel-icon]:empty,
+button.card-menu[data-pixel-icon]:empty { display: inline-grid; place-items: center; }
+:where(.panel-tools, .zoom-controls, .queue-arrows, .reference-form, .browser-toolbar) button[data-pixel-icon][hidden] { display: none; }
+.zoom-controls { gap: 2px; flex: 0 0 auto; }
+.zoom-controls button[data-pixel-icon] { min-width: 26px; min-height: 25px; padding: 2px 3px; }
+.zoom-controls #zoom-label { min-width: 27px; text-align: center; white-space: nowrap; }
+.zoom-controls button[aria-pressed='true'], #screen-fullscreen[aria-pressed='true'] { background: var(--raised); }
+body:not(.player-map) .map-toolbar { flex-wrap: wrap; height: auto; min-height: 32px; padding-block: 3px; }
+.work-tabs { flex-wrap: wrap; }
+.characters .panel-head { height: auto; min-height: var(--panel-heading); }
+#reference-links button { --icon-size: 13px; }
+#player-dialog .player-options { gap: 11px; }
+.hp-form { min-inline-size: 84px; }
+.hp-form input { width: min(100%, 67px); flex: 1 1 0; }
+
+@media (max-width: 1080px) {
+  :where(.app-actions, .slot-bar, .combat-toolbar, .combat-actions, .work-tabs) [data-pixel-icon] { --icon-size: 13px; }
+  #fog-reset[data-pixel-icon]::before, #undo-hp[data-pixel-icon]::before { margin-inline-end: 0; }
+  .combat-content { gap: 5px; padding: 7px; }
+  .combat-search :is(input, select) { min-height: 26px; }
+  .combat-card { padding: 6px; }
+  .combat-bottom { gap: 3px; }
+  .combat-bottom [data-pixel-icon] { --icon-size: 12px; }
+  .combat-bottom .card-menu { padding-inline: 2px; }
+  .hp-form { min-inline-size: 62px; }
+  .hp-form button { padding-inline: 3px; }
+  .combat-actions .control-label { display: none; }
+  .combat-actions .add-button { flex: 1 0 auto; padding-block: 4px; }
+  .combat-name { font-size: 13px; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal; overflow-wrap: anywhere; }
+  :where(.combat-main .queue-arrows, .folders) [data-pixel-icon] { --icon-size: 12px; padding-inline: 3px; }
+  body:not(.player-map) .map-toolbar { padding-inline: 5px; }
+  .map-toolbar :is(#import-map, #paste-map) { --icon-size: 13px; padding-inline: 4px; font-size: 11px; white-space: nowrap; }
+  .zoom-controls { gap: 1px; }
+  .zoom-controls button[data-pixel-icon] { --icon-size: 16px; min-width: 23px; }
+  .zoom-controls #zoom-label { min-width: 25px; }
+}
+@media (prefers-contrast: more) {
+  [data-pixel-icon]::before { filter: drop-shadow(0 0 1px var(--text)); }
+}
+
+:is([data-pixel-icon="rotate-left"],
+  [data-pixel-icon="rotate-right"],
+  [data-pixel-icon="fit"],
+  [data-pixel-icon="zoom-out"],
+  [data-pixel-icon="zoom-in"],
+  [data-pixel-icon="dice"],
+  [data-pixel-icon="heart"],
+  [data-pixel-icon="swords"],
+  [data-pixel-icon="map"],
+  [data-pixel-icon="book"],
+  [data-pixel-icon="music"],
+  [data-pixel-icon="scroll"],
+  [data-pixel-icon="image"],
+  [data-pixel-icon="people"],
+  [data-pixel-icon="lantern"],
+  [data-pixel-icon="gear"]) {
+  --icon-sheet: url('assets/tavern-toolbar.png');
+  --icon-columns: 4;
+  --icon-rows: 4;
+}
+[data-pixel-icon="campaign"] { --icon-column: 0; --icon-row: 0; }
+[data-pixel-icon="scene"] { --icon-column: 1; --icon-row: 0; }
+[data-pixel-icon="eye"] { --icon-column: 2; --icon-row: 0; }
+[data-pixel-icon="fog"] { --icon-column: 3; --icon-row: 0; }
+[data-pixel-icon="pen"] { --icon-column: 4; --icon-row: 0; }
+[data-pixel-icon="wall"] { --icon-column: 5; --icon-row: 0; }
+[data-pixel-icon="door"] { --icon-column: 6; --icon-row: 0; }
+[data-pixel-icon="window"] { --icon-column: 7; --icon-row: 0; }
+[data-pixel-icon="erase"] { --icon-column: 0; --icon-row: 1; }
+[data-pixel-icon="cursor"] { --icon-column: 1; --icon-row: 1; }
+[data-pixel-icon="token"] { --icon-column: 2; --icon-row: 1; }
+[data-pixel-icon="bag"] { --icon-column: 3; --icon-row: 1; }
+[data-pixel-icon="pin"] { --icon-column: 4; --icon-row: 1; }
+[data-pixel-icon="grid"] { --icon-column: 5; --icon-row: 1; }
+[data-pixel-icon="play"] { --icon-column: 6; --icon-row: 1; }
+[data-pixel-icon="pause"] { --icon-column: 7; --icon-row: 1; }
+[data-pixel-icon="stop"] { --icon-column: 0; --icon-row: 2; }
+[data-pixel-icon="repeat"] { --icon-column: 1; --icon-row: 2; }
+[data-pixel-icon="plus"] { --icon-column: 2; --icon-row: 2; }
+[data-pixel-icon="undo"] { --icon-column: 3; --icon-row: 2; }
+[data-pixel-icon="turn"] { --icon-column: 4; --icon-row: 2; }
+[data-pixel-icon="sort"] { --icon-column: 5; --icon-row: 2; }
+[data-pixel-icon="close"] { --icon-column: 6; --icon-row: 2; }
+[data-pixel-icon="copy"] { --icon-column: 7; --icon-row: 2; }
+[data-pixel-icon="download"] { --icon-column: 0; --icon-row: 3; }
+[data-pixel-icon="external"] { --icon-column: 1; --icon-row: 3; }
+[data-pixel-icon="expand"] { --icon-column: 2; --icon-row: 3; }
+[data-pixel-icon="dock"] { --icon-column: 3; --icon-row: 3; }
+[data-pixel-icon="star"] { --icon-column: 4; --icon-row: 3; }
+[data-pixel-icon="link"] { --icon-column: 5; --icon-row: 3; }
+[data-pixel-icon="search"] { --icon-column: 6; --icon-row: 3; }
+[data-pixel-icon="web"] { --icon-column: 7; --icon-row: 3; }
+[data-pixel-icon="shield"] { --icon-column: 0; --icon-row: 4; }
+[data-pixel-icon="trash"] { --icon-column: 1; --icon-row: 4; }
+[data-pixel-icon="check"] { --icon-column: 2; --icon-row: 4; }
+[data-pixel-icon="info"] { --icon-column: 3; --icon-row: 4; }
+[data-pixel-icon="upload"] { --icon-column: 4; --icon-row: 4; }
+[data-pixel-icon="clipboard"] { --icon-column: 5; --icon-row: 4; }
+[data-pixel-icon="folder"] { --icon-column: 6; --icon-row: 4; }
+[data-pixel-icon="clock"] { --icon-column: 7; --icon-row: 4; }
+[data-pixel-icon="spark"] { --icon-column: 0; --icon-row: 5; }
+[data-pixel-icon="screen"] { --icon-column: 1; --icon-row: 5; }
+[data-pixel-icon="rotate-left"] { --icon-column: 0; --icon-row: 0; }
+[data-pixel-icon="rotate-right"] { --icon-column: 1; --icon-row: 0; }
+[data-pixel-icon="fit"] { --icon-column: 2; --icon-row: 0; }
+[data-pixel-icon="zoom-out"] { --icon-column: 3; --icon-row: 0; }
+[data-pixel-icon="zoom-in"] { --icon-column: 0; --icon-row: 1; }
+[data-pixel-icon="dice"] { --icon-column: 1; --icon-row: 1; }
+[data-pixel-icon="heart"] { --icon-column: 2; --icon-row: 1; }
+[data-pixel-icon="swords"] { --icon-column: 3; --icon-row: 1; }
+[data-pixel-icon="map"] { --icon-column: 0; --icon-row: 2; }
+[data-pixel-icon="book"] { --icon-column: 1; --icon-row: 2; }
+[data-pixel-icon="music"] { --icon-column: 2; --icon-row: 2; }
+[data-pixel-icon="scroll"] { --icon-column: 3; --icon-row: 2; }
+[data-pixel-icon="image"] { --icon-column: 0; --icon-row: 3; }
+[data-pixel-icon="people"] { --icon-column: 1; --icon-row: 3; }
+[data-pixel-icon="lantern"] { --icon-column: 2; --icon-row: 3; }
+[data-pixel-icon="gear"] { --icon-column: 3; --icon-row: 3; }

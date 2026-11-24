@@ -7,6 +7,39 @@ const MapGeometry = require('../ui/map-geometry.js');
 const { readCharacter } = require('../electron/lss-import.cjs');
 const { encodeCampaign } = require('../electron/campaigns.cjs');
 const { publicDndUrl } = require('../electron/dnd-import.cjs');
+test('Workspace presets retain separate sizes after switching and reloading an older layout', () => {
+  let state = migrateState({ ...initialState(), layout: { left: 31, middle: 36, top: 56, windows: {} } });
+  const act = (type, payload) => { state = reducer(state, { type, payload }); };
+  act('layout:mode', { mode: 'preparation' });
+  act('layout:settings', { left: 27, middle: 43, top: 62 });
+  act('layout:mode', { mode: 'game' });
+  act('layout:settings', { left: 34 });
+  const layout = migrateState(JSON.parse(encodeCampaign(state))).layout;
+  assert.equal(layout.mode, 'game');
+  assert.deepEqual([layout.left, layout.middle, layout.top], [34, 36, 56]);
+  assert.deepEqual(layout.preparation, { left: 27, middle: 43, top: 62 });
+});
+test('Conditions count completed rounds, keep permanent effects and survive save and initiative reset', () => {
+  let state = initialState();
+  const act = (type, payload) => { state = reducer(state, { type, payload }); };
+  act('combatant:add', { name: 'Мира' });
+  act('combatant:add', { name: 'Страж' });
+  const [first] = activeView(state).combatants;
+  act('combatant:conditions', { id: first.id, conditions: ['prone', 'poisoned'], exhaustion: 2,
+    durations: { prone: 2, exhaustion: 1, blinded: 1 } });
+  act('combat:next');
+  act('combat:next');
+  assert.deepEqual(activeView(state).combatants[0].durations, { prone: 2, exhaustion: 1 });
+  act('combat:next');
+  assert.deepEqual(activeView(state).combatants[0].durations, { prone: 1 });
+  assert.equal(activeView(state).combatants[0].exhaustion, 0);
+  state = migrateState(JSON.parse(encodeCampaign(state)));
+  act('combat:reset-initiative');
+  assert.equal(activeView(state).combatants[0].effects.find(effect => effect.id === 'prone').rounds, 1);
+  for (let i = 0; i < 3; i++) act('combat:next');
+  assert.deepEqual(activeView(state).combatants[0].conditions, ['poisoned']);
+  assert.deepEqual(activeView(state).combatants[0].durations, {});
+});
 test('Story cards, connections and drawings survive reload while deleting a card removes its links', () => {
   let s = migrateState({ ...initialState(), story: undefined });
   const act = (type, payload) => { s = reducer(s, { type, payload }); return activeView(s).story; };

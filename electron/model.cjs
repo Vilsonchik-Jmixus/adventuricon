@@ -7,6 +7,12 @@ const text = (v, max = 120) => String(v ?? '').trim().slice(0, max);
 const newFog = (enabled = false) => ({ enabled, explored: [] });
 const newStory = () => ({ notes: [], links: [], strokes: [] });
 const storyCoordinate = n => clamp(Math.round(finite(n, 0)), -1000000, 1000000);
+const gameSizes = { left: 32, middle: 34, top: 52 };
+const preparationSizes = { left: 25, middle: 46, top: 58 };
+function restoreLayout(saved = {}) {
+  return { ...gameSizes, windows: {}, ...saved, mode: saved.mode === 'preparation' ? 'preparation' : 'game',
+    preparation: { ...preparationSizes, ...saved.preparation } };
+}
 function newBattle(title = 'Первый бой') {
   return { id: randomUUID(), title, linkedMapId: null, combatants: [], round: 1, turn: null, acted: [], manualOrder: null, history: [] };
 }
@@ -22,7 +28,7 @@ function initialState() {
     schema: 2, revision: 0, battles: [battle], boards: [board],
     activeBattleId: battle.id, activeMapId: board.id, gallery: [], bookmarks: [], library: [], story: newStory(), scenes: [],
     music: { folders: ['Общее', 'Бой', 'Атмосфера'], tracks: [], current: null, playing: false, volume: 0.55, loop: true },
-    layout: { left: 32, middle: 34, top: 52, windows: {} }
+    layout: restoreLayout()
   };
 }
 function migrateState(saved) {
@@ -33,7 +39,7 @@ function migrateState(saved) {
         !saved.boards.some(board => board.id === saved.activeMapId)) {
       throw new Error('Бои или карты повреждены');
     }
-    return { ...saved, battles: saved.battles.map(restoreRound), bookmarks: Array.isArray(saved.bookmarks) ? saved.bookmarks : [],
+    return { ...saved, layout: restoreLayout(saved.layout), battles: saved.battles.map(restoreRound), bookmarks: Array.isArray(saved.bookmarks) ? saved.bookmarks : [],
       library: Array.isArray(saved.library) ? saved.library : [],
       story: { ...newStory(), ...saved.story },
       scenes: Array.isArray(saved.scenes) ? saved.scenes : [],
@@ -47,7 +53,7 @@ function migrateState(saved) {
     combatants, round: round ?? 1, turn: turn ?? null, history: history ?? [] });
   const board = { ...newBoard('Текущая карта'), map, tokens };
   return {
-    ...base, schema: 2, gallery: gallery ?? [], bookmarks: [], library: [], story: newStory(), scenes: [],
+    ...base, schema: 2, layout: restoreLayout(base.layout), gallery: gallery ?? [], bookmarks: [], library: [], story: newStory(), scenes: [],
     battles: [battle], boards: [board], activeBattleId: battle.id, activeMapId: board.id
   };
 }
@@ -132,7 +138,23 @@ function rememberHealth(battle, combatant) {
 }
 const initiativeBonus = (value, fallback = 0) => clamp(Math.round(finite(value, fallback)), -50, 50);
 function copyCombatant(c, name = c.name) {
-  return { ...c, id: randomUUID(), name, hp: c.maxHp, conditions: [], exhaustion: 0, initiativeRoll: null };
+  return { ...c, id: randomUUID(), name, hp: c.maxHp, conditions: [], durations: {}, exhaustion: 0, initiativeRoll: null };
+}
+function conditionDurations(actor, durations) {
+  const ids = actor.exhaustion > 0 ? [...actor.conditions, 'exhaustion'] : actor.conditions;
+  return Object.fromEntries(ids.flatMap(id => {
+    const rounds = durations?.[id];
+    return Number.isInteger(rounds) && rounds >= 1 && rounds <= 99 ? [[id, rounds]] : [];
+  }));
+}
+function advanceConditions(actor) {
+  if (!actor.durations || !Object.keys(actor.durations).length) return actor;
+  const next = { ...actor, conditions: actor.conditions.filter(id => actor.durations[id] !== 1),
+    exhaustion: actor.durations.exhaustion === 1 ? 0 : actor.exhaustion };
+  next.durations = conditionDurations(next, Object.fromEntries(
+    Object.entries(actor.durations).map(([id, rounds]) => [id, rounds - 1])
+  ));
+  return next;
 }
 function characterFields(p) {
   return { name: text(p.name) || 'Безымянный', image: text(p.image, 100) || null,
@@ -224,7 +246,10 @@ function copyForAction(state, type, p) {
     return s;
   }
   if (['music:settings', 'music:play', 'music:stop'].includes(type)) { s.music = { ...state.music }; return s; }
-  if (type.startsWith('layout:')) { s.layout = { ...state.layout, windows: { ...state.layout.windows } }; return s; }
+  if (type.startsWith('layout:')) {
+    s.layout = { ...state.layout, windows: { ...state.layout.windows }, preparation: { ...preparationSizes, ...state.layout.preparation } };
+    return s;
+  }
   return structuredClone(state);
 }
 function reducer(state, action) {
@@ -416,6 +441,7 @@ function reducer(state, action) {
       if (!c) throw new Error('Участник уже удалён');
       c.conditions = [...new Set(Array.isArray(p.conditions) ? p.conditions.filter(id => MANUAL_IDS.has(id)) : [])];
       c.exhaustion = clamp(Math.round(finite(p.exhaustion, 0)), 0, 6);
+      c.durations = conditionDurations(c, Object.hasOwn(p, 'durations') ? p.durations : c.durations);
       break;
     }
     case 'combat:roll-initiative': {
@@ -473,6 +499,9 @@ function reducer(state, action) {
         battle.round++;
         battle.acted = [];
         battle.turn = order[0];
+        if (battle.combatants.some(actor => actor.durations && Object.keys(actor.durations).length)) {
+          battle.combatants = battle.combatants.map(advanceConditions);
+        }
       }
       break;
     }
@@ -557,6 +586,7 @@ function reducer(state, action) {
       if (typeof p.visible === 'boolean') board.map.visible = p.visible;
       if (typeof p.playerHealth === 'boolean') board.map.playerHealth = p.playerHealth;
       if (['fit', 'fill', 'follow'].includes(p.playerFit)) board.map.playerFit = p.playerFit;
+      if ([null, 0, 90, 180, 270].includes(p.playerRotation)) board.map.playerRotation = p.playerRotation;
       if (['equal', 'alternating'].includes(p.diagonals)) board.map.diagonals = p.diagonals;
       if ([0, 90, 180, 270].includes(p.rotation)) board.map.rotation = p.rotation;
       if (/^#[0-9a-f]{6}$/i.test(p.color)) board.map.color = p.color;
@@ -661,10 +691,18 @@ function reducer(state, action) {
       if (typeof p.loop === 'boolean') s.music.loop = p.loop;
       if ('volume' in p) s.music.volume = clamp(finite(p.volume, 0.55), 0, 1); break;
     case 'music:stop': s.music.playing = false; s.music.reset = (s.music.reset || 0) + 1; break;
-    case 'layout:settings':
-      if ('left' in p) s.layout.left = clamp(finite(p.left, 32), 18, 45);
-      if ('middle' in p) s.layout.middle = clamp(finite(p.middle, 34), 18, 82 - s.layout.left);
-      if ('top' in p) s.layout.top = clamp(finite(p.top, 52), 25, 75); break;
+    case 'layout:mode':
+      if (!['game', 'preparation'].includes(p.mode)) throw new Error('Неизвестная раскладка');
+      s.layout.mode = p.mode;
+      break;
+    case 'layout:settings': {
+      const preparation = (p.mode ?? s.layout.mode) === 'preparation';
+      const size = preparation ? s.layout.preparation : s.layout;
+      if ('left' in p) size.left = clamp(finite(p.left, size.left), 18, 45);
+      if ('middle' in p || 'left' in p) size.middle = clamp(finite(p.middle, size.middle), 18, 82 - size.left);
+      if ('top' in p) size.top = clamp(finite(p.top, size.top), 25, 75);
+      break;
+    }
     case 'layout:window':
       if (['combat', 'music', 'map', 'info', 'characters'].includes(p.id)) s.layout.windows[p.id] = p.bounds || null; break;
     default: throw new Error('Неизвестная команда');

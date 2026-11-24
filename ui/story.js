@@ -74,7 +74,7 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetUR
       const row = document.createElement('div'), name = document.createElement('span'), remove = document.createElement('button');
       name.textContent = other.title;
       remove.type = 'button';
-      remove.textContent = '×';
+      remove.dataset.pixelIcon = 'trash';
       remove.dataset.storyUnlink = link.id;
       remove.setAttribute('aria-label', 'Убрать связь с заметкой «' + other.title + '»');
       row.append(name, remove);

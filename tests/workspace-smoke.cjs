@@ -99,6 +99,48 @@ async function main() {
   await expect(page.locator('#round')).toHaveText('Раунд 1 · 0/2');
   await expect(page.locator('.initiative-value')).toHaveText(['—', '—']);
   await expect(page.locator('#map-tokens .token')).toHaveCount(2);
+  await page.click('#next-turn');
+  await expect(page.locator('#turn-actor')).toHaveText('Мира');
+  await page.click('[data-quick-hp="-5"]');
+  await expect(page.locator('#turn-hp')).toHaveText('7/12');
+  await page.click('[data-quick-hp="+1"]');
+  await expect(page.locator('#turn-hp')).toHaveText('8/12');
+  await page.click('#undo-hp');
+  await expect(page.locator('#turn-hp')).toHaveText('7/12');
+  await page.locator('.combat-card', { hasText: 'Мира' }).locator('[data-conditions]').click();
+  await page.check('#condition-list [value="poisoned"]');
+  await page.fill('[name="duration-poisoned"]', '2');
+  await page.locator('#condition-form [type="submit"]').click();
+  const poison = page.locator('.combat-card [data-condition="poisoned"]');
+  await expect(poison).toContainText('2');
+  await page.click('#next-turn');
+  await expect(poison).toContainText('2');
+  await page.click('#next-turn');
+  await expect(poison).toContainText('1');
+  await page.click('#next-turn');
+  await page.click('#next-turn');
+  await expect(poison).toHaveCount(0);
+  await page.evaluate(() => dm.dispatch('combat:reset-initiative', {}));
+  await expect(page.locator('#current-turn')).toBeHidden();
+
+  await page.evaluate(async () => {
+    const { state } = await dm.init();
+    await dm.dispatch('scene:save', { title: 'Пристань', noteId: state.story.notes[0].id });
+  });
+  await page.click('[data-workspace-mode="preparation"]');
+  await expect(page.locator('#workspace')).toHaveAttribute('data-mode', 'preparation');
+  await expect(page.locator('#story')).toBeVisible();
+  await expect(page.locator('#preparation-scene')).toBeVisible();
+  await page.selectOption('#preparation-scene', { label: 'Пристань' });
+  await page.click('#preparation-open-scene');
+  await expect(page.locator('.story-note.revealed')).toContainText('Карта сокровищ');
+  await page.evaluate(() => dm.dispatch('layout:settings', { left: 28, middle: 42, top: 60 }));
+  await expect.poll(() => page.locator('#workspace').evaluate(el => el.style.getPropertyValue('--middle'))).toBe('42%');
+  await page.click('[data-workspace-mode="game"]');
+  await expect.poll(() => page.locator('#workspace').evaluate(el => el.style.getPropertyValue('--middle'))).toBe('34%');
+  await page.click('[data-workspace-mode="preparation"]');
+  await expect.poll(() => page.locator('#workspace').evaluate(el => el.style.getPropertyValue('--middle'))).toBe('42%');
+  await page.click('[data-workspace-mode="game"]');
 
   const patch = await page.evaluate(async () => {
     const stable = ['.combat-card', '.token', '.story-note', '.story-note-image'].map(selector => [selector, document.querySelector(selector)]);
@@ -138,7 +180,8 @@ async function main() {
   await loaded(page.locator('.story-note-image').last());
   await loaded(page.locator('.combat-card', { hasText: 'Лучник' }).locator('img'));
   await expect(page.locator('#round')).toHaveText('Раунд 1 · 0/2');
-  console.log('PASS: clipboard portraits and notes, embedded LSS WebP, initiative reset, roster search, targeted window updates, layout and restart.');
+  assert.deepEqual((await snapshot(page)).layout.preparation, { left: 28, middle: 42, top: 60 });
+  console.log('PASS: portraits and notes, LSS WebP, initiative reset, quick HP and timed effects, saved workspace presets and scene opening.');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => { await app?.close(); });

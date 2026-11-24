@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('dm', {
   placeToken: placement => ipcRenderer.invoke('place-token', placement),
   showPlayers: (source, id) => ipcRenderer.invoke('show-players', { source, id }),
   mirrorMap: preview => ipcRenderer.send('mirror-map', preview),
+  rotatePlayerMap: (delta, context) => ipcRenderer.invoke('rotate-player-map', { ...context, delta }),
   dock: () => ipcRenderer.invoke('dock'),
   fullscreen: () => ipcRenderer.invoke('fullscreen'),
   resizeWindow: bounds => ipcRenderer.send('resize-window', bounds),

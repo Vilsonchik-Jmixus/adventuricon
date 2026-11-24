@@ -144,7 +144,7 @@ function handle(name, fn) {
   ipcMain.handle(name, async (event, payload) => {
     localSender(event);
     try {
-      if (playerSurface(event.sender) && !['init', 'dock', 'fullscreen'].includes(name)) throw new Error('Экраном управляет мастер');
+      if (playerSurface(event.sender) && !['init', 'dock', 'fullscreen', 'rotate-player-map'].includes(name)) throw new Error('Экраном управляет мастер');
       return await fn(event, payload);
     }
     catch (err) { return { ok: false, error: String(err.message || err).slice(0, 400) }; }
@@ -578,6 +578,15 @@ function setupIPC() {
     return { ok: true };
   });
   handle('dock', event => { const w = BrowserWindow.fromWebContents(event.sender); if (w !== mainWindow) w.close(); return { ok: true }; });
+  handle('rotate-player-map', (event, { delta, expectedCampaignId, expectedMapId }) => {
+    if (event.sender !== windows.get('map')?.webContents || ![-90, 90].includes(delta)) {
+      throw new Error('Поворот доступен в окне карты игроков');
+    }
+    if (expectedMapId !== state.activeMapId || expectedCampaignId !== campaigns.index.active) throw new Error('Карта переключилась');
+    const { map } = state.boards.find(board => board.id === state.activeMapId);
+    const playerRotation = ((map.playerRotation ?? map.rotation ?? 0) + delta + 360) % 360;
+    return commit({ type: 'map:settings', payload: { playerRotation, expectedCampaignId, expectedMapId } });
+  });
   ipcMain.on('mirror-map', (event, preview) => {
     if (event.sender !== mainWindow?.webContents || !preview) return;
     if (preview.mapId !== state.activeMapId || (preview.campaignId && preview.campaignId !== campaigns.index.active)) return;
@@ -739,6 +748,7 @@ app.whenReady().then(async () => {
       if (u.hostname !== 'app') return new Response('Forbidden', { status: 403 });
       let file;
       const bundledAssets = ['/assets/demo-map.svg', '/assets/PressStart2P-Regular.ttf', '/assets/welcome-tavern.webp', '/assets/welcome-jingle.wav',
+        '/assets/tavern-toolbar.png', '/assets/control-pixels.svg',
         ...Object.keys(ScreenThemes).map(id => '/' + themeIcon(id))];
       if (u.pathname.startsWith('/assets/') && !bundledAssets.includes(u.pathname)) {
         const campaign = u.searchParams.get('campaign');
@@ -747,7 +757,7 @@ app.whenReady().then(async () => {
       }
       else {
         const allowed = ['index.html', 'app.js', 'map-geometry.js', 'map-terrain.js', 'styles.css', 'tavern.css', 'themes.js', 'themes.css',
-          'ambience.css', 'ambience.js', 'scene.css', 'story.js', 'story.css', 'session.js', 'session.css', 'workspace.css',
+          'ambience.css', 'ambience.js', 'scene.css', 'story.js', 'story.css', 'session.js', 'session.css', 'workspace.css', 'icons.css',
           ...bundledAssets.map(asset => asset.slice(1))];
         const relative = u.pathname.slice(1) || 'index.html';
         if (!allowed.includes(relative)) return new Response('Not found', { status: 404 });

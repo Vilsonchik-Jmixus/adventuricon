@@ -1,6 +1,6 @@
 {
   "name": "interactive-dm-screen",
-  "version": "2.0.0",
+  "version": "2.5.0",
   "description": "Интерактивная ширма мастера — рабочий стол ведущего D&D",
   "main": "electron/main.cjs",
   "author": "Vilsonchik-Jmixus",
