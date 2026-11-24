@@ -226,7 +226,6 @@ function renderCombat() {
   $('round').title = 'Номер раунда и количество завершённых ходов';
   $('undo-hp').disabled = !state.history.length;
   $('next-turn').disabled = !state.combatants.length;
-  $('jump-to-turn').hidden = !state.turn;
   $('roll-initiative').disabled = !state.combatants.length;
   $('reset-order').hidden = !state.manualOrder;
   if (combatBattle !== state.activeBattleId) {
@@ -940,7 +939,7 @@ function jumpToTurn() {
   }
   $('combat-list').querySelector(selector)?.focus();
 }
-$('jump-to-turn').onclick = $('turn-actor').onclick = jumpToTurn;
+$('turn-actor').onclick = jumpToTurn;
 $('current-turn').addEventListener('click', event => {
   const expression = event.target.closest('[data-quick-hp]')?.dataset.quickHp;
   if (expression && state.turn) dispatch('combatant:hp', { id: state.turn, expression });

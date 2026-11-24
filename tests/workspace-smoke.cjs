@@ -90,7 +90,7 @@ async function main() {
   await expect(page.locator('#round')).toHaveText('Раунд 2 · 0/2');
   await page.fill('#combat-search', 'луЧ');
   await expect(page.locator('.combat-name')).toHaveText(['Лучник']);
-  await page.click('#jump-to-turn');
+  await page.click('#turn-actor');
   await expect(page.locator('.combat-name')).toHaveCount(2);
   await page.click('#roll-initiative');
   await expect(page.locator('[data-roll-role="enemy"]')).toBeDisabled();

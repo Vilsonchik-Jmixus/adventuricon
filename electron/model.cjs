@@ -7,7 +7,7 @@ const text = (v, max = 120) => String(v ?? '').trim().slice(0, max);
 const newFog = (enabled = false) => ({ enabled, explored: [] });
 const newStory = () => ({ notes: [], links: [], strokes: [] });
 const storyCoordinate = n => clamp(Math.round(finite(n, 0)), -1000000, 1000000);
-const gameSizes = { left: 32, middle: 34, top: 52 };
+const gameSizes = { left: 32, middle: 34, top: 60 };
 const preparationSizes = { left: 25, middle: 46, top: 58 };
 function restoreLayout(saved = {}) {
   return { ...gameSizes, windows: {}, ...saved, mode: saved.mode === 'preparation' ? 'preparation' : 'game',
