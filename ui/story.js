@@ -1,4 +1,4 @@
-function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
+function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetURL, imageDraft }) {
   const get = id => document.getElementById(id);
   const viewport = get('story-viewport'), world = get('story-world');
   const cards = get('story-cards'), ropes = get('story-ropes'), strokes = get('story-strokes');
@@ -6,6 +6,7 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
   const dialog = get('story-dialog');
   let tool = 'move', source = null, gesture, ignoreClick = false;
   let editing, newPosition, lastRender;
+  const renderedNotes = new WeakMap();
   let cameraX = 0, cameraY = 0;
   const limit = 1000000;
 
@@ -100,19 +101,50 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
     pin.className = 'story-pin';
     pin.title = 'Потяни к другой карточке, чтобы связать';
     pin.setAttribute('aria-label', 'Связать заметку «' + note.title + '»');
-    card.append(title, body, pin);
+    card.append(title);
+    const images = note.images ?? [];
+    if (images.length) {
+      const attachments = document.createElement('div');
+      attachments.className = 'story-note-images';
+      for (const asset of images) {
+        const image = document.createElement('img');
+        image.className = 'story-note-image';
+        image.alt = '';
+        image.src = assetURL(asset);
+        image.draggable = false;
+        attachments.append(image);
+      }
+      card.append(attachments);
+    }
+    card.append(body, pin);
+    renderedNotes.set(card, note);
     return card;
   }
   function render() {
     if (gesture) return;
     const story = getStory();
     if (!story) return;
-    const signature = JSON.stringify(story);
-    if (lastRender === signature) return;
-    lastRender = signature;
+    if (lastRender === story) return;
+    const previous = lastRender;
+    lastRender = story;
     const focused = document.activeElement?.closest('[data-story-note]')?.dataset.storyNote;
-    cards.replaceChildren(...story.notes.map(createCard));
-    strokes.replaceChildren(...story.strokes.flatMap(mark => {
+    if (story.notes !== previous?.notes) {
+      const existing = new Map([...cards.children].map(card => [card.dataset.storyNote, card]));
+      for (const note of story.notes) {
+        const card = existing.get(note.id);
+        const before = card && renderedNotes.get(card);
+        existing.delete(note.id);
+        if (!card) cards.append(createCard(note));
+        else if (before.title !== note.title || before.body !== note.body ||
+          (before.images ?? []).join(',') !== (note.images ?? []).join(',')) card.replaceWith(createCard(note));
+        else {
+          placeCard(card, note);
+          renderedNotes.set(card, note);
+        }
+      }
+      for (const card of existing.values()) card.remove();
+    }
+    if (story.strokes !== previous?.strokes) strokes.replaceChildren(...story.strokes.flatMap(mark => {
       const d = drawStroke(mark.points), path = pathElement(d, 'story-mark'), hit = pathElement(d, 'story-hit');
       path.style.stroke = mark.color;
       path.style.strokeWidth = mark.width;
@@ -151,6 +183,7 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
     newPosition = position;
     get('story-title').value = note?.title ?? '';
     get('story-body').value = note?.body ?? '';
+    imageDraft.reset(note?.images);
     get('story-delete').hidden = !note;
     fillLinks();
     openDialog(dialog.id);
@@ -170,7 +203,8 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
   };
   get('story-form').onsubmit = async event => {
     event.preventDefault();
-    const fields = { title: get('story-title').value, body: get('story-body').value };
+    if (imageDraft.busy) return;
+    const fields = { title: get('story-title').value, body: get('story-body').value, images: imageDraft.assets };
     const position = editing ? null : newPosition ?? firstFreePosition(fields);
     const response = await dispatch('story:save', { id: editing, ...position, ...fields });
     if (response?.ok) closeDialog(dialog);
@@ -341,5 +375,5 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog }) {
     card.querySelector('.story-note-title').focus({ preventScroll: true });
     setTimeout(() => card.classList.remove('revealed'), 1600);
   }
-  return { render, reveal };
+  return { render, reveal, pasteNewNote: () => { edit(); imageDraft.pasteImage(); } };
 }

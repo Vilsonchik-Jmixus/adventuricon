@@ -8,6 +8,7 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
   let editing = false, tool = 'select', selected = null, draft = null, acceptedMap;
   let lightsKey = '', inkKey = '', fogKey = '', exploredKey = '', exploredCells, visible = new Set(), cancelDrawing;
   let lastDrawings, lastTerrain, lastLightGrid;
+  let wallTerrain, walls, itemsKey = [], doorsKey = [];
   const terrainColors = { wall: '#e99c75', window: '#8ed0ea' };
   const labels = {
     select: 'Выбери объект щелчком',
@@ -170,7 +171,8 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
   }
 
   function render(state, layout, preview) {
-    const terrain = state.terrain, walls = MapGeometry.blockingWalls(terrain);
+    const terrain = state.terrain;
+    const walls = wallsFor(terrain);
     if (acceptedMap !== state.activeMapId) {
       cancelDrawing?.();
       acceptedMap = state.activeMapId;
@@ -192,12 +194,23 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
     renderDrawings(state.drawings, layout);
     renderEditor(terrain);
     renderFog(state, walls, preview, layout.width / layout.zoom, layout.height / layout.zoom);
-    get('map-items').replaceChildren(...terrain.filter(item => {
+    renderItems(state, layout);
+    renderDoors(terrain, layout);
+  }
+
+  function renderItems(state, layout) {
+    const visibility = readOnly && !fogLayer.hidden ? visible : null;
+    const { terrain } = state;
+    const { grid, offsetX, offsetY } = state.map;
+    const items = terrain.filter(item => {
       if (item.kind !== 'item') return false;
-      const { grid, offsetX, offsetY } = state.map;
       const col = Math.floor((item.a.x - offsetX) / grid), row = Math.floor((item.a.y - offsetY) / grid);
-      return !readOnly || fogLayer.hidden || visible.has(`${col},${row}`);
-    }).map(item => {
+      return !visibility || visibility.has(`${col},${row}`);
+    });
+    const key = [layout.zoom, ...items];
+    if (key.length === itemsKey.length && key.every((value, index) => value === itemsKey[index])) return;
+    itemsKey = key;
+    get('map-items').replaceChildren(...items.map(item => {
       const marker = document.createElement('div'), icon = document.createElement('span'), name = document.createElement('span');
       marker.className = 'scene-item';
       marker.style.left = item.a.x * layout.zoom + 'px';
@@ -214,10 +227,15 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
       marker.append(icon, name);
       return marker;
     }));
+  }
 
+  function renderDoors(terrain, layout) {
     const layer = get('map-doors');
     const focusedDoor = document.activeElement?.dataset.doorId;
     const doors = readOnly || editing ? [] : terrain.filter(item => item.kind === 'door');
+    const key = [layout.zoom, ...doors];
+    if (key.length === doorsKey.length && key.every((value, index) => value === doorsKey[index])) return;
+    doorsKey = key;
     layer.replaceChildren(...doors.map(door => {
       const button = document.createElement('button');
       button.type = 'button';
@@ -391,8 +409,16 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
     };
   });
 
+  function wallsFor(terrain) {
+    if (wallTerrain !== terrain) {
+      wallTerrain = terrain;
+      walls = MapGeometry.blockingWalls(terrain);
+    }
+    return walls;
+  }
   function previewFog(state, layout, preview) {
-    renderFog(state, MapGeometry.blockingWalls(state.terrain), preview, layout.width / layout.zoom, layout.height / layout.zoom);
+    renderFog(state, wallsFor(state.terrain), preview, layout.width / layout.zoom, layout.height / layout.zoom);
+    if (readOnly) renderItems(state, layout);
   }
 
   return { render, pointerDown, toggleFog, previewFog, hideEditor: () => editing && (setEditing(false), true),

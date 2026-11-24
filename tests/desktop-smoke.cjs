@@ -179,7 +179,9 @@ let application;
   await page.fill('[name="initiativeBonus"]', '4');
   await page.click('#editor-submit');
   await page.click('[data-token-add]');
-  await page.locator('#map-viewport').click({ position: { x: 40, y: 40 } });
+  // Fitting a wide map into the central column leaves space above and below the image.
+  const fitted = await page.locator('#map-image').boundingBox();
+  await page.mouse.click(fitted.x + fitted.width / 4, fitted.y + fitted.height / 4);
   await expect(artWindow.locator('.token')).toHaveCount(1);
   await expect(artWindow.locator('.token-hp')).toHaveCount(0);
   const publicEnemy = (await artWindow.evaluate(() => window.dm.init())).state.mapCombatants[0];

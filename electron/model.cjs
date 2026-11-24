@@ -67,22 +67,54 @@ function restoreRound(battle) {
   const current = ordered.findIndex(c => c.id === battle.turn);
   return { ...battle, acted: current > 0 ? ordered.slice(0, current).map(c => c.id) : [], manualOrder: null };
 }
+const actorViews = new WeakMap();
+function describe(c) {
+  if (!actorViews.has(c)) actorViews.set(c, { ...c, role: roleOf(c.role), initiativeBonus: c.initiativeBonus ?? 0, effects: effectsFor(c) });
+  return actorViews.get(c);
+}
+let lastView, lastViewState;
+const sameEntries = (first, second) => first?.length === second.length && second.every((entry, index) => entry === first[index]);
+function choicesFor(entries, previous, choices, battle = false) {
+  if (entries === previous) return choices;
+  if (entries.length === choices?.length && entries.every(({ id, title, linkedMapId }, i) =>
+    id === choices[i].id && title === choices[i].title && (!battle || linkedMapId === choices[i].linkedMapId))) return choices;
+  return battle ? entries.map(({ id, title, linkedMapId }) => ({ id, title, linkedMapId })) : entries.map(({ id, title }) => ({ id, title }));
+}
 function activeView(state) {
+  if (state === lastViewState) return lastView;
   const battle = state.battles.find(entry => entry.id === state.activeBattleId);
   const board = state.boards.find(entry => entry.id === state.activeMapId);
-  const placed = new Set(board.tokens.map(token => token.combatantId));
-  const describe = c => ({ ...c, role: roleOf(c.role), initiativeBonus: c.initiativeBonus ?? 0, effects: effectsFor(c) });
-  const mapCombatants = state.battles.flatMap(entry => entry.combatants.filter(c => placed.has(c.id)).map(describe));
-  return {
+  const previousBattle = lastViewState?.battles.find(entry => entry.id === battle.id);
+  const previousBoard = lastViewState?.boards.find(entry => entry.id === board.id);
+  const rosterChanged = previousBattle?.combatants !== battle.combatants || lastView?.activeBattleId !== battle.id;
+  const mapActorsChanged = lastViewState?.battles !== state.battles || lastView?.activeMapId !== board.id ||
+    (previousBoard?.tokens !== board.tokens && !sameEntries(previousBoard?.tokens.map(token => token.combatantId),
+      board.tokens.map(token => token.combatantId)));
+  let mapCombatants = lastView?.mapCombatants, visionOrigins = lastView?.visionOrigins;
+  if (mapActorsChanged) {
+    const placed = new Set(board.tokens.map(token => token.combatantId));
+    const actors = state.battles.flatMap(entry => entry.combatants.filter(c => placed.has(c.id)).map(describe));
+    if (!sameEntries(mapCombatants, actors)) {
+      mapCombatants = actors;
+      const origins = actors.filter(revealsFog).map(actor => actor.id);
+      if (!sameEntries(visionOrigins, origins)) visionOrigins = origins;
+    }
+  }
+  const nextOrder = rosterChanged || previousBattle?.manualOrder !== battle.manualOrder ? battleOrder(battle).map(c => c.id) : lastView.order;
+  lastView = {
     revision: state.revision, music: state.music, layout: state.layout, gallery: state.gallery, bookmarks: state.bookmarks, library: state.library, story: state.story,
     activeBattleId: battle.id, activeMapId: board.id, scenes: state.scenes, notePins: board.notePins,
-    battleChoices: state.battles.map(({ id, title, linkedMapId }) => ({ id, title, linkedMapId })),
-    mapChoices: state.boards.map(({ id, title }) => ({ id, title })),
-    combatants: battle.combatants.map(describe), order: battleOrder(battle).map(c => c.id), manualOrder: !!battle.manualOrder,
+    battleChoices: choicesFor(state.battles, lastViewState?.battles, lastView?.battleChoices, true),
+    mapChoices: choicesFor(state.boards, lastViewState?.boards, lastView?.mapChoices),
+    combatants: rosterChanged ? battle.combatants.map(describe) : lastView.combatants,
+    order: sameEntries(lastView?.order, nextOrder) ? lastView.order : nextOrder,
+    manualOrder: !!battle.manualOrder,
     round: battle.round, turn: battle.turn, acted: battle.acted, history: battle.history,
     map: board.map, tokens: board.tokens, terrain: board.terrain, drawings: board.drawings, fog: board.fog,
-    mapCombatants, visionOrigins: mapCombatants.filter(revealsFog).map(actor => actor.id)
+    mapCombatants, visionOrigins
   };
+  lastViewState = state;
+  return lastView;
 }
 function hpValue(current, max, expression) {
   const s = String(expression).trim();
@@ -136,14 +168,68 @@ function updateExploration(state, board) {
     .filter(revealsFog).map(actor => actor.id)));
   const origins = board.tokens.filter(token => players.has(token.combatantId));
   const seen = visibleCells(board.map, origins, blockingWalls(board.terrain));
-  board.fog.explored = [...new Set([...board.fog.explored, ...seen])].slice(-32000);
+  if (!seen.size) return;
+  const explored = new Set(board.fog.explored);
+  if ([...seen].every(cell => explored.has(cell))) return;
+  board.fog.explored = [...new Set([...explored, ...seen])].slice(-32000);
 }
 const terrainPoint = point => {
   if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) throw new Error('Укажи точку на карте');
   return { x: clamp(Math.round(point.x), 0, 512000), y: clamp(Math.round(point.y), 0, 512000) };
 };
+function replaceActive(entries, id, copy) {
+  return entries.map(entry => entry.id === id ? copy(entry) : entry);
+}
+function copyForAction(state, type, p) {
+  // Structural operations that touch several saved encounters still make a full transactional copy.
+  const s = { ...state };
+  if (/^(combat:|combatant:)/.test(type) && type !== 'combatant:remove') {
+    s.battles = replaceActive(state.battles, state.activeBattleId, battle => {
+      const copy = { ...battle };
+      if (['combatant:add', 'combatant:import', 'combatant:duplicate'].includes(type)) copy.combatants = [...battle.combatants];
+      if (['combatant:edit', 'combatant:hp', 'combatant:conditions', 'combat:initiative',
+        'combatant:undo', 'combat:roll-initiative', 'combat:reset-initiative'].includes(type)) {
+        const id = type === 'combatant:undo' ? battle.history.at(-1)?.id : p.id;
+        copy.combatants = battle.combatants.map(c =>
+          c.id === id || type === 'combat:reset-initiative' || type === 'combat:roll-initiative' && !p.id ? { ...c } : c);
+      }
+      if (['combatant:hp', 'combatant:edit', 'combatant:undo'].includes(type)) copy.history = [...battle.history];
+      if (type === 'combat:next') copy.acted = [...battle.acted];
+      return copy;
+    });
+    return s;
+  }
+  if (/^(token:|terrain:|fog:|map:(draw|erase|pin|unpin|settings|image|save)$)/.test(type)) {
+    s.boards = replaceActive(state.boards, state.activeMapId, board => {
+      const copy = { ...board };
+      if (type === 'token:move') copy.tokens = board.tokens.map(token => token.combatantId === p.id ? { ...token } : token);
+      if (type === 'token:add') copy.tokens = [...board.tokens];
+      if (type === 'map:draw') copy.drawings = [...board.drawings];
+      if (type === 'map:pin') copy.notePins = [...board.notePins];
+      if (type === 'map:settings' || type === 'map:image') copy.map = { ...board.map };
+      if (type === 'terrain:add') copy.terrain = [...board.terrain];
+      if (type === 'terrain:edit-item' || type === 'terrain:door') copy.terrain = replaceActive(board.terrain, p.id, item => ({ ...item }));
+      if (type === 'fog:enabled' || type === 'fog:reset') copy.fog = { ...board.fog };
+      return copy;
+    });
+    return s;
+  }
+  if (type.startsWith('story:') && type !== 'story:remove') {
+    s.story = { ...state.story };
+    if (type === 'story:move' || type === 'story:save') {
+      s.story.notes = p.id ? replaceActive(state.story.notes, p.id, note => ({ ...note })) : [...state.story.notes];
+    }
+    if (type === 'story:link') s.story.links = [...state.story.links];
+    if (type === 'story:draw') s.story.strokes = [...state.story.strokes];
+    return s;
+  }
+  if (['music:settings', 'music:play', 'music:stop'].includes(type)) { s.music = { ...state.music }; return s; }
+  if (type.startsWith('layout:')) { s.layout = { ...state.layout, windows: { ...state.layout.windows } }; return s; }
+  return structuredClone(state);
+}
 function reducer(state, action) {
-  const s = structuredClone(state), p = action.payload || {};
+  const p = action.payload || {};
+  const s = copyForAction(state, action.type, p);
   const battle = s.battles.find(entry => entry.id === s.activeBattleId);
   const board = s.boards.find(entry => entry.id === s.activeMapId);
   if (p.expectedBattleId && p.expectedBattleId !== battle.id &&
@@ -367,6 +453,16 @@ function reducer(state, action) {
     case 'combat:sort':
       battle.manualOrder = null;
       break;
+    case 'combat:reset-initiative':
+      for (const c of battle.combatants) {
+        c.initiative = null;
+        c.initiativeRoll = null;
+      }
+      battle.manualOrder = null;
+      battle.round = 1;
+      battle.turn = null;
+      battle.acted = [];
+      break;
     case 'combat:next': {
       const order = battleOrder(battle).map(c => c.id);
       if (!order.length) break;
@@ -479,6 +575,7 @@ function reducer(state, action) {
       break;
     case 'story:save': {
       const fields = { title: text(p.title) || 'Без названия', body: String(p.body ?? '').slice(0, 20000) };
+      if ('images' in p) fields.images = [...new Set(p.images)].slice(0, 12);
       if (p.id) {
         const note = s.story.notes.find(item => item.id === p.id);
         if (!note) throw new Error('Заметка уже удалена');
@@ -572,12 +669,28 @@ function reducer(state, action) {
       if (['combat', 'music', 'map', 'info', 'characters'].includes(p.id)) s.layout.windows[p.id] = p.bounds || null; break;
     default: throw new Error('Неизвестная команда');
   }
-  if (action.type === 'map:image' || action.type === 'map:settings' &&
-      ['grid', 'offsetX', 'offsetY'].some(key => board.map[key] !== state.boards.find(item => item.id === board.id).map[key])) {
-    board.fog.explored = [];
+  const beforeBoard = state.boards.find(item => item.id === state.activeMapId);
+  const gridChanged = action.type === 'map:settings' &&
+    ['grid', 'offsetX', 'offsetY'].some(key => board.map[key] !== beforeBoard.map[key]);
+  if (action.type === 'map:image' || gridChanged) board.fog = { ...board.fog, explored: [] };
+  let visionChanged = false;
+  if (beforeBoard.fog.enabled && ['combatant:edit', 'combatant:hp', 'combatant:undo'].includes(action.type)) {
+    const beforeBattle = state.battles.find(entry => entry.id === battle.id);
+    const id = action.type === 'combatant:undo' ? beforeBattle.history.at(-1)?.id : p.id;
+    if (board.tokens.some(token => token.combatantId === id)) {
+      const previous = beforeBattle.combatants.find(c => c.id === id);
+      const next = battle.combatants.find(c => c.id === id);
+      visionChanged = !!previous && !!next && revealsFog(previous) !== revealsFog(next);
+    }
   }
-  if (/^(token:|terrain:|fog:|map:(image|settings|select)|battle:select|scene:open|library:deploy|combatant:(edit|hp|undo))/.test(action.type)) {
-    updateExploration(s, s.boards.find(item => item.id === s.activeMapId));
+  if (visionChanged || gridChanged ||
+      /^(token:|terrain:(add|door|remove)$|fog:|map:(image|select)$|battle:select$|scene:open$|library:deploy$)/.test(action.type)) {
+    s.boards = replaceActive(s.boards, s.activeMapId, current => {
+      if (!current.fog.enabled) return current;
+      const updated = { ...current, fog: { ...current.fog } };
+      updateExploration(s, updated);
+      return updated.fog.explored === current.fog.explored ? current : updated;
+    });
   }
   s.revision++;
   return s;

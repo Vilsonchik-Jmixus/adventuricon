@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="story.css">
   <link rel="stylesheet" href="themes.css">
   <link rel="stylesheet" href="session.css">
+  <link rel="stylesheet" href="workspace.css">
 </head>
 <body>
   <header class="appbar">
@@ -19,7 +20,7 @@
       <i></i><i></i><i></i><i></i><i></i><i></i>
     </div>
     <img id="theme-brand-icon" class="brand-mark" src="assets/icon.png" alt="" width="29" height="29">
-    <div class="brand"><strong>ШИРМА МАСТЕРА</strong></div>
+    <div class="brand"><strong>Ширма мастера</strong></div>
     <button id="screen-tip" class="quiet" type="button" hidden>
       <span class="tip-label">Совет</span><span id="tip-text"></span><span class="tip-next" aria-hidden="true">›</span>
     </button>
@@ -34,7 +35,8 @@
     <button id="create-battle" type="button" class="icon-button" title="Новый бой" aria-label="Новый бой">＋</button>
     <button id="manage-battle" type="button" class="icon-button" title="Настройки и копирование" aria-label="Настройки и копирование: Бой">⋯</button>
   </div>
-        <div class="combat-toolbar"><span id="round" aria-live="polite">Раунд 1</span><button id="reset-order" class="quiet" title="Вернуть порядок по инициативе" aria-label="Вернуть порядок по инициативе" hidden>⇅</button><button id="roll-initiative" class="quiet" title="Броски инициативы">d20</button><button id="undo-hp" class="quiet" title="Отменить последнее изменение ХП">↶ ХП</button><button id="next-turn" class="small-button">Следующий ход →</button></div>
+        <div class="combat-toolbar"><span id="round" aria-live="polite">Раунд 1</span><button id="jump-to-turn" class="quiet" title="Найти участника, чей сейчас ход" aria-label="Найти участника, чей сейчас ход" hidden>◎</button><button id="reset-order" class="quiet" title="Вернуть порядок по инициативе" aria-label="Вернуть порядок по инициативе" hidden>⇅</button><button id="roll-initiative" class="quiet" title="Броски и сброс инициативы">Инициатива</button><button id="undo-hp" class="quiet" title="Отменить последнее изменение ХП">↶ <span class="control-label">ХП</span></button><button id="next-turn" class="small-button" aria-label="Следующий ход"><span class="control-label">Следующий ход</span><span class="compact-label" aria-hidden="true">Ход</span> →</button></div>
+        <div class="combat-search" id="combat-search-row" hidden><input type="search" id="combat-search" placeholder="Найти участника" aria-label="Найти участника" autocomplete="off"><select id="combat-role-filter" aria-label="Фильтр участников по стороне"><option value="">Все стороны</option></select></div>
         <div id="combat-list" class="combat-list"></div>
         <div class="combat-actions">
           <button id="add-combatant" class="add-button">＋ Добавить участника</button>
@@ -84,7 +86,7 @@
     <select id="map-select" aria-label="Карта"></select>
     <button id="create-map" type="button" class="icon-button" title="Новая карта" aria-label="Новая карта">＋</button>
     <button id="manage-map" type="button" class="icon-button" title="Настройки и копирование" aria-label="Настройки и копирование: Карта">⋯</button>
-    <button id="fog-reset" type="button" class="icon-button" title="Скрыть исследованные области" aria-label="Сбросить туман войны">↺ Туман</button>
+    <button id="fog-reset" type="button" class="icon-button" title="Скрыть исследованные области" aria-label="Сбросить туман войны">↺ <span class="control-label">Туман</span></button>
     <button id="undo-map" type="button" class="icon-button" title="Отменить действие на карте" aria-label="Отменить действие на карте">↶</button>
     <button id="open-player-preview" type="button" class="icon-button" title="Предпросмотр экрана игроков" aria-label="Предпросмотр экрана игроков">◈</button>
   </div><div class="map-toolbar"><button id="import-map" class="small-button" title="Загрузить изображение на выбранную карту">＋ Файл</button><button id="paste-map" class="quiet" title="Вставить изображение из буфера" data-paste-shortcut>Ctrl+V</button><div class="zoom-controls"><button id="rotate-map-left" title="Повернуть карту влево на 90°" aria-label="Повернуть карту влево на 90°">↶</button><button id="rotate-map-right" title="Повернуть карту вправо на 90°" aria-label="Повернуть карту вправо на 90°">↷</button><button id="fit-map" title="Показать карту целиком" aria-label="Показать карту целиком">⊡</button><button id="zoom-out" title="Уменьшить">−</button><span id="zoom-label">100%</span><button id="zoom-in" title="Увеличить">＋</button></div></div>
@@ -123,7 +125,7 @@
     </section>
     <section class="panel characters" data-panel="characters">
       <header class="panel-head"><div class="panel-title"><div class="work-tabs" aria-label="Правая панель"><button id="show-sheets" aria-pressed="true">Листы</button><button id="show-gallery" aria-pressed="false">Галерея</button><button id="show-notes" aria-pressed="false">Заметки</button></div></div><div class="panel-tools"><button data-detach="characters" title="В отдельное окно">↗</button><button data-expand="characters" title="Развернуть панель">⛶</button></div></header>
-      <div id="sheet-content" class="panel-content site-content"><div class="browser-toolbar"><button data-remote="characters:back" title="Назад">←</button><button data-remote="characters:reload" title="Обновить">↻</button><span>Long Story Short</span><button data-remote="characters:external" title="Открыть в браузере">↗</button></div><div class="remote-surface" data-remote-surface="characters"><div class="site-empty"><div class="lss-monogram">LSS</div><h2>Ваша партия.<br>В одной ширме.</h2><p>Войдите в Long Story Short,<br>чтобы открыть листы персонажей.</p><button data-remote="characters:home">Открыть Long Story Short ↗</button><small>Вход сохраняется между запусками</small></div></div></div>
+      <div id="sheet-content" class="panel-content site-content"><div class="browser-toolbar"><button data-remote="characters:back" title="Назад">←</button><button data-remote="characters:reload" title="Обновить">↻</button><span>Long Story Short</span><button data-remote="characters:external" title="Открыть в браузере">↗</button></div><div class="remote-surface" data-remote-surface="characters"><div class="site-empty"><h2>Листы персонажей</h2><button data-remote="characters:home">Открыть Long Story Short ↗</button></div></div></div>
       <div id="gallery" class="panel-content gallery" hidden>
         <div class="gallery-tools">
           <button id="import-gallery" class="small-button">＋ Изображение</button>
@@ -172,7 +174,7 @@
       </div>
       <div class="detached-placeholder"><span>↗</span><p>Персонажи в отдельном окне</p><button data-focus="characters">Показать окно</button></div><button class="resize-grip" title="Потяните для изменения размера"></button>
     </section>
-    <div class="splitter vertical split-one" data-split="left"></div><div class="splitter vertical split-two" data-split="middle"></div><div class="splitter horizontal" data-split="top"></div>
+    <div class="splitter vertical split-one" data-split="left"></div><div class="splitter vertical split-two" data-split="middle"></div><div class="splitter horizontal" data-split="top"></div><div class="splitter horizontal split-right" data-split="top"></div>
   </main>
   <footer class="statusbar"><span><i class="status-dot"></i> Локальная кампания</span><span id="version">v0.1.0</span></footer>
   <div id="toast" class="toast" role="status"></div>
@@ -181,6 +183,12 @@
       <div class="dialog-heading"><h2 id="story-dialog-title">Сюжетная заметка</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть">×</button></div>
       <label>Заголовок<input id="story-title" maxlength="120" placeholder="Например, встреча у моста" autofocus></label>
       <label>Реплики и заметки<textarea id="story-body" rows="8" maxlength="20000"></textarea></label>
+      <div class="portrait-tools" id="story-image-tools">
+        <button id="choose-story-image" type="button">Выбрать картинку</button>
+        <button id="paste-story-image" type="button">Вставить <kbd data-paste-shortcut>Ctrl+V</kbd></button>
+      </div>
+      <div id="story-image-preview" aria-label="Изображения заметки" hidden></div>
+      <output id="story-image-status" role="status" hidden></output>
       <div id="story-links" aria-label="Связанные заметки" hidden></div>
       <div class="scene-confirm"><button type="button" id="story-delete" class="quiet" hidden>Удалить заметку</button><button type="submit" class="primary-button">Сохранить</button></div>
     </form>
@@ -190,12 +198,31 @@
     <img id="image-dialog-preview" alt="">
     <button id="present-preview" type="button" class="primary-button">Показать игрокам</button>
   </dialog>
-  <dialog id="editor"><form id="combatant-form"><div class="dialog-heading"><div><h2 id="editor-title">Добавить участника</h2></div><button type="button" data-close-dialog class="icon-button">×</button></div><button id="choose-portrait" type="button" class="portrait-picker"><span id="portrait-preview">＋</span><span>Добавить портрет<small>PNG, JPG или WebP</small></span></button><label>Имя<input name="name" required maxlength="120" placeholder="Например, гоблин-разведчик" autofocus></label><div class="form-row"><label id="current-hp-field" hidden>Текущие ХП<input name="hp" type="number" min="0" max="999999" disabled></label><label>Максимум ХП<input name="maxHp" type="number" min="1" max="999999" value="12" required></label></div><div class="form-row"><label>Сторона<select name="role" id="combatant-role"></select></label><label id="initiative-bonus-field">Бонус инициативы<input name="initiativeBonus" type="number" min="-50" max="50" value="0" required></label></div><div class="scene-confirm editor-actions"><button id="editor-submit" type="submit" class="primary-button">Добавить в трекер</button><button id="save-template-copy" type="button" class="quiet" hidden>В заготовки</button></div></form></dialog>
+  <dialog id="editor">
+    <form id="combatant-form">
+      <div class="dialog-heading"><h2 id="editor-title">Добавить участника</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть">×</button></div>
+      <div class="portrait-tools">
+        <button id="choose-portrait" type="button" class="portrait-picker"><span id="portrait-preview">＋</span><span>Выбрать портрет<small>PNG, JPG или WebP</small></span></button>
+        <button id="paste-portrait" type="button">Вставить <kbd data-paste-shortcut>Ctrl+V</kbd></button>
+        <button id="remove-portrait" type="button" class="quiet" hidden>Убрать</button>
+      </div>
+      <output id="portrait-status" role="status" hidden></output>
+      <label>Имя<input name="name" required maxlength="120" placeholder="Например, гоблин-разведчик" autofocus></label>
+      <div class="form-row"><label id="current-hp-field" hidden>Текущие ХП<input name="hp" type="number" min="0" max="999999" disabled></label><label>Максимум ХП<input name="maxHp" type="number" min="1" max="999999" value="12" required></label></div>
+      <div class="form-row"><label>Сторона<select name="role" id="combatant-role"></select></label><label id="initiative-bonus-field">Бонус инициативы<input name="initiativeBonus" type="number" min="-50" max="50" value="0" required></label></div>
+      <div class="scene-confirm editor-actions"><button id="editor-submit" type="submit" class="primary-button">Добавить в трекер</button><button id="save-template-copy" type="button" class="quiet" hidden>В заготовки</button></div>
+    </form>
+  </dialog>
   <dialog id="player-dialog"><div class="dialog-heading"><h2>Экран игроков</h2><button type="button" data-close-dialog class="icon-button">×</button></div><div class="player-options"><label class="checkbox-label"><input id="toggle-player-health" type="checkbox"> Показывать ХП игроков и союзников</label><label>Карта на экране игроков<select id="player-fit"><option value="fill">Заполнить экран</option><option value="fit">Вписать без растягивания</option><option value="follow">Следовать за мастером</option></select></label><label class="checkbox-label"><input id="toggle-player-blackout" type="checkbox"> Затемнить экран игроков</label><p class="dialog-hint">Shift + щелчок по карте подсвечивает точку у игроков.</p></div></dialog>
   <dialog id="grid-dialog"><form id="grid-form"><div class="dialog-heading"><h2>Сетка карты</h2><button type="button" data-close-dialog class="icon-button">×</button></div><label class="checkbox-label"><input name="visible" type="checkbox">Показывать сетку</label><label>Размер клетки, пикс.<input name="grid" type="number" min="16" max="256"></label><div class="form-row"><label>Сдвиг X<input name="offsetX" type="number" min="-512" max="512"></label><label>Сдвиг Y<input name="offsetY" type="number" min="-512" max="512"></label></div><label>Диагонали<select name="diagonals"><option value="equal">5 футов за клетку</option><option value="alternating">Чередовать 5 и 10 футов</option></select></label><label>Прозрачность<input name="opacity" type="range" min="0" max="1" step="0.05"></label><label>Цвет линий<input name="color" type="color"></label><button class="primary-button" type="submit">Применить</button></form></dialog>
   <dialog id="initiative-dialog">
     <div class="dialog-heading"><h2>Инициатива</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть">×</button></div>
-    <div class="initiative-actions"><button type="button" data-roll-role="enemy">Бросить за противников</button></div>
+    <div class="initiative-actions"><button type="button" data-roll-role="enemy">Бросить за противников</button><button type="button" id="reset-initiative" class="quiet">Сбросить инициативу</button></div>
+    <div id="initiative-reset-confirm" class="scene-confirm" hidden>
+      <p>Результаты бросков, порядок и прогресс боя сбросятся до первого раунда.</p>
+      <button type="button" id="confirm-initiative-reset">Сбросить</button>
+      <button type="button" id="cancel-initiative-reset" class="quiet">Отмена</button>
+    </div>
     <div id="initiative-results" class="initiative-results" aria-live="polite"></div>
   </dialog>
   <dialog id="condition-dialog">

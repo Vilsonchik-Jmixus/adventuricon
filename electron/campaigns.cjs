@@ -11,9 +11,33 @@ const profileId = /^(?:main|[a-f0-9-]{36})$/;
 const megabyte = 1024 * 1024;
 const tidyName = (name, fallback) => String(name ?? '').trim().slice(0, 100) || fallback;
 
-function writeJSON(file, value) {
-  fs.writeFileSync(file + '.tmp', JSON.stringify(value), 'utf8');
+function writeJSON(file, value, encode = JSON.stringify) {
+  fs.writeFileSync(file + '.tmp', encode(value), 'utf8');
   fs.renameSync(file + '.tmp', file);
+}
+
+// Reducer snapshots share immutable collections so edits can reuse their serialized JSON.
+const encoded = new WeakMap();
+function cachedJSON(value, encode = JSON.stringify) {
+  if (!value || typeof value !== 'object') return JSON.stringify(value);
+  if (!encoded.has(value)) encoded.set(value, encode(value));
+  return encoded.get(value);
+}
+function recordJSON(record, encode = (_, value) => cachedJSON(value)) {
+  const fields = [];
+  for (const [key, value] of Object.entries(record)) {
+    const json = encode(key, value);
+    if (json !== undefined) fields.push(JSON.stringify(key) + ':' + json);
+  }
+  return '{' + fields.join(',') + '}';
+}
+function encodeCampaign(state) {
+  return recordJSON(state, (key, value) => {
+    if (key === 'battles' || key === 'boards') {
+      return cachedJSON(value, entries => '[' + entries.map(entry => cachedJSON(entry, recordJSON)).join(',') + ']');
+    }
+    return cachedJSON(value, key === 'story' ? recordJSON : JSON.stringify);
+  });
 }
 
 function createCampaignStore(root) {
@@ -138,4 +162,4 @@ function createCampaignStore(root) {
   return { get index() { return index; }, load, select, create, rename, exportArchive, importArchive };
 }
 
-module.exports = { createCampaignStore, writeJSON, assetPattern };
+module.exports = { createCampaignStore, writeJSON, encodeCampaign, assetPattern };

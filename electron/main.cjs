@@ -11,7 +11,7 @@ const { ROLES, CONDITIONS, playerMapActors } = require('./combat-rules.cjs');
 const { DND_HOME, WEB_HOME, GEMINI, REFERENCE_LINKS, safeUrl, searchUrl } = require('./reference.cjs');
 const { autoUpdater } = require('electron-updater');
 const { ScreenThemes, themeIcon } = require('../ui/themes.js');
-const { createCampaignStore, writeJSON, assetPattern } = require('./campaigns.cjs');
+const { createCampaignStore, writeJSON, encodeCampaign, assetPattern } = require('./campaigns.cjs');
 const { rememberMapAction, undoMapAction } = require('./map-history.cjs');
 const TEST = process.env.DM_SCREEN_TEST === '1';
 const mac = process.platform === 'darwin';
@@ -26,7 +26,8 @@ const REMOTE = { info: DND_HOME, web: WEB_HOME, characters: 'https://longstorysh
 const partitionFor = id => id === 'web' ? 'dm-web' : `persist:dm-${id}`;
 const remotePanelFor = id => id === 'web' ? 'info' : id;
 let referenceTab = 'info';
-const windows = new Map(), remotes = new Map();
+const windows = new Map(), remotes = new Map(), windowSnapshots = new WeakMap();
+const publicActors = new WeakMap();
 let mainWindow, state, store, assets, quitting = false, downloadProcess = null;
 let campaigns, campaignBusy = false;
 const mapHistory = new Map();
@@ -80,9 +81,13 @@ function resolveImage(ref) {
 function windowState(owner, view = activeView(state)) {
   const mapCamera = mapCameras.get(view.activeMapId) ?? null;
   if (playerSurface(owner)) {
+    const shareHealth = view.map.playerHealth !== false;
+    let actors = publicActors.get(view.mapCombatants);
+    if (!actors) { actors = new Map(); publicActors.set(view.mapCombatants, actors); }
+    if (!actors.has(shareHealth)) actors.set(shareHealth, playerMapActors(view.mapCombatants, shareHealth));
     return {
       state: { activeMapId: view.activeMapId, map: view.map, tokens: view.tokens,
-        mapCombatants: playerMapActors(view.mapCombatants, view.map.playerHealth !== false),
+        mapCombatants: actors.get(shareHealth),
         visionOrigins: view.visionOrigins,
         terrain: view.terrain, drawings: view.drawings, fog: view.fog, turn: view.turn },
       detached: ['map'], presentation, recentImages: [], mapCamera, campaignId: campaigns.index.active, playerBlackout, playerFrame: playerFrame()
@@ -94,11 +99,24 @@ function windowState(owner, view = activeView(state)) {
     recentImages: recentImages.map(resolveImage).filter(Boolean), mapCamera
   };
 }
+function changedFields(next, previous) {
+  return Object.fromEntries(Object.entries(next).filter(([key, value]) => previous[key] !== value));
+}
 function broadcast() {
   const view = activeView(state);
   for (const w of BrowserWindow.getAllWindows()) {
     if (!w.isDestroyed() && w.webContents.getURL().startsWith('dm://app/')) {
-      w.webContents.send('state', windowState(w.webContents, view));
+      const owner = w.webContents;
+      const previous = windowSnapshots.get(owner);
+      if (!previous) continue;
+      const next = windowState(owner, view);
+      for (const key of ['detached', 'recentImages', 'playerFrame']) {
+        if (JSON.stringify(next[key]) === JSON.stringify(previous[key])) next[key] = previous[key];
+      }
+      const { state: localState, ...metadata } = changedFields(next, previous);
+      const fields = localState ? changedFields(localState, previous.state) : {};
+      windowSnapshots.set(owner, next);
+      if (Object.keys(fields).length || Object.keys(metadata).length) owner.send('state', { ...metadata, state: fields });
     }
   }
 }
@@ -110,7 +128,7 @@ function commit(action) {
   const board = state.boards.find(entry => entry.id === state.activeMapId);
   const after = next.boards.find(entry => entry.id === board.id);
   const undo = after && rememberMapAction(action, board, after);
-  writeJSON(store, next);
+  writeJSON(store, next, encodeCampaign);
   state = next;
   if (action.type === 'scene:open') presentation = null;
   if (undo) mapHistory.set(board.id, [...(mapHistory.get(board.id) ?? []), undo].slice(-30));
@@ -365,9 +383,13 @@ function switchCampaign(id) {
   broadcast();
 }
 function setupIPC() {
-  handle('init', event => ({ ...windowState(event.sender), version: app.getVersion(), updateStatus, musicStatus,
-    playerBlackout, conditionDefinitions: CONDITIONS, combatRoles: ROLES, referenceLinks: REFERENCE_LINKS,
-    reference: referenceState(), test: TEST, mac, theme: currentTheme, welcomeAtStart: !TEST || process.env.DM_SCREEN_WELCOME_TEST === '1' }));
+  handle('init', event => {
+    const snapshot = windowState(event.sender);
+    windowSnapshots.set(event.sender, snapshot);
+    return { ...snapshot, version: app.getVersion(), updateStatus, musicStatus,
+      conditionDefinitions: CONDITIONS, combatRoles: ROLES, referenceLinks: REFERENCE_LINKS,
+      reference: referenceState(), test: TEST, mac, theme: currentTheme, welcomeAtStart: !TEST || process.env.DM_SCREEN_WELCOME_TEST === '1' };
+  });
   handle('set-theme', (event, id) => {
     if (event.sender !== mainWindow?.webContents || typeof id !== 'string' || !Object.hasOwn(ScreenThemes, id)) {
       throw new Error('Неизвестная тема оформления');
@@ -387,6 +409,14 @@ function setupIPC() {
     const limit = ['story:save', 'story:draw', 'map:draw'].includes(action.type) ? 125000 : 10000;
     if (JSON.stringify(action).length > limit) throw new Error('Неверная команда');
     if (['map:image', 'combatant:add', 'combatant:edit', 'library:save', 'terrain:add', 'terrain:edit-item'].includes(action.type) && action.payload?.image) assetName(action.payload.image);
+    if (action.type === 'story:save' && action.payload && 'images' in action.payload) {
+      const images = action.payload.images;
+      if (!Array.isArray(images) || images.length > 12) throw new Error('В заметке помещается до 12 картинок');
+      for (const value of images) {
+        const image = assetName(value);
+        if (!/\.(png|jpe?g|webp|gif)$/i.test(image) || !fs.existsSync(path.join(assets, image))) throw new Error('Изображение заметки отсутствует');
+      }
+    }
     if (action.type === 'music:add') assetName(action.payload?.asset);
     if (action.type === 'gallery:add') {
       const name = assetName(action.payload?.image);
@@ -405,7 +435,7 @@ function setupIPC() {
     const history = mapHistory.get(state.activeMapId);
     if (!history?.length) return { ok: true };
     const next = undoMapAction(state, history.at(-1));
-    writeJSON(store, next);
+    writeJSON(store, next, encodeCampaign);
     state = next;
     if (history.at(-1).field === 'map') mapCameras.delete(state.activeMapId);
     history.pop();
@@ -480,9 +510,9 @@ function setupIPC() {
       throw new Error('Выбери JSON-файл Long Story Short размером до 12 МБ');
     }
     const { portrait, initiativeNeedsReview, ...actor } = readCharacter(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
-    const image = portrait && nativeImage.createFromBuffer(portrait);
-    if (image && !image.isEmpty()) actor.image = pasteImageBytes(image.resize({ width: 384 }).toPNG(), '.png').asset;
-    return { ...commit({ type: 'combatant:import', payload: { ...actor, expectedBattleId } }), initiativeNeedsReview };
+    if (portrait) actor.image = pasteImageBytes(portrait.bytes, portrait.extension).asset;
+    return { ...commit({ type: 'combatant:import', payload: { ...actor, expectedBattleId } }),
+      portraitImported: !!actor.image, initiativeNeedsReview };
   });
   handle('paste-image', async () => {
     const active = campaigns.index.active;
@@ -716,7 +746,7 @@ app.whenReady().then(async () => {
       }
       else {
         const allowed = ['index.html', 'app.js', 'map-geometry.js', 'map-terrain.js', 'styles.css', 'tavern.css', 'themes.js', 'themes.css',
-          'ambience.css', 'ambience.js', 'scene.css', 'story.js', 'story.css', 'session.js', 'session.css',
+          'ambience.css', 'ambience.js', 'scene.css', 'story.js', 'story.css', 'session.js', 'session.css', 'workspace.css',
           ...bundledAssets.map(asset => asset.slice(1))];
         const relative = u.pathname.slice(1) || 'index.html';
         if (!allowed.includes(relative)) return new Response('Not found', { status: 404 });

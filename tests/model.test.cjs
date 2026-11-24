@@ -5,6 +5,7 @@ const { CONDITIONS, playerMapActors } = require('../electron/combat-rules.cjs');
 const { REFERENCE_LINKS, safeUrl, searchUrl } = require('../electron/reference.cjs');
 const MapGeometry = require('../ui/map-geometry.js');
 const { readCharacter } = require('../electron/lss-import.cjs');
+const { encodeCampaign } = require('../electron/campaigns.cjs');
 const { publicDndUrl } = require('../electron/dnd-import.cjs');
 test('Story cards, connections and drawings survive reload while deleting a card removes its links', () => {
   let s = migrateState({ ...initialState(), story: undefined });
@@ -127,17 +128,71 @@ test('Window walls stop tokens and allow sight and light from nearby origins', (
   assert.equal(act('token:move', { id: hero, col: 2, row: 2 }).tokens[0].col, 2);
 });
 test('Long Story Short export imports current and maximum HP, portrait bytes and initiative bonus', () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp2sAAAAASUVORK5CYII=';
   const data = { name: { value: 'Лучник' }, stats: { dex: { score: 16 } }, proficiency: 2,
     vitality: { 'hp-current': { value: 9 }, 'hp-max': { value: 15 }, initiative: { value: '[DEX] + [PROF]' } },
-    avatar: { webp: 'data:image/webp;base64,YWJj' } };
+    avatar: { webp: 'https://example.invalid/image.webp', png: `data:image/png;base64, ${png}` } };
   const result = readCharacter(JSON.stringify({ jsonType: 'character', data: JSON.stringify(data) }));
   assert.equal(result.name, 'Лучник');
   assert.equal(result.hp, 9);
   assert.equal(result.maxHp, 15);
   assert.equal(result.initiativeBonus, 5);
-  assert.equal(result.portrait.toString(), 'abc');
+  assert.equal(result.portrait.bytes.toString('base64'), png);
+  assert.equal(result.portrait.extension, '.png');
+  assert.equal(readCharacter(JSON.stringify({ jsonType: 'character', data: { ...data, avatar: null } })).portrait, null);
   assert.equal(result.initiativeNeedsReview, false);
   assert.throws(() => readCharacter('{}'), /Long Story Short/);
+});
+test('Initiative reset restarts only the current battle without clearing health or placed tokens', () => {
+  let state = initialState();
+  const act = (type, payload) => { state = reducer(state, { type, payload }); };
+  act('combatant:add', { name: 'Лучник', role: 'player' });
+  act('combatant:add', { name: 'Волк', initiativeBonus: 3 });
+  const [player, enemy] = activeView(state).combatants;
+  act('combatant:hp', { id: enemy.id, expression: '-2' });
+  act('combatant:conditions', { id: enemy.id, conditions: ['prone'] });
+  act('token:add', { id: enemy.id });
+  act('combat:initiative', { id: player.id, value: 14 });
+  act('combat:roll-initiative', { id: enemy.id });
+  act('combat:move', { id: activeView(state).order[0], delta: 1 });
+  for (let i = 0; i < 3; i++) act('combat:next');
+  assert.equal(activeView(state).round, 2);
+  const previous = state;
+  act('combat:reset-initiative');
+  const view = activeView(state);
+  assert.deepEqual([view.round, view.turn, view.acted, view.manualOrder], [1, null, [], false]);
+  assert.ok(view.combatants.every(actor => actor.initiative === null && actor.initiativeRoll === null));
+  assert.deepEqual(view.order, [player.id, enemy.id]);
+  assert.deepEqual([view.combatants[1].hp, view.combatants[1].initiativeBonus, view.combatants[1].conditions], [8, 3, ['prone']]);
+  assert.equal(view.tokens, activeView(previous).tokens);
+  assert.equal(previous.battles[0].round, 2);
+});
+test('Frequent edits reuse large collections and serialize the latest immutable draft', () => {
+  const act = (s, type, payload) => reducer(s, { type, payload });
+  let previous = act(initialState(), 'combatant:add', { name: 'Страж', role: 'player' });
+  const [actor] = activeView(previous).combatants;
+  previous = act(previous, 'token:add', { id: actor.id, col: 4, row: 4 });
+  previous = act(previous, 'fog:enabled', { enabled: true });
+  previous = act(previous, 'story:save', { title: 'Таверна', body: 'Записка', images: ['abc.webp', 'def.png'] });
+  previous = act(previous, 'map:draw', { points: [{ x: 2, y: 5 }, { x: 150, y: 260 }] });
+  const before = activeView(previous);
+  const saved = JSON.parse(encodeCampaign(previous));
+  const music = act(previous, 'music:settings', { volume: 0.4 });
+  const musicView = activeView(music);
+  for (const key of ['combatants', 'tokens', 'story', 'drawings', 'fog', 'mapCombatants', 'mapChoices', 'battleChoices']) {
+    assert.equal(musicView[key], before[key]);
+  }
+  const injured = act(music, 'combatant:hp', { id: actor.id, expression: '-1' });
+  assert.equal(activeView(injured).fog, before.fog);
+  const moved = act(injured, 'token:move', { id: actor.id, col: 20, row: 21 });
+  assert.equal(activeView(moved).drawings, before.drawings);
+  assert.equal(activeView(moved).tokens[0].col, 20);
+  assert.ok(activeView(moved).fog.explored.includes('20,21'));
+  const note = activeView(moved).story.notes[0];
+  const edited = act(moved, 'story:save', { id: note.id, title: 'Мост', body: note.body });
+  assert.deepEqual(activeView(edited).story.notes[0].images, ['abc.webp', 'def.png']);
+  assert.deepEqual(JSON.parse(encodeCampaign(edited)), JSON.parse(JSON.stringify(edited)));
+  assert.deepEqual(JSON.parse(encodeCampaign(previous)), saved);
 });
 test('Reference imports are restricted to individual public DnD.su cards and gallery images', () => {
   assert.equal(publicDndUrl('https://dnd.su/bestiary/4-goblin?ref=1#top', 'creature'), 'https://dnd.su/bestiary/4-goblin/');

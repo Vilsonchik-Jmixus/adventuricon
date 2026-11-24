@@ -1,0 +1,98 @@
+:root {
+  --appbar-height: 48px;
+  --panel-heading: 36px;
+  --ui-font: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --raised: color-mix(in srgb, var(--panel), var(--mint) 10%);
+  --inset: color-mix(in srgb, var(--bg), black 12%);
+}
+
+body, [data-theme] body { background: var(--bg); font-family: var(--ui-font); }
+:is(.appbar, .panel-head), [data-theme] :is(.appbar, .panel-head) {
+  background: var(--wood);
+  border-bottom: 1px solid var(--line);
+  box-shadow: none;
+}
+.appbar { padding-inline: 13px; gap: 10px; }
+.brand strong, [data-theme] .brand strong {
+  font: 700 16px/1.2 var(--ui-font);
+  color: var(--text);
+  text-shadow: none;
+}
+.appbar button { min-height: 30px; }
+.app-actions { gap: 7px; }
+.workspace { padding-right: 14px; }
+body:not(.detached) .map { grid-area: 1 / 2 / 3 / 3; }
+body:not(.detached) .characters { grid-area: 1 / 3 / 2 / 4; }
+body:not(.detached) .info { grid-area: 2 / 3 / 3 / 4; }
+.horizontal { width: var(--left); }
+.split-right { left: calc(var(--left) + var(--middle) + 14px); right: 0; width: auto; }
+.panel, [data-theme] .panel {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  box-shadow: 0 2px 6px #0002;
+}
+body:not(.player-map) .map { border-color: var(--edge); }
+.panel-head::before, .panel-head::after { display: none; }
+.panel-title { gap: 7px; }
+.panel-title h1, .dialog-heading h2, .site-empty h2 {
+  font: 650 15px/1.25 var(--ui-font);
+  color: var(--text);
+}
+.dialog-heading h2 { font-size: 19px; }
+.panel-symbol { color: var(--mint); }
+.badge { padding-inline: 5px; border: 0; border-radius: 4px; background: var(--inset); color: var(--muted); }
+.panel-tools button { min-width: 26px; min-height: 27px; padding-inline: 4px; }
+button, input, select, textarea, .track, .combat-card, .avatar { border-radius: 4px; }
+button:not(.token, .resize-grip), :is(.track, .portrait-picker) { box-shadow: none; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid var(--mint);
+  outline-offset: 2px;
+}
+.primary-button, .add-button { font-weight: 650; }
+.app-actions button, .slot-bar button, .slot-bar select { font-size: 12px; }
+.slot-bar select { min-width: 0; }
+.combat-content { padding: 8px; }
+.combat-toolbar { gap: 5px; flex-wrap: wrap; }
+.combat-toolbar #round { font-size: 12px; font-weight: 650; color: var(--text); white-space: nowrap; }
+.combat-toolbar #next-turn { margin-inline-start: auto; }
+.combat-search { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 43%); gap: 6px; }
+.combat-search :is(input, select) { width: 100%; min-height: 29px; padding: 4px 6px; font-size: 12px; }
+.combat-card { padding: 8px; background: var(--raised); }
+.combat-card.active-turn { border-color: var(--mint); box-shadow: inset 3px 0 var(--mint); }
+.combat-name { font-size: 14px; }
+.combat-meta { font-size: 11px; color: var(--muted); }
+.hp-readout { font: 700 14px/1.2 var(--ui-font); }
+.hp-readout small { font-size: 11px; }
+.combat-bottom { flex-wrap: wrap; row-gap: 4px; }
+.combat-bottom button { min-height: 24px; }
+.combat-actions { flex-wrap: wrap; }
+.combat-actions .add-button { flex: 1 1 auto; }
+.site-empty, [data-theme] .site-empty { background: var(--panel); }
+.site-empty h2 { margin: 0 0 8px; }
+:is(.site-content, .remote-surface, .map-content) { min-height: 0; }
+.work-tabs button { border-color: transparent; background: none; font-size: 12px; }
+.work-tabs button[aria-pressed="true"] { background: var(--raised); border-color: var(--line); color: var(--text); }
+.statusbar, [data-theme] .statusbar { background: var(--bg); border-color: var(--line); }
+.portrait-tools { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+.portrait-tools kbd { margin-left: 3px; color: var(--muted); font: inherit; font-size: .9em; }
+#portrait-status, #story-image-status { color: var(--muted); font-size: 12px; }
+#story-image-preview { display: flex; flex-wrap: wrap; gap: 6px; }
+#story-image-preview > div { position: relative; width: 80px; height: 66px; }
+#story-image-preview img { display: block; width: 100%; height: 100%; object-fit: contain; background: var(--inset); border-radius: 4px; }
+#story-image-preview button { position: absolute; top: 1px; right: 1px; padding: 0 5px; }
+.story-note-images { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin: 8px 8px 0; }
+.story-note-image { display: block; width: 100%; height: 90px; object-fit: contain; background: var(--inset); }
+.story-note-image:only-child { grid-column: 1 / -1; height: 128px; }
+#initiative-reset-confirm p { flex-basis: 100%; margin: 2px 0; color: var(--muted); }
+.initiative-actions { flex-wrap: wrap; }
+.compact-label { display: none; }
+body.player-map .map { border: 0; border-radius: 0; box-shadow: none; }
+
+@media (max-width: 1080px) {
+  #screen-tip { display: none; }
+  .map .slot-bar { flex-wrap: wrap; }
+  .map .slot-bar select { flex-basis: 38%; }
+  :is(.combat-toolbar, .map .slot-bar) .control-label { display: none; }
+  .compact-label { display: inline; }
+  .panel-tools button { min-width: 22px; }
+}

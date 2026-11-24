@@ -5,7 +5,7 @@ const windowParams = new URLSearchParams(location.search);
 const detachedPanel = windowParams.get('panel');
 const isPreview = windowParams.has('preview');
 const isPlayerMap = detachedPanel === 'map';
-let state, detached = [], currentFolder = 'Общее', portrait = null, expanded = null;
+let state, detached = [], currentFolder = 'Общее', expanded = null;
 let editingCombatant = null, editingContext, gridContext, playerSettingsContext, managedSlot;
 let toastTimer, textSubmit, draggingToken = false, animating = false, musicBusy = false, currentUpdate;
 let mapCamera = null, previewToken = null, pendingMapFrame = 0;
@@ -28,6 +28,96 @@ const dispatch = (type, payload = {}, context = currentContext()) => result(api.
 const mirrorMap = (preview, mapId = state.activeMapId) => api.mirrorMap({ ...preview, mapId, campaignId });
 function openDialog(id) { $(id).showModal(); syncRemoteBounds(); }
 function closeDialog(dialog) { dialog.close(); syncRemoteBounds(); }
+const textField = target => target instanceof Element && !!target.closest('input, textarea, select, [contenteditable]');
+function imageDraft(dialog, { choose, paste, remove, status, preview, limit = 1 }) {
+  let assets = [], request = 0, busy = false;
+  function update(next, message = '') {
+    assets = next;
+    preview(next);
+    if (remove) remove.hidden = !assets.length;
+    status.textContent = message;
+    status.hidden = !message;
+  }
+  function setBusy(value) {
+    busy = value;
+    choose.disabled = paste.disabled = value;
+    if (value) dialog.setAttribute('aria-busy', 'true');
+    else dialog.removeAttribute('aria-busy');
+  }
+  function reset(next = []) {
+    request++;
+    setBusy(false);
+    update(next.filter(Boolean));
+  }
+  async function read(load) {
+    if (busy || !dialog.open) return;
+    if (limit > 1 && assets.length >= limit) {
+      update(assets, `В заметке помещается до ${limit} картинок.`);
+      return;
+    }
+    const pending = ++request;
+    const campaign = campaignId;
+    setBusy(true);
+    try {
+      const response = await load();
+      if (pending !== request || !dialog.open || campaign !== campaignId) return;
+      if (response?.asset) update(limit === 1 ? [response.asset] : [...assets, response.asset]);
+      else if (response?.error) update(assets, response.error);
+    } catch {
+      if (pending === request && dialog.open && campaign === campaignId) update(assets, 'Не удалось загрузить изображение.');
+    } finally {
+      if (pending === request) setBusy(false);
+    }
+  }
+  const pasteImage = () => read(() => api.pasteImage());
+  choose.onclick = () => read(() => api.importFile('image'));
+  paste.onclick = pasteImage;
+  if (remove) remove.onclick = () => reset();
+  dialog.addEventListener('keydown', event => {
+    if ((event.ctrlKey || event.metaKey) && event.code === 'KeyV' && !textField(event.target)) {
+      event.preventDefault();
+      pasteImage();
+    }
+  });
+  dialog.addEventListener('paste', event => {
+    if (!Array.from(event.clipboardData?.items ?? []).some(item => item.kind === 'file')) return;
+    event.preventDefault();
+    pasteImage();
+  });
+  dialog.addEventListener('dragover', event => {
+    if (event.dataTransfer.types.includes('Files')) event.preventDefault();
+  });
+  dialog.addEventListener('drop', event => {
+    const file = event.dataTransfer.files[0];
+    if (!file) return;
+    event.preventDefault();
+    read(() => api.importDrop(file, 'image'));
+  });
+  return { reset, pasteImage, remove: asset => update(assets.filter(entry => entry !== asset)),
+    get assets() { return assets; }, get busy() { return busy; } };
+}
+const portraitDraft = imageDraft($('editor'), {
+  choose: $('choose-portrait'), paste: $('paste-portrait'), remove: $('remove-portrait'), status: $('portrait-status'),
+  preview: ([asset]) => { $('portrait-preview').innerHTML = asset ? `<img src="${assetURL(asset)}" alt="Портрет">` : '＋'; }
+});
+const noteDraft = imageDraft($('story-dialog'), {
+  choose: $('choose-story-image'), paste: $('paste-story-image'), status: $('story-image-status'), limit: 12,
+  preview: assets => {
+    const preview = $('story-image-preview');
+    preview.hidden = !assets.length;
+    preview.replaceChildren(...assets.map((asset, index) => {
+      const tile = document.createElement('div'), image = document.createElement('img'), remove = document.createElement('button');
+      image.src = assetURL(asset);
+      image.alt = `Изображение ${index + 1}`;
+      remove.type = 'button';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', `Убрать изображение ${index + 1}`);
+      remove.onclick = () => noteDraft.remove(asset);
+      tile.append(image, remove);
+      return tile;
+    }));
+  }
+});
 function renderTheme(id) {
   if (!Object.hasOwn(ScreenThemes, id)) return;
   const root = document.documentElement;
@@ -72,10 +162,10 @@ function rollText(c) {
   if (!roll) return '';
   return `d20 ${roll.die} ${roll.bonus >= 0 ? '+' : '−'} ${Math.abs(roll.bonus)} = ${c.initiative}`;
 }
-function combatCard(c, draft, placed, index, count) {
+function combatCard(c, placed, index, count, acted) {
   const bonus = c.role !== 'enemy' && c.initiativeBonus !== 0 ? `Иниц. ${c.initiativeBonus > 0 ? '+' : ''}${c.initiativeBonus}` : '';
   const details = [combatRoles[c.role], rollText(c), bonus, state.turn === c.id && 'Ходит сейчас',
-    state.acted.includes(c.id) && 'Ход завершён'].filter(Boolean);
+    acted.has(c.id) && 'Ход завершён'].filter(Boolean);
   return `<article class="combat-card ${state.turn === c.id ? 'active-turn' : ''} ${c.hp === 0 ? 'dead' : ''}" data-id="${c.id}" draggable="true">
     <div class="combat-main">${combatPortrait(c)}<div class="combat-details">
       <strong class="combat-name">${escapeHTML(c.name)}</strong>
@@ -86,7 +176,7 @@ function combatCard(c, draft, placed, index, count) {
     </div><button type="button" class="hp-readout" data-edit="${c.id}" title="Изменить ХП">${c.hp}<small> / ${c.maxHp}</small></button></div>
     <div class="hp-bar"><div style="width:${c.hp / c.maxHp * 100}%"></div></div>
     <div class="combat-bottom">
-      <form class="hp-form" data-id="${c.id}"><input aria-label="Изменение ХП ${escapeHTML(c.name)}" placeholder="−7 / +5" value="${escapeHTML(draft || '')}" maxlength="12"><button title="Применить ХП">↵</button></form>
+      <form class="hp-form" data-id="${c.id}"><input aria-label="Изменение ХП ${escapeHTML(c.name)}" placeholder="−7 / +5" maxlength="12"><button title="Применить ХП">↵</button></form>
       <button class="to-map" ${placed ? `data-token-remove="${c.id}" title="Убрать с карты · Shift + щелчок показывает жетон"` : `data-token-add="${c.id}" title="Выбрать клетку на карте"`}>${placed ? '✓ На карте' : '◇ На карту'}</button>
       <button class="card-menu condition-button" data-conditions="${c.id}" title="Состояния" aria-label="Состояния ${escapeHTML(c.name)}">◆</button>
       <button class="card-menu initiative-value" data-initiative="${c.id}" title="Вписать инициативу" aria-label="Инициатива ${escapeHTML(c.name)}">${c.initiative ?? '—'}</button>
@@ -98,26 +188,71 @@ function combatCard(c, draft, placed, index, count) {
     ${c.effects.length ? `<div class="card-conditions">${conditionChips(c)}</div>` : ''}
   </article>`;
 }
+const hpDrafts = new Map();
+let combatBattle;
+const cardMarkup = new WeakMap();
+function renderCards(list, cards, key, empty = '') {
+  const existing = new Map([...list.children].map(node => [node.dataset[key], node]));
+  const keep = new Set(cards.map(({ id }) => id));
+  for (const [id, node] of existing) if (!keep.has(id)) node.remove();
+  if (!cards.length) {
+    list.innerHTML = empty;
+    return;
+  }
+  const template = document.createElement('template');
+  let cursor = list.firstElementChild;
+  for (const { id, html } of cards) {
+    const old = existing.get(id);
+    let node = old;
+    if (!node || cardMarkup.get(node) !== html) {
+      template.innerHTML = html;
+      node = template.content.firstElementChild;
+      cardMarkup.set(node, html);
+      if (old) {
+        old.replaceWith(node);
+        if (old === cursor) cursor = node;
+      }
+    }
+    if (node !== cursor) list.insertBefore(node, cursor);
+    cursor = node.nextElementSibling;
+  }
+}
 function renderCombat() {
   $('combat-count').textContent = state.combatants.length;
   $('round').textContent = `Раунд ${state.round} · ${state.acted.length}/${state.combatants.length}`;
   $('round').title = 'Номер раунда и количество завершённых ходов';
   $('undo-hp').disabled = !state.history.length;
   $('next-turn').disabled = !state.combatants.length;
-  $('roll-initiative').disabled = !state.combatants.some(c => c.role === 'enemy');
+  $('jump-to-turn').hidden = !state.turn;
+  $('roll-initiative').disabled = !state.combatants.length;
   $('reset-order').hidden = !state.manualOrder;
-  // Preserve unfinished HP input across changes arriving from another window.
-  const drafts = new Map([...document.querySelectorAll('.hp-form input')].map(el => [el.closest('form').dataset.id, el.value]));
-  const focused = document.activeElement?.closest('.hp-form')?.dataset.id;
+  if (combatBattle !== state.activeBattleId) {
+    combatBattle = state.activeBattleId;
+    hpDrafts.clear();
+    $('combat-search').value = $('combat-role-filter').value = '';
+  }
+  $('combat-search-row').hidden = !state.combatants.length;
+  const query = $('combat-search').value.trim().toLocaleLowerCase('ru');
+  const role = $('combat-role-filter').value;
+  const focus = document.activeElement;
+  const focused = focus?.closest('.hp-form')?.dataset.id;
   const byId = new Map(state.combatants.map(c => [c.id, c]));
-  const order = state.order.map(id => byId.get(id));
   const placed = new Set(state.tokens.map(t => t.combatantId));
-  const empty = '<div class="empty-state"><span class="empty-symbol">⚔</span><strong>Бойцов пока нет</strong></div>';
-  $('combat-list').innerHTML = order.length
-    ? order.map((c, index) => combatCard(c, drafts.get(c.id), placed.has(c.id), index, order.length)).join('')
-    : empty;
-  ambience.combat($('combat-list'), byId, state.activeBattleId, state.turn, state.round);
-  if (focused) document.querySelector(`.hp-form[data-id="${focused}"] input`)?.focus();
+  const acted = new Set(state.acted);
+  const cards = state.order.flatMap((id, index) => {
+    const c = byId.get(id);
+    return (role && role !== c.role || query && !c.name.toLocaleLowerCase('ru').includes(query)) ? [] :
+      [{ id, html: combatCard(c, placed.has(id), index, state.order.length, acted) }];
+  });
+  const list = $('combat-list');
+  renderCards(list, cards, 'id', `<div class="empty-state"><strong>${state.combatants.length ? 'Никого не нашли' : 'Бойцов пока нет'}</strong></div>`);
+  for (const id of hpDrafts.keys()) if (!byId.has(id)) hpDrafts.delete(id);
+  for (const input of list.querySelectorAll('.hp-form input')) {
+    const value = hpDrafts.get(input.form.dataset.id) ?? '';
+    if (input.value !== value) input.value = value;
+  }
+  ambience.combat(list, byId, state.activeBattleId, state.turn, state.round);
+  if (focused && document.activeElement !== focus) list.querySelector(`.hp-form[data-id="${CSS.escape(focused)}"] input`)?.focus();
   if ($('initiative-dialog').open) renderInitiative();
 }
 function renderMap() {
@@ -152,21 +287,7 @@ function renderMap() {
   layoutMap();
   mapScene.render(state, boardLayout, previewToken);
   if (!isPlayerMap) renderNotePins(zoom);
-  if (draggingToken) return;
-  if (selectedToken && !state.tokens.some(t => t.combatantId === selectedToken)) selectedToken = null;
-  const focusedToken = document.activeElement?.dataset.token;
-  const actors = new Map(state.mapCombatants.map(actor => [actor.id, actor]));
-  $('map-tokens').innerHTML = state.tokens.map(t => {
-    const c = actors.get(t.combatantId); if (!c) return '';
-    if (isPlayerMap && !mapScene.tokenVisible(t.combatantId === previewToken?.id ? previewToken : t)) return '';
-    const hp = Number.isFinite(c.hp) ? `${c.hp}/${c.maxHp}` : '';
-    const details = [c.name, hp && `${hp} ХП`, ...c.effects.map(effect => effect.name)].filter(Boolean).join(' · ');
-    return `<button class="token ${c.hp === 0 ? 'dead' : ''} ${state.turn === c.id ? 'active-turn' : ''} ${selectedToken === c.id ? 'selected-token' : ''}" data-token="${c.id}" title="${escapeHTML(details)}" aria-label="${escapeHTML(c.name)}" style="left:${(m.offsetX + t.col * m.grid) * zoom}px;top:${(m.offsetY + t.row * m.grid) * zoom}px">
-      <span class="token-face">${avatar(c, 'token-body')}${hp ? `<span class="token-hp">${hp}</span>` : ''}
-      ${c.effects.length ? `<span class="token-conditions">${conditionChips(c, true)}</span>` : ''}</span>
-    </button>`;
-  }).join('');
-  if (focusedToken) [...$('map-tokens').children].find(token => token.dataset.token === focusedToken)?.focus({ preventScroll: true });
+  renderMapTokens(zoom);
   if (restoreMapCamera && img.complete) {
     restoreMapCamera = false;
     viewport.scrollTo(
@@ -175,6 +296,31 @@ function renderMap() {
     );
     if (!isPlayerMap) queueMapCamera();
   }
+  if (isPlayerMap) paintPlayerMap();
+}
+function renderMapTokens(zoom) {
+  if (draggingToken) return;
+  const m = state.map;
+  if (selectedToken && !state.tokens.some(t => t.combatantId === selectedToken)) selectedToken = null;
+  const focusedToken = document.activeElement?.dataset.token;
+  const actors = new Map(state.mapCombatants.map(actor => [actor.id, actor]));
+  const tokens = state.tokens.flatMap(t => {
+    const c = actors.get(t.combatantId); if (!c) return [];
+    if (isPlayerMap && !mapScene.tokenVisible(t.combatantId === previewToken?.id ? previewToken : t)) return [];
+    const hp = Number.isFinite(c.hp) ? `${c.hp}/${c.maxHp}` : '';
+    const details = [c.name, hp && `${hp} ХП`, ...c.effects.map(effect => effect.name)].filter(Boolean).join(' · ');
+    const html = `<button class="token ${c.hp === 0 ? 'dead' : ''} ${state.turn === c.id ? 'active-turn' : ''} ${selectedToken === c.id ? 'selected-token' : ''}" data-token="${c.id}" title="${escapeHTML(details)}" aria-label="${escapeHTML(c.name)}">
+      <span class="token-face">${avatar(c, 'token-body')}${hp ? `<span class="token-hp">${hp}</span>` : ''}
+      ${c.effects.length ? `<span class="token-conditions">${conditionChips(c, true)}</span>` : ''}</span>
+    </button>`;
+    return [{ id: c.id, html, col: t.col, row: t.row }];
+  });
+  const tokenLayer = $('map-tokens');
+  renderCards(tokenLayer, tokens, 'token');
+  for (const [index, { col, row }] of tokens.entries()) {
+    positionToken(tokenLayer.children[index], m, col, row, zoom);
+  }
+  if (focusedToken) [...$('map-tokens').children].find(token => token.dataset.token === focusedToken)?.focus({ preventScroll: true });
   if (isPlayerMap) {
     const visibleIds = new Set([...$('map-tokens').children].map(button => button.dataset.token));
     const unique = new Map(state.mapCombatants.filter(c => visibleIds.has(c.id)).flatMap(c => c.effects.map(effect => [effect.badge, effect.name])));
@@ -182,15 +328,19 @@ function renderMap() {
     const content = [...unique].filter(([badge, name]) => badge !== name)
       .map(([badge, name]) => `<span><b>${escapeHTML(badge)}</b> ${escapeHTML(name)}</span>`).join('');
     legend.hidden = !content;
-    legend.innerHTML = content;
-    paintPlayerMap();
+    if (legend.innerHTML !== content) legend.innerHTML = content;
   }
 }
+let renderedMusic;
 function renderMusic() {
   if (!state.music.folders.includes(currentFolder)) currentFolder = state.music.folders[0];
-  $('folders').innerHTML = state.music.folders.map(f => `<button class="folder ${f === currentFolder ? 'selected' : ''}" data-folder="${escapeHTML(f)}">${escapeHTML(f)}</button>`).join('');
-  const tracks = state.music.tracks.filter(t => t.folder === currentFolder);
-  $('track-list').innerHTML = tracks.length ? tracks.map(t => `<div class="track ${state.music.current === t.id ? 'current' : ''}"><button class="track-play" data-play="${t.id}" title="Воспроизвести">▶</button><span class="track-title" title="${escapeHTML(t.title)}">${escapeHTML(t.title)}</span><select data-move-track="${t.id}" aria-label="Папка трека">${state.music.folders.map(f => `<option ${t.folder === f ? 'selected' : ''}>${escapeHTML(f)}</option>`).join('')}</select><button class="track-delete" data-delete-track="${t.id}" title="Удалить трек">×</button></div>`).join('') : '<div class="empty-state"><span class="empty-symbol">♫</span><strong>В этой папке пока нет треков</strong></div>';
+  const listKey = JSON.stringify([currentFolder, state.music.current, state.music.folders, state.music.tracks]);
+  if (renderedMusic !== listKey) {
+    renderedMusic = listKey;
+    $('folders').innerHTML = state.music.folders.map(f => `<button class="folder ${f === currentFolder ? 'selected' : ''}" data-folder="${escapeHTML(f)}">${escapeHTML(f)}</button>`).join('');
+    const tracks = state.music.tracks.filter(t => t.folder === currentFolder);
+    $('track-list').innerHTML = tracks.length ? tracks.map(t => `<div class="track ${state.music.current === t.id ? 'current' : ''}"><button class="track-play" data-play="${t.id}" title="Воспроизвести">▶</button><span class="track-title" title="${escapeHTML(t.title)}">${escapeHTML(t.title)}</span><select data-move-track="${t.id}" aria-label="Папка трека">${state.music.folders.map(f => `<option ${t.folder === f ? 'selected' : ''}>${escapeHTML(f)}</option>`).join('')}</select><button class="track-delete" data-delete-track="${t.id}" title="Удалить трек">×</button></div>`).join('') : '<div class="empty-state"><strong>В этой папке пока нет треков</strong></div>';
+  }
   const current = state.music.tracks.find(t => t.id === state.music.current);
   $('current-title').textContent = current?.title || 'Выберите трек';
   $('play-pause').textContent = state.music.playing ? 'Ⅱ' : '▶';
@@ -445,7 +595,7 @@ document.addEventListener('click', async e => {
   else if (button.dataset.play) await dispatch('music:play', { id: button.dataset.play });
   else if (button.dataset.deleteTrack) await dispatch('music:remove', { id: button.dataset.deleteTrack });
 });
-const storyBoard = createStoryBoard({ getStory: () => state?.story, dispatch, openDialog, closeDialog });
+const storyBoard = createStoryBoard({ getStory: () => state?.story, dispatch, openDialog, closeDialog, assetURL, imageDraft: noteDraft });
 function selectCharacters(tab) {
   charactersTab = tab;
   for (const [id, panel] of [['sheets', 'sheet-content'], ['gallery', 'gallery'], ['notes', 'story']]) {
@@ -588,8 +738,10 @@ $('confirm-remove-token').onclick = () => {
 };
 async function importLss(file) {
   const response = await result(api.importLss(file, state.activeBattleId));
-  if (response?.ok) toast(response.initiativeNeedsReview
-    ? 'Лист добавлен. Проверь бонус инициативы, в листе была формула.' : 'Лист Long Story Short добавлен в бой');
+  if (response?.ok) toast([
+    response.portraitImported ? 'Лист и портрет Long Story Short добавлены в бой.' : 'Лист Long Story Short добавлен без портрета.',
+    response.initiativeNeedsReview && 'Проверь бонус инициативы из формулы листа.'
+  ].filter(Boolean).join(' '));
 }
 function dndCardLink(value) {
   try {
@@ -688,7 +840,7 @@ function openCombatantEditor(combatant, template = false) {
   editingCombatant = template ? null : combatant?.id ?? null;
   editingTemplate = template ? combatant?.id ?? '' : null;
   editingContext = currentContext();
-  portrait = combatant?.image ?? null;
+  portraitDraft.reset([combatant?.image]);
   form.elements.role.value = combatant?.role ?? 'enemy';
   form.elements.initiativeBonus.value = combatant?.initiativeBonus ?? 0;
   $('editor-title').textContent = template ? (combatant ? 'Редактировать заготовку' : 'Новая заготовка')
@@ -702,24 +854,23 @@ function openCombatantEditor(combatant, template = false) {
     for (const field of ['name', 'maxHp']) form.elements[field].value = combatant[field];
     if (editingCombatant) form.elements.hp.value = combatant.hp;
   }
-  $('portrait-preview').innerHTML = portrait ? `<img src="${assetURL(portrait)}" alt="Портрет">` : '＋';
   openDialog('editor');
 }
 $('add-combatant').onclick = () => openCombatantEditor();
 $('save-template-copy').onclick = () => {
   if ($('combatant-form').reportValidity()) saveCombatant(true);
 };
-$('choose-portrait').onclick = async () => { const r = await result(api.importFile('image')); if (r?.asset) { portrait = r.asset; $('portrait-preview').innerHTML = `<img src="${assetURL(portrait)}" alt="Портрет">`; } };
 $('combatant-form').onsubmit = async e => {
   e.preventDefault();
   await saveCombatant(false);
 };
 async function saveCombatant(copyTemplate) {
+  if (portraitDraft.busy) return;
   const form = $('combatant-form'), f = new FormData(form);
   const payload = {
     name: f.get('name'), maxHp: Number(f.get('maxHp')),
     initiativeBonus: Number(form.elements.initiativeBonus.value),
-    role: f.get('role'), image: portrait
+    role: f.get('role'), image: portraitDraft.assets[0] ?? null
   };
   const template = editingTemplate !== null || copyTemplate;
   if (template && editingTemplate) payload.id = editingTemplate;
@@ -731,15 +882,38 @@ async function saveCombatant(copyTemplate) {
 $('combat-list').addEventListener('submit', async e => {
   if (!e.target.matches('.hp-form')) return; e.preventDefault();
   const input = e.target.querySelector('input'), expression = input.value.replace('−', '-');
-  input.value = ''; const r = await dispatch('combatant:hp', { id: e.target.dataset.id, expression });
-  if (!r?.ok) { input.value = expression; renderCombat(); }
+  const id = e.target.dataset.id, context = currentContext();
+  input.value = '';
+  hpDrafts.delete(id);
+  const r = await dispatch('combatant:hp', { id, expression }, context);
+  if (!r?.ok && context.expectedBattleId === state.activeBattleId && context.expectedCampaignId === campaignId && !hpDrafts.has(id)) {
+    hpDrafts.set(id, expression);
+    renderCombat();
+  }
 });
+$('combat-list').addEventListener('input', event => {
+  if (event.target.form?.matches('.hp-form')) hpDrafts.set(event.target.form.dataset.id, event.target.value);
+});
+$('combat-search').oninput = renderCombat;
+$('combat-role-filter').onchange = renderCombat;
+$('jump-to-turn').onclick = () => {
+  if (!state.turn) return;
+  const selector = `.combat-card[data-id="${CSS.escape(state.turn)}"] .initiative-value`;
+  if (!$('combat-list').querySelector(selector)) {
+    $('combat-search').value = $('combat-role-filter').value = '';
+    renderCombat();
+  }
+  $('combat-list').querySelector(selector)?.focus();
+};
 $('next-turn').onclick = () => dispatch('combat:next');
 $('reset-order').onclick = () => dispatch('combat:sort');
 function renderInitiative() {
   for (const button of document.querySelectorAll('[data-roll-role]')) {
     button.disabled = !state.combatants.some(c => c.role === button.dataset.rollRole);
   }
+  const hasProgress = state.round !== 1 || state.turn || state.manualOrder || state.combatants.some(c => c.initiative != null);
+  $('reset-initiative').disabled = !hasProgress;
+  if (!hasProgress) $('initiative-reset-confirm').hidden = true;
   $('initiative-results').innerHTML = state.combatants
     .filter(c => c.initiativeRoll)
     .sort((a, b) => b.initiative - a.initiative)
@@ -747,8 +921,23 @@ function renderInitiative() {
 }
 $('roll-initiative').onclick = () => {
   initiativeContext = currentContext();
+  $('initiative-reset-confirm').hidden = true;
   renderInitiative();
   openDialog('initiative-dialog');
+};
+$('reset-initiative').onclick = () => {
+  $('initiative-reset-confirm').hidden = false;
+  $('cancel-initiative-reset').focus();
+};
+$('cancel-initiative-reset').onclick = () => {
+  $('initiative-reset-confirm').hidden = true;
+  $('reset-initiative').focus();
+};
+$('confirm-initiative-reset').onclick = async () => {
+  if ((await dispatch('combat:reset-initiative', {}, initiativeContext))?.ok) {
+    closeDialog($('initiative-dialog'));
+    toast('Инициатива сброшена. Начинается первый раунд.');
+  }
 };
 function openConditions(id) {
   const actor = state.combatants.find(c => c.id === id);
@@ -899,7 +1088,11 @@ async function putItem(item, cell, map, context) {
   const a = MapGeometry.cellCenter(map, cell.col, cell.row);
   return dispatch('terrain:add', { kind: 'item', name: item.name, image: item.image, a }, context);
 }
+let pinsKey = [];
 function renderNotePins(zoom) {
+  const key = [campaignId, state.notePins, state.notePins.length ? state.story.notes : null, zoom];
+  if (key.every((value, index) => value === pinsKey[index])) return;
+  pinsKey = key;
   const notes = new Map(state.story.notes.map(note => [note.id, note.title]));
   const layer = $('map-note-pins');
   const focused = document.activeElement?.dataset.notePin;
@@ -939,7 +1132,8 @@ $('undo-map').onclick = () => result(api.undoMap(currentContext()));
 $('open-player-preview').onclick = () => result(api.detach('preview'));
 async function placeAt(event, entry) {
   const cell = placementCell(event);
-  if (!cell || !entry) return;
+  if (!entry) return;
+  if (!cell) return toast('Выбери клетку внутри карты');
   const payload = { id: entry.id, ...cell };
   const alreadyOnMap = state.tokens.some(token => token.combatantId === entry.id);
   const response = entry.kind === 'note' ? await dispatch('map:pin', { noteId: entry.id, ...MapGeometry.cellCenter(state.map, cell.col, cell.row) }, entry.context)
@@ -1178,7 +1372,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'F11') { e.preventDefault(); result(api.fullscreen()); }
   if (!isPlayerMap && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) && !document.querySelector('dialog[open]')) {
     e.preventDefault();
-    if (charactersTab === 'notes' && document.activeElement?.closest('#story')) return;
+    if (charactersTab === 'notes' && document.activeElement?.closest('#story')) return storyBoard.pasteNewNote();
     if (charactersTab === 'gallery' && (!expanded || expanded === 'characters') && !document.activeElement?.closest('[data-panel="map"]')) {
       importGallery(api.pasteImage());
     } else loadMap(api.pasteImage());
@@ -1370,7 +1564,11 @@ api.onStatus(status => {
     if (Object.hasOwn(status, 'token')) {
       previewToken = status.token;
       if (previewToken && !state.fog.enabled) paintPlayerMap();
-      else renderMap();
+      else if (boardLayout) {
+        mapScene.previewFog(state, boardLayout, previewToken);
+        renderMapTokens(boardLayout.zoom);
+        paintPlayerMap();
+      }
     } else paintPlayerMap();
     if (status.ping) showMapPing(status.ping);
   }
@@ -1395,8 +1593,11 @@ function beginResize(e, kind, panel) {
     lastX = event.clientX; lastY = event.clientY;
     const x = (event.clientX - bounds.left) / bounds.width * 100, y = (event.clientY - bounds.top) / bounds.height * 100;
     if (kind === 'left' || (kind === 'corner' && ['combat', 'music'].includes(panel))) next.left = Math.max(18, Math.min(45, x));
-    if (kind === 'middle' || (kind === 'corner' && ['info', 'map'].includes(panel))) next.middle = Math.max(18, Math.min(82 - next.left, x - next.left));
-    if (kind === 'top' || (kind === 'corner' && ['combat', 'info'].includes(panel))) next.top = Math.max(25, Math.min(75, y));
+    if (kind === 'middle' || (kind === 'corner' && ['characters', 'map', 'info'].includes(panel))) {
+      const width = panel === 'map' || kind === 'middle' ? x - next.left : initial.middle + (event.clientX - e.clientX) / bounds.width * 100;
+      next.middle = Math.max(18, Math.min(82 - next.left, width));
+    }
+    if (kind === 'top' || (kind === 'corner' && ['combat', 'characters'].includes(panel))) next.top = Math.max(25, Math.min(75, y));
     work.style.setProperty('--left', next.left + '%'); work.style.setProperty('--middle', next.middle + '%'); work.style.setProperty('--top', next.top + '%'); syncRemoteBounds();
   };
   const finish = () => {
@@ -1412,7 +1613,9 @@ document.querySelectorAll('[data-split]').forEach(el => el.addEventListener('poi
 document.querySelectorAll('.resize-grip').forEach(el => el.addEventListener('pointerdown', e => beginResize(e, 'corner', el.closest('[data-panel]').dataset.panel)));
 new ResizeObserver(syncRemoteBounds).observe($('workspace'));
 window.addEventListener('resize', syncRemoteBounds);
+let windowSnapshot;
 function readWindowState(value) {
+  const previous = windowSnapshot;
   const changingCampaign = !!campaignId && campaignId !== value.campaignId;
   const switched = changingCampaign || state?.activeMapId !== value.state.activeMapId;
   const rotated = !switched && (state?.map.rotation ?? 0) !== (value.state.map.rotation ?? 0);
@@ -1434,23 +1637,59 @@ function readWindowState(value) {
     currentFolder = 'Общее';
     $('audio').pause();
     delete $('audio').dataset.asset;
+    combatBattle = null;
   }
   state = value.state;
   campaignId = value.campaignId;
   campaignChoices = value.campaigns;
   canUndoMap = value.canUndoMap;
   playerBlackout = value.playerBlackout;
-  $('player-blackout').hidden = !playerBlackout;
-  $('player-settings').setAttribute('aria-pressed', String(playerBlackout));
-  if (isPreview) {
+  if (!previous || previous.playerBlackout !== playerBlackout) {
+    $('player-blackout').hidden = !playerBlackout;
+    $('player-settings').setAttribute('aria-pressed', String(playerBlackout));
+  }
+  if (isPreview && (!previous || previous.playerFrame !== value.playerFrame)) {
     previewFrameInfo = value.playerFrame;
     resizePreview();
   }
   detached = value.detached;
   presentation = value.presentation;
   recentImages = value.recentImages;
+  windowSnapshot = value;
 }
-api.onState(value => { readWindowState(value); renderAll(); });
+const pendingState = [];
+function applyWindowPatch(patch) {
+  const before = state, next = { ...state, ...patch.state };
+  const campaignChanged = Object.hasOwn(patch, 'campaignId') && campaignId !== patch.campaignId;
+  const updated = (...keys) => campaignChanged || keys.some(key => Object.hasOwn(patch.state, key));
+  const metadata = (...keys) => campaignChanged || keys.some(key => Object.hasOwn(patch, key));
+  readWindowState({ ...windowSnapshot, ...patch, state: next });
+  const layoutChanged = updated('layout') || metadata('detached');
+  const mapChanged = updated('activeMapId', 'map', 'tokens', 'terrain', 'drawings', 'fog', 'visionOrigins', 'mapCombatants', 'turn', 'notePins') ||
+    metadata('detached', 'canUndoMap', 'playerFrame') || (!isPlayerMap && next.story.notes !== before.story.notes && next.notePins.length);
+  if (isPlayerMap) {
+    if (mapChanged) renderMap();
+    if (metadata('presentation')) renderPresentation();
+    return;
+  }
+  if (layoutChanged) renderLayout();
+  const slotsChanged = updated('battleChoices', 'mapChoices', 'activeBattleId', 'activeMapId');
+  if (slotsChanged) renderSlots();
+  const placementChanged = next.tokens !== before.tokens &&
+    (next.tokens.length !== before.tokens.length || next.tokens.some((token, index) => token.combatantId !== before.tokens[index].combatantId));
+  if (updated('combatants', 'activeBattleId', 'order', 'manualOrder', 'round', 'turn', 'acted', 'history') || placementChanged) renderCombat();
+  if (mapChanged) renderMap();
+  if (updated('music')) renderMusic();
+  if (metadata('presentation')) renderPresentation();
+  if (updated('bookmarks') && $('bookmarks-dialog').open) renderBookmarks();
+  if (updated('library') && $('library-dialog').open) renderLibrary();
+  if ((updated('gallery') || metadata('recentImages')) && charactersTab === 'gallery') renderGallery();
+  if (updated('story') && charactersTab === 'notes') storyBoard.render();
+  if (!detachedPanel && (slotsChanged || updated('scenes', 'story', 'music') || metadata('campaigns', 'detached'))) sessionTools.render();
+  if (layoutChanged || slotsChanged) requestAnimationFrame(syncRemoteBounds);
+}
+let initialized = false;
+api.onState(value => initialized ? applyWindowPatch(value) : pendingState.push(value));
 (async () => {
   const initial = await api.init(); readWindowState(initial); updateUI(initial.updateStatus); updateMusicStatus(initial.musicStatus);
   if (!detachedPanel) populateThemePicker();
@@ -1462,6 +1701,7 @@ api.onState(value => { readWindowState(value); renderAll(); });
   conditionDefinitions = initial.conditionDefinitions;
   reference = initial.reference;
   $('combatant-role').replaceChildren(...Object.entries(combatRoles).map(([id, label]) => new Option(label, id)));
+  $('combat-role-filter').append(...Object.entries(combatRoles).map(([id, label]) => new Option(label, id)));
   $('reference-links').innerHTML = initial.referenceLinks.map(link =>
     `<button type="button" data-reference-link="${link.id}" title="${escapeHTML(link.name)}">${escapeHTML(link.name)}</button>`
   ).join('');
@@ -1484,6 +1724,8 @@ api.onState(value => { readWindowState(value); renderAll(); });
     }
   }
   renderAll();
+  initialized = true;
+  for (const patch of pendingState.splice(0)) applyWindowPatch(patch);
   if (!isPlayerMap) renderReference();
   queueMapCamera();
   if (!detachedPanel) ambience.start({ openDialog, closeDialog, showAtStart: initial.welcomeAtStart });
