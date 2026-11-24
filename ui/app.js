@@ -1500,6 +1500,16 @@ $('volume').onchange = e => dispatch('music:settings', { volume: Number(e.target
 $('audio').onended = () => { if (!state.music.loop) dispatch('music:settings', { playing: false }); };
 $('audio').onerror = () => { if (state?.music.playing) { toast('Аудиофайл недоступен или имеет неподдерживаемый формат'); dispatch('music:settings', { playing: false }); } };
 $('help').onclick = () => openDialog('help-dialog');
+$('screen-fullscreen').onclick = () => result(api.fullscreen());
+function renderMainFullscreen(active) {
+  if (detachedPanel) return;
+  const button = $('screen-fullscreen');
+  button.hidden = false;
+  button.setAttribute('aria-pressed', String(active));
+  const label = active ? 'Выйти из полного экрана' : 'Перейти в полноэкранный режим';
+  button.title = `${label} · F11`;
+  button.setAttribute('aria-label', label);
+}
 document.querySelectorAll('dialog').forEach(dialog => {
   let startedOnBackdrop = false;
   const onBackdrop = event => {
@@ -1540,6 +1550,7 @@ $('updates').onclick = () => result(api.update(currentUpdate?.phase === 'availab
 api.onStatus(status => {
   if (status.scope === 'update') { updateUI(status); if (['available', 'downloaded', 'error', 'latest'].includes(status.phase)) toast(status.text); }
   else if (status.scope === 'appearance-theme') renderTheme(status.theme);
+  else if (status.scope === 'main-fullscreen') renderMainFullscreen(status.active);
   else if (status.scope === 'player-frame' && isPreview) {
     previewFrameInfo = status.frame;
     resizePreview();
@@ -1694,6 +1705,7 @@ api.onState(value => initialized ? applyWindowPatch(value) : pendingState.push(v
   const initial = await api.init(); readWindowState(initial); updateUI(initial.updateStatus); updateMusicStatus(initial.musicStatus);
   if (!detachedPanel) populateThemePicker();
   renderTheme(initial.theme);
+  renderMainFullscreen(initial.mainFullscreen);
   if (initial.mac) {
     document.querySelectorAll('[data-paste-shortcut]').forEach(label => { label.textContent = '⌘V'; });
   }

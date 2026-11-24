@@ -387,6 +387,7 @@ function setupIPC() {
     const snapshot = windowState(event.sender);
     windowSnapshots.set(event.sender, snapshot);
     return { ...snapshot, version: app.getVersion(), updateStatus, musicStatus,
+      mainFullscreen: event.sender === mainWindow?.webContents && mainWindow.isFullScreen(),
       conditionDefinitions: CONDITIONS, combatRoles: ROLES, referenceLinks: REFERENCE_LINKS,
       reference: referenceState(), test: TEST, mac, theme: currentTheme, welcomeAtStart: !TEST || process.env.DM_SCREEN_WELCOME_TEST === '1' };
   });
@@ -771,7 +772,13 @@ app.whenReady().then(async () => {
     { label: 'Окно', submenu: [{ role: 'minimize' }, { role: 'close' }, { role: 'togglefullscreen' }] },
   ]) : null);
   setupIPC(); setupUpdater();
-  mainWindow = secureWindow({ title: 'Интерактивная ширма мастера' });
+  mainWindow = secureWindow({
+    title: 'Интерактивная ширма мастера',
+    fullscreen: !TEST || process.env.DM_SCREEN_TEST_START_FULLSCREEN === '1'
+  });
+  for (const [event, active] of [['enter-full-screen', true], ['leave-full-screen', false]]) {
+    mainWindow.on(event, () => mainWindow.webContents.send('status', { scope: 'main-fullscreen', active }));
+  }
   mainWindow.on('close', () => { quitting = true; for (const w of windows.values()) w.close(); });
   await mainWindow.loadURL('dm://app/index.html');
 });

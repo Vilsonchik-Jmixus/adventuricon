@@ -19,8 +19,8 @@ const pasteInField = locator => locator.evaluate((field, base64) => {
   data.items.add(new File([Uint8Array.from(atob(base64), byte => byte.charCodeAt(0))], 'image.png', { type: 'image/png' }));
   field.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
 }, image);
-async function launch() {
-  app = await _electron.launch({ executablePath, args, env });
+async function launch(extraEnv = {}) {
+  app = await _electron.launch({ executablePath, args, env: { ...env, ...extraEnv } });
   const page = await app.firstWindow();
   await expect(page.locator('#version')).toHaveText(`v${require('../package.json').version}`);
   return page;
@@ -125,7 +125,14 @@ async function main() {
   await page.screenshot({ path: path.join(directory, 'workspace-compact.png') });
   assert.deepEqual(errors, []);
   await app.close();
-  page = await launch();
+  page = await launch({ DM_SCREEN_TEST_START_FULLSCREEN: '1' });
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].showInactive());
+  await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFullScreen())).toBe(true);
+  await expect(page.locator('#screen-fullscreen')).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('F11');
+  await expect(page.locator('#screen-fullscreen')).toHaveAttribute('aria-pressed', 'false');
+  await page.click('#screen-fullscreen');
+  await expect(page.locator('#screen-fullscreen')).toHaveAttribute('aria-pressed', 'true');
   await page.click('#show-notes');
   await expect(page.locator('.story-note-image')).toHaveCount(2);
   await loaded(page.locator('.story-note-image').last());
