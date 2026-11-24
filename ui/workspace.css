@@ -129,6 +129,8 @@ body.player-map .map { border: 0; border-radius: 0; box-shadow: none; }
 
 @media (max-width: 1150px) {
   #workspace-modes button { padding-inline: 5px; }
+  .music-content .track-list { min-height: 24px; }
+  .music-content > .player { flex: none; }
   #current-turn { gap: 3px 5px; }
   #turn-actor { flex-basis: 4rem; padding-inline: 3px; }
   .quick-hp button { min-width: 21px; padding-inline: 3px; }
