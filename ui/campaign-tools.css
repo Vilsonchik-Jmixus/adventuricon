@@ -1,0 +1,59 @@
+.campaign-tools, .page-zoom { display: flex; flex: none; align-items: center; gap: 3px; }
+body.detached .campaign-tools { display: none; }
+.page-zoom { margin-inline-start: auto; white-space: nowrap; }
+.page-zoom button { font-variant-numeric: tabular-nums; padding: 3px 5px; }
+#reference-extra-tabs {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  padding: 4px 6px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+}
+#reference-extra-tabs > div { display: flex; flex: none; max-width: min(70%, 220px); }
+#reference-extra-tabs button { font-size: 11px; padding: 3px 6px; }
+#reference-extra-tabs button:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#reference-extra-tabs button[aria-pressed="true"] { border-color: var(--mint); color: var(--mint); }
+#open-round-events { position: relative; }
+#open-round-events.event-pending { border-color: var(--mint); }
+#open-round-events.event-pending::after {
+  content: attr(data-count);
+  position: absolute;
+  inset: -5px -5px auto auto;
+  padding: 0 3px;
+  background: var(--mint);
+  color: var(--bg);
+  font-size: 10px;
+}
+.wide-dialog { width: min(700px, 93vw); }
+.search-field, #journal-summary, #round-events-context { margin-block: 8px; }
+.tool-list { display: grid; gap: 5px; max-height: 40vh; overflow: auto; }
+.tool-list:empty { display: none; }
+.campaign-result, .journal-entry, .round-event {
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+.campaign-result, .round-event { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; text-align: start; }
+.campaign-result.selected, .journal-entry.selected { border-color: var(--mint); }
+.result-kind { font-size: 11px; color: var(--mint); white-space: nowrap; }
+.result-title { min-width: 0; }
+.result-detail { font-size: 11px; color: var(--muted); }
+.campaign-result .result-detail { flex-basis: 100%; }
+.journal-entry > div { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+.journal-entry > div > span, .round-event > button:first-of-type { flex: 1; }
+.journal-entry p { white-space: pre-wrap; }
+.round-event > button:first-of-type { text-align: start; }
+.journal-entry button, .round-event button { padding: 3px 6px; }
+#journal-form, #round-event-form { margin-top: 12px; gap: 4px; }
+#journal-form textarea { resize: vertical; min-height: 60px; }
+#round-event-form .round-field { flex: 0 0 77px; }
+#shortcut-bindings { display: grid; gap: 5px; max-height: 55vh; overflow: auto; }
+#shortcut-bindings label { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+#shortcut-bindings select { padding: 4px 6px; }
+#shortcut-error { color: var(--mint); }
+#toast { white-space: pre-line; }
+@media (max-width: 1230px) {
+  body:has(#return-map:not([hidden])) #screen-tip { display: none; }
+}

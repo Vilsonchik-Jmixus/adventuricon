@@ -7,7 +7,8 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetUR
   let tool = 'move', source = null, gesture, ignoreClick = false;
   let editing, newPosition, lastRender;
   const renderedNotes = new WeakMap();
-  let cameraX = 0, cameraY = 0;
+  let cameraX = 0, cameraY = 0, zoom = 1;
+  const zoomSteps = [0.25, 0.33, 0.5, 0.67, 0.8, 1, 1.25, 1.5, 2, 2.5, 3];
   const limit = 1000000;
 
   const cardFor = id => cards.querySelector(`[data-story-note="${CSS.escape(id)}"]`);
@@ -15,12 +16,24 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetUR
   function moveCamera(x, y) {
     cameraX = coordinate(x);
     cameraY = coordinate(y);
-    world.style.transform = `translate(${-cameraX}px, ${-cameraY}px)`;
-    viewport.style.backgroundPosition = `${-cameraX % 18}px ${-cameraY % 18}px`;
+    world.style.transform = `translate(${-cameraX * zoom}px, ${-cameraY * zoom}px) scale(${zoom})`;
+    viewport.style.backgroundSize = `${18 * zoom}px ${18 * zoom}px`;
+    viewport.style.backgroundPosition = `${(-cameraX % 18) * zoom}px ${(-cameraY % 18) * zoom}px`;
+  }
+  function changeZoom(direction, x = viewport.clientWidth / 2, y = viewport.clientHeight / 2) {
+    if (gesture) return;
+    const next = direction === 0 ? 1 : zoomSteps[zoomSteps.indexOf(zoom) + direction];
+    if (!next || next === zoom) return;
+    const anchorX = cameraX + x / zoom, anchorY = cameraY + y / zoom;
+    zoom = next;
+    moveCamera(anchorX - x / zoom, anchorY - y / zoom);
+    get('story-zoom-reset').textContent = Math.round(zoom * 100) + '%';
+    get('story-zoom-out').disabled = zoom === zoomSteps[0];
+    get('story-zoom-in').disabled = zoom === zoomSteps.at(-1);
   }
   const pointAt = event => {
     const bounds = world.getBoundingClientRect();
-    return { x: coordinate(event.clientX - bounds.left), y: coordinate(event.clientY - bounds.top) };
+    return { x: coordinate((event.clientX - bounds.left) / zoom), y: coordinate((event.clientY - bounds.top) / zoom) };
   };
   function pathElement(d, className) {
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -160,14 +173,14 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetUR
     if (dialog.open) fillLinks();
   }
   function firstFreePosition(fields) {
-    const left = cameraX + 16, top = cameraY + 16;
+    const left = cameraX + 16 / zoom, top = cameraY + 16 / zoom;
     const all = Array.from(cards.children, cardBounds);
     const candidate = createCard({ ...fields, id: '', x: 0, y: 0 });
     candidate.style.visibility = 'hidden';
     cards.append(candidate);
     const { width, height } = cardBounds(candidate);
     candidate.remove();
-    const columns = Math.max(1, Math.floor(viewport.clientWidth / (width + 20)));
+    const columns = Math.max(1, Math.floor(viewport.clientWidth / zoom / (width + 20)));
     let index = 0, x, y;
     do {
       x = left + index % columns * (width + 20);
@@ -194,11 +207,14 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetUR
     if (from !== to) await dispatch('story:link', { from, to });
   }
   get('story-add').onclick = () => edit();
+  get('story-zoom-out').onclick = () => changeZoom(-1);
+  get('story-zoom-reset').onclick = () => changeZoom(0);
+  get('story-zoom-in').onclick = () => changeZoom(1);
   get('story-home').onclick = () => {
     const { notes, strokes } = getStory();
     const marker = notes[0];
     const [x, y] = marker ? [marker.x, marker.y] : strokes[0]?.points[0] ?? [16, 16];
-    moveCamera(x - 16, y - 16);
+    moveCamera(x - 16 / zoom, y - 16 / zoom);
     viewport.focus({ preventScroll: true });
   };
   get('story-form').onsubmit = async event => {
@@ -260,7 +276,7 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetUR
       placeCard(card, gesture.position);
       drawRopes();
     }
-    if (gesture.kind === 'pan') moveCamera(gesture.left - dx, gesture.top - dy);
+    if (gesture.kind === 'pan') moveCamera(gesture.left - dx / zoom, gesture.top - dy / zoom);
     if (gesture.kind === 'pen' && gesture.points.length < 2000) {
       const [lastX, lastY] = gesture.points.at(-1);
       if (Math.hypot(point.x - lastX, point.y - lastY) >= 2) gesture.points.push([point.x, point.y]);
@@ -323,13 +339,19 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetUR
     if (!card || event.button === 1) { event.preventDefault(); viewport.focus({ preventScroll: true }); }
   });
   viewport.addEventListener('wheel', event => {
-    if (event.ctrlKey) return;
     event.preventDefault();
     if (gesture) return;
+    if (event.ctrlKey || event.metaKey) {
+      if (event.deltaY) {
+        const bounds = viewport.getBoundingClientRect();
+        changeZoom(-Math.sign(event.deltaY), event.clientX - bounds.left, event.clientY - bounds.top);
+      }
+      return;
+    }
     const unit = event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? viewport.clientHeight : 1;
     const horizontal = event.shiftKey && !event.deltaX;
-    moveCamera(cameraX + (horizontal ? event.deltaY : event.deltaX) * unit,
-      cameraY + (horizontal ? 0 : event.deltaY) * unit);
+    moveCamera(cameraX + (horizontal ? event.deltaY : event.deltaX) * unit / zoom,
+      cameraY + (horizontal ? 0 : event.deltaY) * unit / zoom);
   }, { passive: false });
   cards.addEventListener('focusin', event => {
     if (gesture) return;
@@ -338,7 +360,7 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetUR
     const frame = viewport.getBoundingClientRect();
     if (target.right <= frame.left || target.left >= frame.right ||
         target.bottom <= frame.top || target.top >= frame.bottom) {
-      moveCamera(card.offsetLeft - 16, card.offsetTop - 16);
+      moveCamera(card.offsetLeft - 16 / zoom, card.offsetTop - 16 / zoom);
     }
   });
   viewport.addEventListener('pointermove', move);
@@ -352,7 +374,7 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetUR
         PageUp: [0, -viewport.clientHeight + 32], PageDown: [0, viewport.clientHeight - 32] }[event.key];
       if (offset) {
         event.preventDefault();
-        moveCamera(cameraX + offset[0], cameraY + offset[1]);
+        moveCamera(cameraX + offset[0] / zoom, cameraY + offset[1] / zoom);
       }
       return;
     }
@@ -370,7 +392,7 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetUR
   function reveal(id) {
     const card = cardFor(id);
     if (!card) return;
-    moveCamera(card.offsetLeft - 16, card.offsetTop - 16);
+    moveCamera(card.offsetLeft - 16 / zoom, card.offsetTop - 16 / zoom);
     card.classList.add('revealed');
     card.querySelector('.story-note-title').focus({ preventScroll: true });
     setTimeout(() => card.classList.remove('revealed'), 1600);

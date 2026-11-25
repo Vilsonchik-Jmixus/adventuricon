@@ -18,6 +18,8 @@ let mapItemDraft = null;
 const tokenDragType = 'application/x-dm-screen-token';
 let combatRoles = {}, conditionDefinitions = [], conditionEdit, initiativeContext;
 let reference = { tab: 'info', pages: {} };
+let referenceTabsKey;
+let shortcutBindings = DmShortcuts.defaults;
 let presentation = null, recentImages = [], charactersTab = 'sheets', selectedImage = null, previewImage = null;
 const workspaceTabs = { game: 'sheets', preparation: 'notes' };
 const workspaceMode = () => state?.layout.mode ?? 'game';
@@ -429,15 +431,34 @@ function syncRemoteBounds() {
   });
 }
 function renderReference() {
-  const { tab, pages } = reference;
+  const { tab, kind, pages, tabs } = reference;
+  const extra = $('reference-extra-tabs'), tabsKey = JSON.stringify(tabs);
+  if (tabsKey !== referenceTabsKey) {
+    referenceTabsKey = tabsKey;
+    extra.hidden = !tabs.length;
+    extra.replaceChildren(...tabs.map(entry => {
+      const group = document.createElement('div'), open = document.createElement('button'), close = document.createElement('button');
+      open.type = close.type = 'button';
+      open.dataset.referenceTab = entry.id;
+      open.textContent = open.title = entry.title;
+      close.dataset.closeReferenceTab = entry.id;
+      close.dataset.pixelIcon = 'close';
+      close.setAttribute('aria-label', 'Закрыть вкладку ' + entry.title);
+      group.append(open, close);
+      return group;
+    }));
+  }
   for (const button of document.querySelectorAll('[data-reference-tab]')) {
     button.setAttribute('aria-pressed', String(button.dataset.referenceTab === tab));
   }
-  $('rules-surface').hidden = tab !== 'info';
-  $('web-surface').hidden = tab !== 'web';
-  $('reference-links').hidden = tab !== 'info';
-  $('reference-query').placeholder = tab === 'info' ? 'Поиск по dnd.su' : 'Веб-поиск или HTTPS-адрес';
+  $('rules-surface').hidden = kind !== 'info';
+  $('web-surface').hidden = kind !== 'web';
+  $(kind === 'info' ? 'rules-surface' : 'web-surface').dataset.remoteSurface = tab;
+  $('reference-links').hidden = kind !== 'info';
+  $('reference-query').placeholder = kind === 'info' ? 'Поиск по dnd.su' : 'Веб-поиск или HTTPS-адрес';
   const page = pages[tab];
+  $('reference-zoom').textContent = (page?.zoom ?? 100) + '%';
+  $('sheets-zoom').textContent = reference.sheetsZoom + '%';
   const card = dndCardLink(page?.url);
   const drag = $('drag-dnd-card');
   drag.hidden = !card;
@@ -450,8 +471,8 @@ function renderReference() {
   document.querySelector('[data-reference-nav="back"]').disabled = !page?.canBack;
   document.querySelector('[data-reference-nav="forward"]').disabled = !page?.canForward;
   $('reference-query').title = page?.url || '';
-  const message = document.querySelector(`[data-reference-message="${tab}"]`);
-  message.textContent = page?.failed ? 'Страница недоступна. Обнови её или открой в браузере.' : tab === 'info' ? 'Справочник dnd.su' : 'Поиск в интернете';
+  const message = document.querySelector(`[data-reference-message="${kind}"]`);
+  message.textContent = page?.failed ? 'Страница недоступна. Обнови её или открой в браузере.' : kind === 'info' ? 'Справочник dnd.su' : 'Поиск в интернете';
   $('save-bookmark').disabled = !page?.bookmarkable;
   syncRemoteBounds();
 }
@@ -468,6 +489,7 @@ $('reference-form').onsubmit = async event => {
   if (field.value.trim()) await result(api.referenceAction('search', field.value));
 };
 $('open-bookmarks').onclick = () => { renderBookmarks(); openDialog('bookmarks-dialog'); };
+$('new-reference-tab').onclick = () => result(api.referenceAction('new-tab'));
 $('save-bookmark').onclick = async () => {
   if ((await result(api.referenceAction('save-bookmark')))?.ok) toast('Страница в закладках');
 };
@@ -579,7 +601,8 @@ document.addEventListener('click', async e => {
   else if (button.dataset.remote) { const [id, action] = button.dataset.remote.split(':'); await result(api.remoteAction(id, action)); }
   else if (button.dataset.referenceNav) await result(api.referenceAction(button.dataset.referenceNav));
   else if (button.dataset.referenceTab) await result(api.referenceAction('tab', button.dataset.referenceTab));
-  else if (button.dataset.referenceLink) await result(api.referenceAction('shortcut', button.dataset.referenceLink));
+  else if (button.dataset.closeReferenceTab) await result(api.referenceAction('close-tab', button.dataset.closeReferenceTab));
+  else if (button.dataset.referenceLink) await result(api.referenceAction(e.ctrlKey || e.metaKey ? 'shortcut-tab' : 'shortcut', button.dataset.referenceLink));
   else if (button.dataset.bookmark) {
     closeDialog($('bookmarks-dialog'));
     await result(api.referenceAction('bookmark', button.dataset.bookmark));
@@ -651,6 +674,28 @@ async function openStoryNote(id) {
 const sessionTools = createSessionTools({
   getState: () => state, getCampaigns: () => ({ profiles: campaignChoices, active: campaignId }),
   dispatch, campaign: api.campaign, openDialog, closeDialog, askText, showNote: openStoryNote,
+});
+const campaignTools = createCampaignTools({
+  getState: () => state, getContext: currentContext, dispatch, search: api.campaignSearch, openDialog, closeDialog, askText,
+  async navigate(entry) {
+    if (entry.kind === 'scene') return sessionTools.openScene(state.scenes.find(scene => scene.id === entry.id));
+    if (entry.kind === 'note') {
+      const sent = !detachedPanel && detached.includes('characters') &&
+        (await result(api.workspaceCommand({ panel: 'characters', command: 'note', id: entry.id })))?.sent;
+      if (!sent) await openStoryNote(entry.id);
+      return;
+    }
+    const action = entry.kind === 'map' ? 'map:select' : 'battle:select';
+    if (!(await dispatch(action, { id: entry.parentId ?? entry.id }))?.ok) return;
+    if (entry.kind === 'map') {
+      if (expanded && expanded !== 'map') await expandPanel(expanded);
+      viewport.focus({ preventScroll: true });
+    } else if (entry.kind === 'actor') {
+      const sent = !detachedPanel && detached.includes('combat') &&
+        (await result(api.workspaceCommand({ panel: 'combat', command: 'actor', id: entry.id })))?.sent;
+      if (!sent) await focusCombatant(entry.id);
+    }
+  }
 });
 function selectedGalleryImage() {
   return state.gallery.find(item => item.id === selectedImage);
@@ -930,16 +975,17 @@ $('combat-list').addEventListener('input', event => {
 });
 $('combat-search').oninput = renderCombat;
 $('combat-role-filter').onchange = renderCombat;
-function jumpToTurn() {
-  if (!state.turn) return;
-  const selector = `.combat-card[data-id="${CSS.escape(state.turn)}"] .initiative-value`;
+async function focusCombatant(id) {
+  if (!id) return;
+  if (expanded && expanded !== 'combat') await expandPanel(expanded);
+  const selector = `.combat-card[data-id="${CSS.escape(id)}"] .initiative-value`;
   if (!$('combat-list').querySelector(selector)) {
     $('combat-search').value = $('combat-role-filter').value = '';
     renderCombat();
   }
   $('combat-list').querySelector(selector)?.focus();
 }
-$('turn-actor').onclick = jumpToTurn;
+$('turn-actor').onclick = () => focusCombatant(state.turn);
 $('current-turn').addEventListener('click', event => {
   const expression = event.target.closest('[data-quick-hp]')?.dataset.quickHp;
   if (expression && state.turn) dispatch('combatant:hp', { id: state.turn, expression });
@@ -1392,8 +1438,84 @@ viewport.addEventListener('drop', async e => {
     } else if (e.dataTransfer.files[0]) loadMap(api.importDrop(e.dataTransfer.files[0], 'image'));
   }
 });
+function renderShortcutSettings(bindings = shortcutBindings) {
+  $('shortcut-error').textContent = '';
+  $('shortcut-bindings').replaceChildren(...DmShortcuts.definitions.map(([id, , name]) => {
+    const label = document.createElement('label');
+    label.textContent = name;
+    const select = document.createElement('select');
+    select.name = id;
+    select.replaceChildren(...Array.from('ABCDEFGHIJKLMNOPQRSTUVWXYZ', letter => new Option('Ctrl + Alt + ' + letter, letter)));
+    select.value = bindings[id];
+    label.append(select);
+    return label;
+  }));
+}
+function openShortcutSettings() {
+  if ($('screen-settings-dialog').open) closeDialog($('screen-settings-dialog'));
+  renderShortcutSettings();
+  openDialog('shortcuts-dialog');
+}
+function updateShortcuts(bindings) {
+  shortcutBindings = bindings;
+  const buttons = { search: 'open-campaign-search', journal: 'open-journal', 'next-turn': 'next-turn',
+    'new-combatant': 'add-combatant', 'round-events': 'open-round-events', 'reference-new': 'new-reference-tab',
+    'reference-address': 'reference-query', music: 'play-pause', scenes: 'open-session-scenes' };
+  for (const [id, , title] of DmShortcuts.definitions) {
+    if (!buttons[id]) continue;
+    const element = $(buttons[id]);
+    element.title = `${title} · Ctrl + Alt + ${bindings[id]}`;
+    element.setAttribute('aria-keyshortcuts', 'Control+Alt+' + bindings[id]);
+  }
+}
+$('open-shortcuts').onclick = openShortcutSettings;
+$('reset-shortcuts').onclick = () => renderShortcutSettings(DmShortcuts.defaults);
+$('shortcuts-form').onsubmit = async event => {
+  event.preventDefault();
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  if (!DmShortcuts.validateShortcuts(values)) {
+    const repeated = Object.values(values).filter((letter, index, all) => all.indexOf(letter) < index);
+    $('shortcut-error').textContent = 'Эти буквы уже заняты: ' + [...new Set(repeated)].join(', ');
+    return;
+  }
+  const response = await api.setShortcuts(values);
+  if (response?.ok) closeDialog($('shortcuts-dialog'));
+  else $('shortcut-error').textContent = response?.error ?? 'Не удалось сохранить сочетания.';
+};
+async function runReferenceCommand(command) {
+  if (!detachedPanel && detached.includes('info') &&
+      (await result(api.workspaceCommand({ panel: 'info', command })))?.sent) return;
+  if (expanded && expanded !== 'info') await expandPanel(expanded);
+  if (command === 'reference-address') {
+    $('reference-query').focus();
+    $('reference-query').select();
+  } else await result(api.referenceAction(command === 'reference-new' ? 'new-tab' : 'close-tab'));
+}
+function runShortcut(command) {
+  if (!state || isPlayerMap || document.querySelector('dialog[open]') || draggingToken) return;
+  if (detachedPanel && command !== 'fullscreen' && !(detachedPanel === 'info' && command.startsWith('reference-'))) {
+    return result(api.masterShortcut(command));
+  }
+  if (command.startsWith('reference-')) return runReferenceCommand(command);
+  const controls = { search: 'open-campaign-search', journal: 'open-journal', 'next-turn': 'next-turn',
+    'new-combatant': 'add-combatant', 'round-events': 'open-round-events', music: 'play-pause', scenes: 'open-session-scenes' };
+  if (controls[command]) return $(controls[command]).click();
+  if (command === 'shortcut-help') return openShortcutSettings();
+  if (command === 'fullscreen') return result(api.fullscreen());
+  if (command === 'fog') return mapScene.toggleFog();
+  if (command === 'blackout' && detached.includes('map')) {
+    $('toggle-player-blackout').checked = !playerBlackout;
+    $('toggle-player-blackout').dispatchEvent(new Event('change'));
+  }
+}
 document.addEventListener('keydown', e => {
   const modal = document.querySelector('dialog[open]');
+  const command = !isPlayerMap && DmShortcuts.matchShortcut(e, shortcutBindings);
+  if (command && !modal) {
+    e.preventDefault();
+    if (!e.repeat) runShortcut(command);
+    return;
+  }
   if (isPlayerMap && !isPreview && !modal && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey &&
       ['ArrowLeft', 'ArrowRight'].includes(e.key)) {
     e.preventDefault();
@@ -1419,13 +1541,6 @@ document.addEventListener('keydown', e => {
       return;
     }
     if (e.code === 'KeyF') { e.preventDefault(); mapScene.toggleFog(); return; }
-  }
-  if (e.ctrlKey && e.key.toLowerCase() === 'l' && (!detachedPanel || detachedPanel === 'info') &&
-      !$('workspace').querySelector('.info.is-detached') && !document.querySelector('dialog[open]')) {
-    e.preventDefault();
-    if (expanded && expanded !== 'info') expandPanel(expanded);
-    $('reference-query').focus();
-    $('reference-query').select();
   }
   if (e.key === 'Escape' && !modal) {
     if (cancelTokenDrag) { e.preventDefault(); cancelTokenDrag(); return; }
@@ -1629,6 +1744,19 @@ api.onStatus(status => {
     if (state) renderMap();
   }
   else if (status.scope === 'music') updateMusicStatus(status);
+  else if (status.scope === 'shortcuts') updateShortcuts(status.bindings);
+  else if (status.scope === 'shortcut') runShortcut(status.command);
+  else if (status.scope === 'workspace-command') {
+    if (status.command === 'note') openStoryNote(status.id);
+    else if (status.command === 'actor') focusCombatant(status.id);
+    else if (!document.querySelector('dialog[open]')) runReferenceCommand(status.command);
+  }
+  else if (status.scope === 'round-events') {
+    if (!isPlayerMap) {
+      campaignTools.remind(status.events);
+      toast(status.events.map(entry => `Раунд ${entry.round}. ${entry.title}`).join('\n'));
+    }
+  }
   else if (status.scope === 'map-focus') focusToken(status.id);
   else if (status.scope === 'map-place' && !detachedPanel) beginPlacement(status.kind, status.id, status);
   else if (status.scope === 'reference') {
@@ -1762,6 +1890,7 @@ function applyWindowPatch(patch) {
     return;
   }
   if (layoutChanged) renderLayout();
+  campaignTools.render(campaignChanged ? null : before);
   const slotsChanged = updated('battleChoices', 'mapChoices', 'activeBattleId', 'activeMapId');
   if (slotsChanged) renderSlots();
   const placementChanged = next.tokens !== before.tokens &&
@@ -1791,6 +1920,7 @@ api.onState(value => initialized ? applyWindowPatch(value) : pendingState.push(v
   combatRoles = initial.combatRoles;
   conditionDefinitions = initial.conditionDefinitions;
   reference = initial.reference;
+  updateShortcuts(initial.shortcuts);
   $('combatant-role').replaceChildren(...Object.entries(combatRoles).map(([id, label]) => new Option(label, id)));
   $('combat-role-filter').append(...Object.entries(combatRoles).map(([id, label]) => new Option(label, id)));
   const referenceIcons = { classes: 'people', races: 'people', spells: 'spark', monsters: 'swords', armor: 'shield',
@@ -1808,12 +1938,12 @@ api.onState(value => initialized ? applyWindowPatch(value) : pendingState.push(v
     dock.title = 'Вернуть в ширму';
     dock.setAttribute('aria-label', dock.title);
     const title = document.querySelector(`[data-panel="${detachedPanel}"] h1`)?.textContent ?? 'Листы персонажей';
-    document.title = title + ' · Ширма мастера';
+    document.title = title + ' · Адвенчурикон';
     if (isPlayerMap) {
       document.body.classList.add('player-map');
       if (isPreview) document.body.classList.add('preview-screen');
       document.querySelector('.map h1').textContent = 'Карта игроков';
-      document.title = isPreview ? 'Предпросмотр экрана игроков' : 'Карта игроков · Ширма мастера';
+      document.title = isPreview ? 'Предпросмотр экрана игроков' : 'Карта игроков · Адвенчурикон';
       viewport.inert = true;
       $('rotate-player-left').hidden = $('rotate-player-right').hidden = isPreview;
       $('player-blackout').hidden = !playerBlackout;
@@ -1821,6 +1951,7 @@ api.onState(value => initialized ? applyWindowPatch(value) : pendingState.push(v
     }
   }
   renderAll();
+  if (!isPlayerMap) campaignTools.render();
   initialized = true;
   for (const patch of pendingState.splice(0)) applyWindowPatch(patch);
   if (!isPlayerMap) renderReference();

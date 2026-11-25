@@ -6,6 +6,8 @@ const finite = (n, fallback) => Number.isFinite(Number(n)) ? Number(n) : fallbac
 const text = (v, max = 120) => String(v ?? '').trim().slice(0, max);
 const newFog = (enabled = false) => ({ enabled, explored: [] });
 const newStory = () => ({ notes: [], links: [], strokes: [] });
+const newJournal = () => ({ active: null, sessions: [] });
+const journalEntry = (body, kind = 'note') => ({ id: randomUUID(), body, kind, date: new Date().toISOString() });
 const storyCoordinate = n => clamp(Math.round(finite(n, 0)), -1000000, 1000000);
 const gameSizes = { left: 32, middle: 34, top: 60 };
 const preparationSizes = { left: 25, middle: 46, top: 58 };
@@ -14,7 +16,7 @@ function restoreLayout(saved = {}) {
     preparation: { ...preparationSizes, ...saved.preparation } };
 }
 function newBattle(title = 'Первый бой') {
-  return { id: randomUUID(), title, linkedMapId: null, combatants: [], round: 1, turn: null, acted: [], manualOrder: null, history: [] };
+  return { id: randomUUID(), title, linkedMapId: null, combatants: [], round: 1, turn: null, acted: [], manualOrder: null, history: [], events: [] };
 }
 function newBoard(title = 'Первая карта', demo = false) {
   return {
@@ -26,7 +28,7 @@ function initialState() {
   const battle = newBattle(), board = newBoard(undefined, true);
   return {
     schema: 2, revision: 0, battles: [battle], boards: [board],
-    activeBattleId: battle.id, activeMapId: board.id, gallery: [], bookmarks: [], library: [], story: newStory(), scenes: [],
+    activeBattleId: battle.id, activeMapId: board.id, gallery: [], bookmarks: [], library: [], story: newStory(), scenes: [], journal: newJournal(),
     music: { folders: ['Общее', 'Бой', 'Атмосфера'], tracks: [], current: null, playing: false, volume: 0.55, loop: true },
     layout: restoreLayout()
   };
@@ -42,6 +44,7 @@ function migrateState(saved) {
     return { ...saved, layout: restoreLayout(saved.layout), battles: saved.battles.map(restoreRound), bookmarks: Array.isArray(saved.bookmarks) ? saved.bookmarks : [],
       library: Array.isArray(saved.library) ? saved.library : [],
       story: { ...newStory(), ...saved.story },
+      journal: Array.isArray(saved.journal?.sessions) ? saved.journal : newJournal(),
       scenes: Array.isArray(saved.scenes) ? saved.scenes : [],
       boards: saved.boards.map(board => ({ terrain: [], drawings: [], notePins: [], fog: newFog(), ...board })) };
   }
@@ -53,7 +56,7 @@ function migrateState(saved) {
     combatants, round: round ?? 1, turn: turn ?? null, history: history ?? [] });
   const board = { ...newBoard('Текущая карта'), map, tokens };
   return {
-    ...base, schema: 2, layout: restoreLayout(base.layout), gallery: gallery ?? [], bookmarks: [], library: [], story: newStory(), scenes: [],
+    ...base, schema: 2, layout: restoreLayout(base.layout), gallery: gallery ?? [], bookmarks: [], library: [], story: newStory(), scenes: [], journal: newJournal(),
     battles: [battle], boards: [board], activeBattleId: battle.id, activeMapId: board.id
   };
 }
@@ -68,6 +71,7 @@ function battleOrder({ combatants, manualOrder }) {
   });
 }
 function restoreRound(battle) {
+  if (!Array.isArray(battle.events)) battle = { ...battle, events: [] };
   if (Array.isArray(battle.acted)) return battle;
   const ordered = battleOrder(battle);
   const current = ordered.findIndex(c => c.id === battle.turn);
@@ -115,7 +119,7 @@ function activeView(state) {
     combatants: rosterChanged ? battle.combatants.map(describe) : lastView.combatants,
     order: sameEntries(lastView?.order, nextOrder) ? lastView.order : nextOrder,
     manualOrder: !!battle.manualOrder,
-    round: battle.round, turn: battle.turn, acted: battle.acted, history: battle.history,
+    round: battle.round, turn: battle.turn, acted: battle.acted, history: battle.history, roundEvents: battle.events, journal: state.journal,
     map: board.map, tokens: board.tokens, terrain: board.terrain, drawings: board.drawings, fog: board.fog,
     mapCombatants, visionOrigins
   };
@@ -205,6 +209,7 @@ function replaceActive(entries, id, copy) {
 function copyForAction(state, type, p) {
   // Structural operations that touch several saved encounters still make a full transactional copy.
   const s = { ...state };
+  if (type.startsWith('journal:')) return s;
   if (/^(combat:|combatant:)/.test(type) && type !== 'combatant:remove') {
     s.battles = replaceActive(state.battles, state.activeBattleId, battle => {
       const copy = { ...battle };
@@ -250,7 +255,8 @@ function copyForAction(state, type, p) {
     s.layout = { ...state.layout, windows: { ...state.layout.windows }, preparation: { ...preparationSizes, ...state.layout.preparation } };
     return s;
   }
-  return structuredClone(state);
+  const { journal, ...rest } = state;
+  return { ...structuredClone(rest), journal };
 }
 function reducer(state, action) {
   const p = action.payload || {};
@@ -287,6 +293,7 @@ function reducer(state, action) {
       const next = newBattle(text(p.title) || (battle.title + ' · копия'));
       next.linkedMapId = battle.linkedMapId;
       next.combatants = battle.combatants.map(c => copyCombatant(c));
+      next.events = battle.events.map(event => ({ ...event, id: randomUUID(), fired: false }));
       s.battles.push(next);
       s.activeBattleId = next.id;
       if (next.linkedMapId) s.activeMapId = next.linkedMapId;
@@ -488,6 +495,20 @@ function reducer(state, action) {
       battle.round = 1;
       battle.turn = null;
       battle.acted = [];
+      if (battle.events.some(event => event.fired)) battle.events = battle.events.map(event => ({ ...event, fired: false }));
+      break;
+    case 'combat:event-save': {
+      const label = text(p.title, 240), round = Number(p.round);
+      if (!label || !Number.isInteger(round) || round < 1 || round > 9999) throw new Error('Укажи текст и номер раунда от 1 до 9999');
+      const existing = p.id && battle.events.find(item => item.id === p.id);
+      if (p.id && !existing) throw new Error('Событие уже удалено');
+      if (!existing && battle.events.length >= 100) throw new Error('В одном бою помещается до 100 событий');
+      const item = { id: existing?.id ?? randomUUID(), title: label, round, fired: Boolean(existing?.fired && existing.round === round) };
+      battle.events = existing ? replaceActive(battle.events, item.id, () => item) : [...battle.events, item];
+      break;
+    }
+    case 'combat:event-remove':
+      battle.events = battle.events.filter(event => event.id !== p.id);
       break;
     case 'combat:next': {
       const order = battleOrder(battle).map(c => c.id);
@@ -503,6 +524,40 @@ function reducer(state, action) {
           battle.combatants = battle.combatants.map(advanceConditions);
         }
       }
+      const due = battle.events.filter(event => !event.fired && event.round <= battle.round);
+      if (due.length) {
+        const ids = new Set(due.map(event => event.id));
+        battle.events = battle.events.map(event => ids.has(event.id) ? { ...event, fired: true } : event);
+        const session = s.journal.sessions.find(entry => entry.id === s.journal.active);
+        if (session) s.journal = { ...s.journal, sessions: replaceActive(s.journal.sessions, session.id, entry => ({
+          ...entry, entries: [...entry.entries, ...due.map(event => journalEntry(`${battle.title} · Раунд ${event.round}. ${event.title}`, 'event'))]
+        })) };
+      }
+      break;
+    }
+    case 'journal:session': {
+      const title = text(p.title);
+      if (!title) throw new Error('Укажи название сессии');
+      const session = { id: randomUUID(), title, date: new Date().toISOString(), entries: [] };
+      s.journal = { active: session.id, sessions: [session, ...s.journal.sessions] };
+      break;
+    }
+    case 'journal:activate':
+      if (p.id !== null && !s.journal.sessions.some(entry => entry.id === p.id)) throw new Error('Сессия не найдена');
+      s.journal = { ...s.journal, active: p.id };
+      break;
+    case 'journal:save':
+    case 'journal:remove': {
+      const session = s.journal.sessions.find(entry => entry.id === p.sessionId);
+      if (!session) throw new Error('Сессия не найдена');
+      const body = text(p.body, 5000);
+      if (action.type === 'journal:save' && !body) throw new Error('Введи текст записи');
+      const previous = p.id && session.entries.find(entry => entry.id === p.id);
+      if (p.id && (!previous || previous.kind === 'event')) throw new Error('Запись недоступна для изменения');
+      const entries = action.type === 'journal:remove' ? session.entries.filter(entry => entry.id !== p.id)
+        : previous ? replaceActive(session.entries, p.id, entry => ({ ...entry, body }))
+          : [...session.entries, journalEntry(body)];
+      s.journal = { ...s.journal, sessions: replaceActive(s.journal.sessions, session.id, entry => ({ ...entry, entries })) };
       break;
     }
     case 'token:add': {

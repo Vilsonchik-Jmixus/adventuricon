@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Интерактивная ширма мастера</title>
+  <title>Адвенчурикон</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="tavern.css">
   <link rel="stylesheet" href="ambience.css">
@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="session.css">
   <link rel="stylesheet" href="workspace.css">
   <link rel="stylesheet" href="icons.css">
+  <link rel="stylesheet" href="campaign-tools.css">
 </head>
 <body>
   <header class="appbar">
@@ -21,10 +22,14 @@
       <i></i><i></i><i></i><i></i><i></i><i></i>
     </div>
     <img id="theme-brand-icon" class="brand-mark" src="assets/icon.png" alt="" width="29" height="29">
-    <div class="brand"><strong>Ширма мастера</strong></div>
+    <div class="brand"><strong>Адвенчурикон</strong></div>
     <div id="workspace-modes" role="group" aria-label="Раскладка ширмы" hidden>
       <button type="button" data-workspace-mode="preparation" data-pixel-icon="scroll" aria-pressed="false">Подготовка</button>
       <button type="button" data-workspace-mode="game" data-pixel-icon="swords" aria-pressed="true">Игра</button>
+    </div>
+    <div class="campaign-tools">
+      <button id="open-campaign-search" type="button" class="icon-button" data-pixel-icon="search" aria-label="Поиск по кампании"></button>
+      <button id="open-journal" type="button" class="icon-button" data-pixel-icon="scroll" aria-label="Журнал сессий"></button>
     </div>
     <button id="screen-tip" class="quiet" type="button" hidden>
       <span class="tip-label">Совет</span><span id="tip-text"></span><span class="tip-next" aria-hidden="true">›</span>
@@ -40,7 +45,7 @@
     <button id="create-battle" type="button" class="icon-button" title="Новый бой" aria-label="Новый бой" data-pixel-icon="plus"></button>
     <button id="manage-battle" type="button" class="icon-button" title="Настройки и копирование" aria-label="Настройки и копирование: Бой" data-pixel-icon="gear"></button>
   </div>
-        <div class="combat-toolbar"><span id="round" aria-live="polite">Раунд 1</span><button id="reset-order" class="quiet" title="Вернуть порядок по инициативе" aria-label="Вернуть порядок по инициативе" hidden data-pixel-icon="sort"></button><button id="roll-initiative" class="quiet" title="Броски и сброс инициативы" data-pixel-icon="dice">Инициатива</button><button id="undo-hp" class="quiet" title="Отменить последнее изменение ХП" data-pixel-icon="heart"><span class="control-label">ХП</span></button><button id="next-turn" class="small-button" aria-label="Следующий ход" data-pixel-icon="turn"><span class="control-label">Следующий ход</span><span class="compact-label" aria-hidden="true">Ход</span></button></div>
+        <div class="combat-toolbar"><span id="round" aria-live="polite">Раунд 1</span><button id="open-round-events" type="button" class="icon-button" data-pixel-icon="clock" aria-label="События боя"></button><button id="reset-order" class="quiet" title="Вернуть порядок по инициативе" aria-label="Вернуть порядок по инициативе" hidden data-pixel-icon="sort"></button><button id="roll-initiative" class="quiet" title="Броски и сброс инициативы" data-pixel-icon="dice">Инициатива</button><button id="undo-hp" class="quiet" title="Отменить последнее изменение ХП" data-pixel-icon="heart"><span class="control-label">ХП</span></button><button id="next-turn" class="small-button" aria-label="Следующий ход" data-pixel-icon="turn"><span class="control-label">Следующий ход</span><span class="compact-label" aria-hidden="true">Ход</span></button></div>
         <div class="combat-search" id="combat-search-row" hidden><input type="search" id="combat-search" placeholder="Найти участника" aria-label="Найти участника" autocomplete="off"><select id="combat-role-filter" aria-label="Фильтр участников по стороне"><option value="">Все стороны</option></select></div>
         <div id="current-turn" hidden>
           <button id="turn-actor" type="button" class="quiet" data-pixel-icon="clock" title="Перейти к участнику, чей сейчас ход"></button>
@@ -68,10 +73,17 @@
         <div class="reference-tabs">
           <button type="button" data-reference-tab="info" aria-pressed="true" data-pixel-icon="book">dnd.su</button>
           <button type="button" data-reference-tab="web" aria-pressed="false" data-pixel-icon="web">Веб</button>
+          <button id="new-reference-tab" type="button" data-pixel-icon="plus" aria-label="Открыть новую вкладку"></button>
+          <div class="page-zoom" role="group" aria-label="Масштаб страницы">
+            <button type="button" data-reference-nav="zoom-out" aria-label="Уменьшить масштаб">−</button>
+            <button type="button" id="reference-zoom" data-reference-nav="zoom-reset" aria-label="Сбросить масштаб страницы до 100%">100%</button>
+            <button type="button" data-reference-nav="zoom-in" aria-label="Увеличить масштаб">+</button>
+          </div>
           <button id="open-bookmarks" type="button" title="Закладки" aria-label="Закладки" data-pixel-icon="star"></button>
           <button id="open-gemini" type="button" title="Скопировать запрос и открыть Gemini в браузере" data-pixel-icon="spark">Gemini</button>
           <button id="drag-dnd-card" type="button" draggable="true" hidden data-pixel-icon="external">В бой</button>
         </div>
+        <div id="reference-extra-tabs" aria-label="Открытые вкладки" hidden></div>
         <div id="reference-links" aria-label="Разделы справочника"></div>
         <form id="reference-form" class="reference-form">
           <button type="button" data-reference-nav="back" title="Назад" aria-label="Назад" data-pixel-icon="undo"></button>
@@ -145,7 +157,7 @@
         <button type="button" id="preparation-open-scene" data-pixel-icon="turn" disabled>Открыть</button>
         <button type="button" id="preparation-manage-scenes" data-pixel-icon="scene" title="Список и настройки сцен" aria-label="Список и настройки сцен"></button>
       </div>
-      <div id="sheet-content" class="panel-content site-content"><div class="browser-toolbar"><button data-remote="characters:back" title="Назад" data-pixel-icon="undo" aria-label="Назад"></button><button data-remote="characters:reload" title="Обновить" data-pixel-icon="repeat" aria-label="Обновить"></button><span>Long Story Short</span><button data-remote="characters:external" title="Открыть в браузере" data-pixel-icon="external" aria-label="Открыть в браузере"></button></div><div class="remote-surface" data-remote-surface="characters"><div class="site-empty"><h2>Листы персонажей</h2><button data-remote="characters:home" data-pixel-icon="external">Открыть Long Story Short</button></div></div></div>
+      <div id="sheet-content" class="panel-content site-content"><div class="browser-toolbar"><button data-remote="characters:back" title="Назад" data-pixel-icon="undo" aria-label="Назад"></button><button data-remote="characters:reload" title="Обновить" data-pixel-icon="repeat" aria-label="Обновить"></button><span>Long Story Short</span><div class="page-zoom" role="group" aria-label="Масштаб Long Story Short"><button type="button" data-remote="characters:zoom-out" aria-label="Уменьшить масштаб">−</button><button type="button" id="sheets-zoom" data-remote="characters:zoom-reset" aria-label="Сбросить масштаб Long Story Short до 100%">100%</button><button type="button" data-remote="characters:zoom-in" aria-label="Увеличить масштаб">+</button></div><button data-remote="characters:external" title="Открыть в браузере" data-pixel-icon="external" aria-label="Открыть в браузере"></button></div><div class="remote-surface" data-remote-surface="characters"><div class="site-empty"><h2>Листы персонажей</h2><button data-remote="characters:home" data-pixel-icon="external">Открыть Long Story Short</button></div></div></div>
       <div id="gallery" class="panel-content gallery" hidden>
         <div class="gallery-tools">
           <button id="import-gallery" class="small-button" data-pixel-icon="image">Изображение</button>
@@ -171,6 +183,11 @@
         <div class="story-tools">
           <button id="story-add" type="button" class="small-button" data-pixel-icon="scroll">Заметка</button>
           <button id="story-home" type="button" title="Вернуться к первой карточке" data-pixel-icon="pin">К заметкам</button>
+          <div class="page-zoom" role="group" aria-label="Масштаб доски заметок">
+            <button id="story-zoom-out" type="button" aria-label="Отдалить доску">−</button>
+            <button id="story-zoom-reset" type="button" aria-label="Масштаб доски 100%" title="Вернуть 100%">100%</button>
+            <button id="story-zoom-in" type="button" aria-label="Приблизить доску">+</button>
+          </div>
           <div class="story-modes" role="group" aria-label="Инструменты сюжетной доски">
             <button type="button" data-story-tool="move" aria-pressed="true" title="Двигать и связывать карточки" data-pixel-icon="scroll">Карточки</button>
             <button type="button" data-story-tool="pen" aria-pressed="false" data-pixel-icon="pen">Карандаш</button>
@@ -326,6 +343,7 @@
   </dialog>
   <dialog id="screen-settings-dialog" aria-labelledby="screen-settings-title">
     <div class="dialog-heading"><h2 id="screen-settings-title" data-pixel-icon="gear">Оформление и звук</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
+    <button id="open-shortcuts" class="quiet" type="button" data-pixel-icon="gear">Горячие клавиши</button>
     <fieldset class="screen-theme-picker">
       <legend>Цветовая тема</legend>
       <div id="screen-themes"></div>
@@ -367,6 +385,40 @@
       <button type="submit" class="primary-button" data-pixel-icon="check">Выбрать место</button>
     </form>
   </dialog>
+  <dialog id="shortcuts-dialog" class="session-dialog" aria-labelledby="shortcuts-title">
+    <form id="shortcuts-form">
+      <div class="dialog-heading"><h2 id="shortcuts-title">Горячие клавиши</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
+      <p class="dialog-hint">Выбери букву для каждой команды. Все сочетания используют Ctrl + Alt.</p>
+      <div id="shortcut-bindings"></div>
+      <p id="shortcut-error" role="status" class="dialog-hint"></p>
+      <div class="session-actions"><button id="reset-shortcuts" type="button" class="quiet" data-pixel-icon="undo">По умолчанию</button><button type="submit" class="primary-button" data-pixel-icon="check">Сохранить</button></div>
+    </form>
+  </dialog>
+  <dialog id="campaign-search-dialog" class="session-dialog wide-dialog" aria-labelledby="campaign-search-title">
+    <div class="dialog-heading"><h2 id="campaign-search-title" data-pixel-icon="search">Поиск по кампании</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
+    <label class="search-field">Что ищем?<input id="campaign-query" type="search" maxlength="160" autocomplete="off" autofocus placeholder="Заметка, карта, сцена, персонаж…"></label>
+    <p id="campaign-search-status" class="dialog-hint" role="status"></p>
+    <div id="campaign-search-results" class="tool-list"></div>
+  </dialog>
+  <dialog id="round-events-dialog" class="session-dialog" aria-labelledby="round-events-title">
+    <div class="dialog-heading"><h2 id="round-events-title" data-pixel-icon="clock">События боя</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
+    <p id="round-events-context" class="dialog-hint"></p>
+    <div id="round-events-list" class="tool-list"></div>
+    <form id="round-event-form">
+      <div class="form-row"><label class="round-field">Раунд<input name="round" type="number" min="1" max="9999" required></label><label>Напоминание<input name="title" maxlength="240" required placeholder="Например, прибывает подкрепление"></label></div>
+      <div class="session-actions"><button id="cancel-event-edit" type="button" hidden class="quiet">Отмена</button><button id="save-round-event" type="submit" class="primary-button" data-pixel-icon="check">Добавить событие</button></div>
+    </form>
+  </dialog>
+  <dialog id="journal-dialog" class="session-dialog wide-dialog" aria-labelledby="journal-title">
+    <div class="dialog-heading"><h2 id="journal-title" data-pixel-icon="scroll">Журнал сессий</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
+    <div class="session-actions"><select id="journal-session" aria-label="Сессия"></select><button id="new-journal-session" type="button" data-pixel-icon="plus">Новая сессия</button><button id="journal-active" type="button" class="quiet" data-pixel-icon="clock" hidden></button></div>
+    <p id="journal-summary" class="dialog-hint"></p>
+    <div id="journal-list" class="tool-list" tabindex="0"></div>
+    <form id="journal-form" hidden>
+      <label>Запись<textarea name="body" maxlength="5000" rows="3" required placeholder="Итог встречи, зацепка или решение игроков"></textarea></label>
+      <div class="session-actions"><button id="cancel-journal-edit" type="button" hidden class="quiet">Отмена</button><button id="save-journal-entry" type="submit" class="primary-button" data-pixel-icon="check">Добавить запись</button></div>
+    </form>
+  </dialog>
   <audio id="audio" preload="metadata"></audio>
   <script src="themes.js"></script>
   <script src="map-geometry.js"></script>
@@ -374,6 +426,8 @@
   <script src="ambience.js"></script>
   <script src="story.js"></script>
   <script src="session.js"></script>
+  <script src="shortcuts.js"></script>
+  <script src="campaign-tools.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

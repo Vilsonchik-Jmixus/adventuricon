@@ -1,7 +1,7 @@
 {
   "name": "interactive-dm-screen",
-  "version": "2.5.1",
-  "description": "Интерактивная ширма мастера — рабочий стол ведущего D&D",
+  "version": "3.0.0",
+  "description": "Адвенчурикон — рабочий стол ведущего D&D",
   "main": "electron/main.cjs",
   "author": "Vilsonchik-Jmixus",
   "license": "MIT",
@@ -28,7 +28,7 @@
   },
   "build": {
     "appId": "app.dm-screen.desktop",
-    "productName": "Интерактивная ширма мастера",
+    "productName": "Адвенчурикон",
     "directories": {
       "output": "dist"
     },
@@ -49,7 +49,7 @@
       "target": [
         "nsis"
       ],
-      "artifactName": "DM-Screen-Setup-${version}.${ext}",
+      "artifactName": "Adventuricon-Setup-${version}.${ext}",
       "icon": "ui/assets/icon.ico",
       "signAndEditExecutable": false
     },
@@ -57,7 +57,7 @@
       "target": [
         "dmg"
       ],
-      "artifactName": "DM-Screen-${version}-mac-${arch}.${ext}",
+      "artifactName": "Adventuricon-${version}-mac-${arch}.${ext}",
       "category": "public.app-category.games",
       "icon": "ui/assets/icon.png",
       "identity": null
@@ -67,7 +67,7 @@
         "AppImage",
         "deb"
       ],
-      "artifactName": "DM-Screen-${version}-linux-${arch}.${ext}",
+      "artifactName": "Adventuricon-${version}-linux-${arch}.${ext}",
       "executableName": "dm-screen",
       "category": "Game",
       "maintainer": "Vilsonchik-Jmixus",

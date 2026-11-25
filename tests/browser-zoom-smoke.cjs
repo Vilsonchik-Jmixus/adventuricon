@@ -2,6 +2,7 @@ const { _electron: electron, expect } = require('playwright/test');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
+const fs = require('node:fs/promises');
 const env = {
   ...process.env,
   DM_SCREEN_TEST: '1',
@@ -113,7 +114,25 @@ async function main() {
     expect(await app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows().find(win => win.webContents.getURL() === 'dm://app/index.html').webContents.getZoomFactor()
     )).toBe(1);
-    console.log('PASS: isolated browser wheel zoom, reset, tab switch and detached window.');
+    const refWindow = app.windows().find(window => window.url().includes('?panel=info'));
+    await refWindow.click('[data-reference-link="armor"]');
+    await expect(refWindow.locator('#reference-query')).toHaveAttribute('title', /95-armor-and-shields/);
+    await refWindow.keyboard.press('Control+Alt+T');
+    await expect(refWindow.locator('#reference-extra-tabs [data-reference-tab]')).toHaveCount(1);
+    await refWindow.click('[data-reference-link="spells"]');
+    await expect(refWindow.locator('#reference-query')).toHaveAttribute('title', /\/spells\//);
+    await refWindow.click('[data-reference-tab="info"]');
+    await expect(refWindow.locator('#reference-query')).toHaveAttribute('title', /95-armor-and-shields/);
+    await refWindow.click('[data-reference-nav="zoom-in"]');
+    await expect(refWindow.locator('#reference-zoom')).toHaveText('110%');
+    await refWindow.click('#reference-extra-tabs [data-reference-tab]');
+    await expect(refWindow.locator('#reference-query')).toHaveAttribute('title', /\/spells\//);
+    await expect(refWindow.locator('#reference-zoom')).toHaveText('110%');
+    await refWindow.keyboard.press('Control+Alt+W');
+    await expect(refWindow.locator('#reference-extra-tabs [data-reference-tab]')).toHaveCount(0);
+    const saved = new Map(JSON.parse(await fs.readFile(path.join(env.DM_SCREEN_DATA, 'site-zoom.json'), 'utf8')));
+    expect(saved.get('dnd.su')).toBe(1.1);
+    console.log('PASS: browser zoom, detached window, independent tab history, and site zoom saved to disk.');
   } finally {
     await app.close();
   }

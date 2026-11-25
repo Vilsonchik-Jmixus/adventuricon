@@ -66,6 +66,7 @@ jobs:
           node tests/session-smoke.cjs
           node tests/workspace-smoke.cjs
           node tests/browser-zoom-smoke.cjs
+          node tests/campaign-tools-smoke.cjs
       - name: Install native Debian packager
         if: matrix.platform == 'linux' && matrix.arch == 'arm64'
         shell: bash
@@ -88,6 +89,7 @@ jobs:
             node tests/welcome-smoke.cjs
             node tests/map-window-smoke.cjs
             node tests/browser-zoom-smoke.cjs
+            node tests/campaign-tools-smoke.cjs
           '
       - name: Verify packaged macOS desktop
         if: runner.os == 'macOS'
@@ -104,6 +106,7 @@ jobs:
           node tests/map-window-smoke.cjs
           node tests/story-smoke.cjs
           node tests/browser-zoom-smoke.cjs
+          node tests/campaign-tools-smoke.cjs
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
@@ -162,15 +165,15 @@ jobs:
           tag="v$version"
           cd release-assets
           installers=(
-            "DM-Screen-Setup-$version.exe"
-            "DM-Screen-$version-linux-x86_64.AppImage"
-            "DM-Screen-$version-linux-arm64.AppImage"
-            "DM-Screen-$version-linux-amd64.deb"
-            "DM-Screen-$version-linux-arm64.deb"
-            "DM-Screen-$version-mac-x64.dmg"
-            "DM-Screen-$version-mac-arm64.dmg"
+            "Adventuricon-Setup-$version.exe"
+            "Adventuricon-$version-linux-x86_64.AppImage"
+            "Adventuricon-$version-linux-arm64.AppImage"
+            "Adventuricon-$version-linux-amd64.deb"
+            "Adventuricon-$version-linux-arm64.deb"
+            "Adventuricon-$version-mac-x64.dmg"
+            "Adventuricon-$version-mac-arm64.dmg"
           )
-          updates=("DM-Screen-Setup-$version.exe.blockmap" latest.yml latest-linux.yml latest-linux-arm64.yml)
+          updates=("Adventuricon-Setup-$version.exe.blockmap" latest.yml latest-linux.yml latest-linux-arm64.yml)
           for file in "${installers[@]}" "${updates[@]}"; do
             if [[ ! -s "$file" ]]; then
               ls -1
@@ -189,7 +192,7 @@ jobs:
             test "$target" = "$RELEASE_COMMIT"
           else
             gh release create "$tag" --verify-tag --draft --target "$RELEASE_COMMIT" \
-              --title "Интерактивная ширма мастера $version" --generate-notes
+              --title "Адвенчурикон $version" --generate-notes
           fi
           gh release upload "$tag" "${installers[@]}" "${updates[@]}" SHA256SUMS
           if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --silent; then

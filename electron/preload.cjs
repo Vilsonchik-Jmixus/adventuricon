@@ -2,7 +2,11 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('dm', {
   init: () => ipcRenderer.invoke('init'),
   setTheme: id => ipcRenderer.invoke('set-theme', id),
+  setShortcuts: bindings => ipcRenderer.invoke('set-shortcuts', bindings),
   campaign: payload => ipcRenderer.invoke('campaign', payload),
+  campaignSearch: payload => ipcRenderer.invoke('campaign-search', payload),
+  workspaceCommand: payload => ipcRenderer.invoke('workspace-command', payload),
+  masterShortcut: command => ipcRenderer.invoke('master-shortcut', command),
   undoMap: context => ipcRenderer.invoke('map-undo', context),
   dispatch: (type, payload) => ipcRenderer.invoke('dispatch', { type, payload }),
   importFile: kind => ipcRenderer.invoke('import-file', { kind }),

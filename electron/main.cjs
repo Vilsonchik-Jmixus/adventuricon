@@ -13,20 +13,28 @@ const { autoUpdater } = require('electron-updater');
 const { ScreenThemes, themeIcon } = require('../ui/themes.js');
 const { createCampaignStore, writeJSON, encodeCampaign, assetPattern } = require('./campaigns.cjs');
 const { rememberMapAction, undoMapAction } = require('./map-history.cjs');
+const { defaults: shortcutDefaults, validateShortcuts, matchShortcut } = require('../ui/shortcuts.js');
+const { searchCampaign } = require('./campaign-search.cjs');
 const TEST = process.env.DM_SCREEN_TEST === '1';
 const mac = process.platform === 'darwin';
 const appImage = process.platform === 'linux' && !!process.env.APPIMAGE;
 const canAutoUpdate = process.platform === 'win32' || appImage;
 const releasesUrl = 'https://github.com/Vilsonchik-Jmixus/interactive-dm-screen/releases/latest';
 if (appImage) app.commandLine.appendSwitch('disable-setuid-sandbox');
-if (process.env.DM_SCREEN_DATA) app.setPath('userData', process.env.DM_SCREEN_DATA);
+app.setPath('userData', process.env.DM_SCREEN_DATA || path.join(app.getPath('appData'), 'interactive-dm-screen'));
 protocol.registerSchemesAsPrivileged([{ scheme: 'dm', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 const PANELS = ['combat', 'music', 'map', 'info', 'characters'];
 const REMOTE = { info: DND_HOME, web: WEB_HOME, characters: 'https://longstoryshort.app/characters/list/' };
 const remoteZoomFactors = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
-const partitionFor = id => id === 'web' ? 'dm-web' : `persist:dm-${id}`;
-const remotePanelFor = id => id === 'web' ? 'info' : id;
+const referenceTabs = new Map([['info', { kind: 'info' }], ['web', { kind: 'web' }]]);
+const remoteKind = id => id === 'characters' ? id : referenceTabs.get(id)?.kind;
+const partitionFor = kind => kind === 'web' ? 'dm-web' : `persist:dm-${kind}`;
+const remotePanelFor = id => id === 'characters' ? id : 'info';
 let referenceTab = 'info';
+let zoomStore;
+let siteZoom = new Map();
+let shortcutStore;
+let shortcuts = shortcutDefaults;
 const windows = new Map(), remotes = new Map(), windowSnapshots = new WeakMap();
 const publicActors = new WeakMap();
 let mainWindow, state, store, assets, quitting = false, downloadProcess = null;
@@ -126,6 +134,10 @@ function commit(action) {
     throw new Error('Кампания переключилась. Повтори действие.');
   }
   const next = reducer(state, action);
+  const oldBattle = state.battles.find(entry => entry.id === state.activeBattleId);
+  const nextBattle = next.battles.find(entry => entry.id === oldBattle.id);
+  const fired = action.type === 'combat:next' && nextBattle.events !== oldBattle.events
+    ? nextBattle.events.filter((item, index) => item.fired && !oldBattle.events[index]?.fired) : [];
   const board = state.boards.find(entry => entry.id === state.activeMapId);
   const after = next.boards.find(entry => entry.id === board.id);
   const undo = after && rememberMapAction(action, board, after);
@@ -139,6 +151,11 @@ function commit(action) {
   }
   if (action.type === 'map:settings' && 'rotation' in action.payload) mapCameras.delete(state.activeMapId);
   broadcast();
+  if (fired.length) {
+    for (const owner of new Set([mainWindow, windows.get('combat')])) {
+      if (owner && !owner.isDestroyed()) owner.webContents.send('status', { scope: 'round-events', events: fired });
+    }
+  }
   return { ok: true };
 }
 function handle(name, fn) {
@@ -186,7 +203,7 @@ function secureWindow(options = {}, showInactive = false) {
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required' } });
   w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   if (mac) w.webContents.on('before-input-event', (_, input) => {
-    w.webContents.setIgnoreMenuShortcuts(!!input.meta && !input.shift && input.code === 'KeyZ');
+    w.webContents.setIgnoreMenuShortcuts(!!matchShortcut(input, shortcuts) || !!input.meta && !input.shift && input.code === 'KeyZ');
   });
   w.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('dm://app/')) e.preventDefault(); });
   if (process.platform === 'win32') w.on('show', () => applyWindowTheme(w));
@@ -197,40 +214,78 @@ function secureWindow(options = {}, showInactive = false) {
   });
   return w;
 }
-function adjustRemoteZoom(contents, direction) {
-  if (direction === 'reset') return contents.setZoomFactor(1);
-  const current = contents.getZoomFactor();
-  const next = direction === 'in'
+function zoomHost(record) {
+  const address = safeUrl(record.view.webContents.getURL()) || record.requested;
+  return new URL(address).hostname;
+}
+function restoreRemoteZoom(record) {
+  record.view.webContents.setZoomFactor(siteZoom.get(zoomHost(record)) ?? 1);
+}
+function adjustRemoteZoom(record, direction) {
+  const host = zoomHost(record);
+  const current = siteZoom.get(host) ?? 1;
+  const next = direction === 'reset' ? 1 : direction === 'in'
     ? remoteZoomFactors.find(factor => factor > current + 0.001)
     : remoteZoomFactors.findLast(factor => factor < current - 0.001);
-  if (next !== undefined) contents.setZoomFactor(next);
+  if (next === undefined || next === current) return;
+  const updated = new Map(siteZoom);
+  if (next === 1) updated.delete(host);
+  else {
+    if (updated.size >= 500 && !updated.has(host)) updated.delete(updated.keys().next().value);
+    updated.set(host, next);
+  }
+  try { writeJSON(zoomStore, [...updated]); }
+  catch (error) { console.warn('Не удалось сохранить масштаб:', error.message); }
+  siteZoom = updated;
+  for (const entry of remotes.values()) {
+    if (!entry.view.webContents.isDestroyed() && zoomHost(entry) === host) restoreRemoteZoom(entry);
+  }
+  reportReference();
 }
 function attachRemote(id, owner) {
   let record = remotes.get(id);
   if (!record) {
-    const view = new WebContentsView({ webPreferences: { partition: partitionFor(id), nodeIntegration: false, contextIsolation: true, sandbox: true,
+    const kind = remoteKind(id);
+    const view = new WebContentsView({ webPreferences: { partition: partitionFor(kind), nodeIntegration: false, contextIsolation: true, sandbox: true,
       ...(mac ? { preload: path.join(__dirname, 'remote-zoom-preload.cjs') } : {}) } });
     view.setVisible(false);
-    record = { view, owner: null, requested: REMOTE[id], failed: false };
+    record = { view, owner: null, requested: referenceTabs.get(id)?.initialUrl || REMOTE[kind], failed: false };
     remotes.set(id, record);
     const wc = view.webContents;
     wc.setZoomMode('isolated');
-    if (!mac) wc.on('zoom-changed', (_, direction) => adjustRemoteZoom(wc, direction));
+    if (!mac) wc.on('zoom-changed', (_, direction) => adjustRemoteZoom(record, direction));
     wc.on('before-input-event', (event, input) => {
+      if (input.type === 'keyDown' && !input.isAutoRepeat) {
+        const command = matchShortcut(input, shortcuts);
+        if (command) {
+          const target = command === 'fullscreen' || command.startsWith('reference-') && remotePanelFor(id) === 'info' ? record.owner : mainWindow;
+          if (target && !target.isDestroyed()) {
+            event.preventDefault();
+            if (target !== record.owner && !TEST) { target.show(); target.focus(); }
+            target.webContents.focus();
+            target.webContents.send('status', { scope: 'shortcut', command });
+            return;
+          }
+        }
+      }
       if (input.type !== 'keyDown' || input.alt || !(input.control || (mac && input.meta))) return;
       const direction = ['Digit0', 'Numpad0'].includes(input.code) ? 'reset'
         : ['Equal', 'NumpadAdd'].includes(input.code) ? 'in'
           : ['Minus', 'NumpadSubtract'].includes(input.code) ? 'out' : null;
       if (!direction) return;
       event.preventDefault();
-      adjustRemoteZoom(wc, direction);
+      adjustRemoteZoom(record, direction);
     });
     wc.setWindowOpenHandler(({ url, disposition }) => {
       const destination = safeUrl(url);
       if (!destination) return { action: 'deny' };
       if (id !== 'characters') {
         if (['foreground-tab', 'background-tab'].includes(disposition)) {
-          setImmediate(() => { if (!wc.isDestroyed()) loadRemote(record, destination); });
+          setImmediate(() => {
+            if (!wc.isDestroyed() && record.owner && !record.owner.isDestroyed()) {
+              openReferenceTab(record.owner, kind, destination, disposition === 'foreground-tab');
+            }
+          });
         }
         return { action: 'deny' };
       }
@@ -243,6 +298,11 @@ function attachRemote(id, owner) {
     };
     wc.on('will-navigate', limitNavigation);
     wc.on('will-redirect', limitNavigation);
+    wc.on('did-navigate', () => {
+      record.failed = false;
+      restoreRemoteZoom(record);
+      reportReference();
+    });
     wc.on('did-fail-load', (_, code, message, url, isMainFrame) => {
       if (!isMainFrame || code === -3) return;
       if (id === 'characters') sendAll('status', { scope: id, text: `Не удалось открыть сайт: ${message}. Нажмите ↻ для повтора.` });
@@ -261,18 +321,46 @@ function attachRemote(id, owner) {
           reportReference();
         }
       });
-      wc.on('did-navigate', () => { record.failed = false; reportReference(); });
       for (const event of ['did-finish-load', 'did-navigate-in-page', 'page-title-updated', 'did-stop-loading']) {
         wc.on(event, reportReference);
       }
     }
-    loadRemote(record, REMOTE[id]);
+    loadRemote(record, record.requested);
   }
   if (record.owner !== owner) {
     if (record.owner && !record.owner.isDestroyed()) record.owner.contentView.removeChildView(record.view);
     owner.contentView.addChildView(record.view); record.owner = owner;
   }
   return record.view;
+}
+function selectReferenceTab(id) {
+  if (referenceTab !== id) remotes.get(referenceTab)?.view.setVisible(false);
+  referenceTab = id;
+}
+function openReferenceTab(owner, kind, url, foreground = true) {
+  if (referenceTabs.size >= 10) {
+    owner.webContents.send('status', { scope: 'reference-notice', text: 'Закрой вкладку, чтобы открыть новую. Всего доступно 10 вкладок.' });
+    return;
+  }
+  const id = randomUUID();
+  referenceTabs.set(id, { kind, initialUrl: url });
+  if (foreground) selectReferenceTab(id);
+  attachRemote(id, owner);
+  reportReference();
+}
+function closeReferenceTab(owner, id) {
+  if (Object.hasOwn(REMOTE, id) || !referenceTabs.has(id)) return;
+  const ids = [...referenceTabs.keys()];
+  if (referenceTab === id) selectReferenceTab(ids[ids.indexOf(id) - 1]);
+  referenceTabs.delete(id);
+  const record = remotes.get(id);
+  if (record) {
+    record.owner?.contentView.removeChildView(record.view);
+    remotes.delete(id);
+    record.view.webContents.close();
+  }
+  attachRemote(referenceTab, owner);
+  reportReference();
 }
 function loadRemote(record, url) {
   record.failed = false;
@@ -281,20 +369,25 @@ function loadRemote(record, url) {
 }
 function referenceState() {
   const pages = {};
-  for (const tab of ['info', 'web']) {
+  const tabs = [];
+  for (const [tab, { kind }] of referenceTabs) {
     const record = remotes.get(tab);
     const wc = record?.view.webContents;
     const loaded = wc && !wc.isDestroyed() ? safeUrl(wc.getURL()) : null;
     pages[tab] = {
-      url: record?.failed ? record.requested : loaded || record?.requested || REMOTE[tab],
+      url: record?.failed ? record.requested : loaded || record?.requested || REMOTE[kind],
       title: loaded && !record.failed ? wc.getTitle() : '',
       bookmarkable: !!loaded && !record.failed && !wc.isLoadingMainFrame(),
       failed: !!record?.failed,
       canBack: wc?.navigationHistory.canGoBack() ?? false,
-      canForward: wc?.navigationHistory.canGoForward() ?? false
+      canForward: wc?.navigationHistory.canGoForward() ?? false,
+      zoom: Math.round((record ? siteZoom.get(zoomHost(record)) ?? 1 : 1) * 100)
     };
+    if (!Object.hasOwn(REMOTE, tab)) tabs.push({ id: tab, title: pages[tab].title || new URL(pages[tab].url).hostname });
   }
-  return { tab: referenceTab, pages };
+  const sheets = remotes.get('characters');
+  return { tab: referenceTab, kind: remoteKind(referenceTab), pages, tabs,
+    sheetsZoom: Math.round((sheets ? siteZoom.get(zoomHost(sheets)) ?? 1 : siteZoom.get('longstoryshort.app') ?? 1) * 100) };
 }
 function reportReference() {
   if (!quitting) sendAll('status', { scope: 'reference', ...referenceState() });
@@ -309,24 +402,28 @@ async function referenceAction(event, { action, value }) {
     return { ok: true, copied: !!query };
   }
   if (action === 'remove-bookmark') return commit({ type: 'bookmark:remove', payload: { id: value } });
+  if (action === 'new-tab') { openReferenceTab(owner, remoteKind(referenceTab)); return { ok: true }; }
+  if (action === 'close-tab') { closeReferenceTab(owner, value ?? referenceTab); return { ok: true }; }
   let tab = referenceTab, destination = null;
-  if (action === 'tab' && ['info', 'web'].includes(value)) tab = value;
-  else if (action === 'shortcut') {
-    tab = 'info';
+  const extra = !Object.hasOwn(REMOTE, tab);
+  if (action === 'tab' && referenceTabs.has(value)) tab = value;
+  else if (action === 'shortcut' || action === 'shortcut-tab') {
+    if (!extra || remoteKind(tab) !== 'info') tab = 'info';
     destination = REFERENCE_LINKS.find(link => link.id === value)?.url;
     if (!destination) throw new Error('Раздел не найден');
+    if (action === 'shortcut-tab') { openReferenceTab(owner, 'info', destination); return { ok: true }; }
   } else if (action === 'search') {
-    destination = searchUrl(value, tab === 'info');
-    tab = 'web';
+    destination = searchUrl(value, remoteKind(tab) === 'info');
+    if (!extra) tab = 'web';
   } else if (action === 'bookmark') {
     const item = state.bookmarks.find(entry => entry.id === value);
     destination = safeUrl(item?.url);
     if (!destination) throw new Error('Закладка не найдена');
     tab = item.tab === 'info' ? 'info' : 'web';
-  } else if (!['back', 'forward', 'reload', 'external', 'save-bookmark', 'home'].includes(action)) {
+  } else if (!['back', 'forward', 'reload', 'external', 'save-bookmark', 'home', 'zoom-in', 'zoom-out', 'zoom-reset'].includes(action)) {
     throw new Error('Неизвестная команда справочника');
   }
-  referenceTab = tab;
+  selectReferenceTab(tab);
   const wc = attachRemote(tab, owner).webContents;
   const record = remotes.get(tab);
   reportReference();
@@ -334,14 +431,15 @@ async function referenceAction(event, { action, value }) {
   else if (action === 'back' && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
   else if (action === 'forward' && wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
   else if (action === 'reload') await loadRemote(record, record.failed ? record.requested : safeUrl(wc.getURL()) || record.requested);
-  else if (action === 'home') await loadRemote(record, REMOTE[tab]);
+  else if (action === 'home') await loadRemote(record, REMOTE[remoteKind(tab)]);
+  else if (action.startsWith('zoom-')) adjustRemoteZoom(record, action.slice(5));
   else if (action === 'external') {
     const address = safeUrl(referenceState().pages[tab].url);
     if (address) await shell.openExternal(address);
   } else if (action === 'save-bookmark') {
     const page = referenceState().pages[tab];
     if (!page.bookmarkable) throw new Error('Дождись, пока страница загрузится');
-    return commit({ type: 'bookmark:add', payload: { url: page.url, title: page.title, tab } });
+    return commit({ type: 'bookmark:add', payload: { url: page.url, title: page.title, tab: remoteKind(tab) } });
   }
   return { ok: true };
 }
@@ -404,13 +502,41 @@ function switchCampaign(id) {
   broadcast();
 }
 function setupIPC() {
+  handle('campaign-search', (_, { query, expectedCampaignId }) => {
+    checkCampaign(expectedCampaignId);
+    return { ok: true, matches: searchCampaign(state, query) };
+  });
+  handle('master-shortcut', (_, command) => {
+    if (typeof command !== 'string' || !Object.hasOwn(shortcutDefaults, command)) throw new Error('Команда недоступна');
+    if (!TEST) { mainWindow.show(); mainWindow.focus(); }
+    mainWindow.webContents.send('status', { scope: 'shortcut', command });
+    return { ok: true };
+  });
+  handle('workspace-command', (event, { panel, command, id }) => {
+    const allowed = (panel === 'characters' && command === 'note') || (panel === 'combat' && command === 'actor') ||
+      (panel === 'info' && ['reference-address', 'reference-new', 'reference-close'].includes(command));
+    if (!allowed || event.sender !== mainWindow.webContents) throw new Error('Команда недоступна');
+    const target = windows.get(panel);
+    if (!target || target.isDestroyed()) return { ok: true, sent: false };
+    if (!TEST) { target.show(); target.focus(); }
+    target.webContents.send('status', { scope: 'workspace-command', command, id });
+    return { ok: true, sent: true };
+  });
   handle('init', event => {
     const snapshot = windowState(event.sender);
     windowSnapshots.set(event.sender, snapshot);
     return { ...snapshot, version: app.getVersion(), updateStatus, musicStatus,
       mainFullscreen: event.sender === mainWindow?.webContents && mainWindow.isFullScreen(),
       conditionDefinitions: CONDITIONS, combatRoles: ROLES, referenceLinks: REFERENCE_LINKS,
-      reference: referenceState(), test: TEST, mac, theme: currentTheme, welcomeAtStart: !TEST || process.env.DM_SCREEN_WELCOME_TEST === '1' };
+      reference: referenceState(), shortcuts, test: TEST, mac, theme: currentTheme, welcomeAtStart: !TEST || process.env.DM_SCREEN_WELCOME_TEST === '1' };
+  });
+  handle('set-shortcuts', (_, value) => {
+    const next = validateShortcuts(value);
+    if (!next) throw new Error('У каждой команды должна быть своя буква от A до Z');
+    writeJSON(shortcutStore, next);
+    shortcuts = next;
+    sendAll('status', { scope: 'shortcuts', bindings: shortcuts });
+    return { ok: true };
   });
   handle('set-theme', (event, id) => {
     if (event.sender !== mainWindow?.webContents || typeof id !== 'string' || !Object.hasOwn(ScreenThemes, id)) {
@@ -640,12 +766,16 @@ function setupIPC() {
   });
   ipcMain.on('remote-bounds', (event, { id, bounds }) => {
     try {
-      localSender(event); if ((TEST && process.env.DM_SCREEN_REMOTE_TEST !== '1') || !Object.hasOwn(REMOTE, id)) return;
+      localSender(event); if ((TEST && process.env.DM_SCREEN_REMOTE_TEST !== '1') || !remoteKind(id)) return;
       const owner = BrowserWindow.fromWebContents(event.sender);
       if ((windows.get(remotePanelFor(id)) || mainWindow) !== owner) return;
-      if (!bounds && !remotes.has(id)) return;
+      if (!bounds || id !== 'characters' && id !== referenceTab) {
+        const record = remotes.get(id);
+        if (record?.owner === owner) record.view.setVisible(false);
+        return;
+      }
       const view = attachRemote(id, owner);
-      if (!bounds || remotes.get(id).failed || bounds.width < 5 || bounds.height < 5) { view.setVisible(false); return; }
+      if (remotes.get(id).failed || bounds.width < 5 || bounds.height < 5) { view.setVisible(false); return; }
       const [maxW, maxH] = owner.getContentSize();
       const x = Math.max(0, Math.round(bounds.x)), y = Math.max(0, Math.round(bounds.y));
       view.setBounds({ x, y, width: Math.max(1, Math.min(maxW - x, Math.round(bounds.width))), height: Math.max(1, Math.min(maxH - y, Math.round(bounds.height))) }); view.setVisible(true);
@@ -655,11 +785,17 @@ function setupIPC() {
   if (mac) ipcMain.on('remote-wheel-zoom', (event, direction) => {
     if ((direction !== 'in' && direction !== 'out') || event.senderFrame !== event.sender.mainFrame) return;
     const record = [...remotes.values()].find(item => item.view.webContents === event.sender);
-    if (record?.view.getVisible()) adjustRemoteZoom(event.sender, direction);
+    if (record?.view.getVisible()) adjustRemoteZoom(record, direction);
   });
-  handle('remote-action', async (_, { id, action }) => {
+  handle('remote-action', async (event, { id, action }) => {
     if (!Object.hasOwn(REMOTE, id)) throw new Error('Неизвестный сайт');
-    const wc = remotes.get(id)?.view.webContents;
+    const record = remotes.get(id);
+    const wc = record?.view.webContents;
+    if (['zoom-in', 'zoom-out', 'zoom-reset'].includes(action)) {
+      if (!record || event.sender !== record.owner?.webContents) throw new Error('Открой страницу, чтобы изменить масштаб');
+      adjustRemoteZoom(record, action.slice(5));
+      return { ok: true };
+    }
     if (action === 'external') await shell.openExternal(safeUrl(wc?.getURL()) || REMOTE[id]);
     else if (wc && action === 'back' && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
     else if (wc && action === 'reload') wc.reload();
@@ -761,6 +897,19 @@ app.whenReady().then(async () => {
   ({ state, assets, file: store } = opened);
   if (opened.recovered) dialog.showErrorBox('Не удалось прочитать кампанию', 'Сохранена резервная копия файла. Открыта новая кампания.');
   themeStore = path.join(app.getPath('userData'), 'appearance.json');
+  zoomStore = path.join(app.getPath('userData'), 'site-zoom.json');
+  shortcutStore = path.join(app.getPath('userData'), 'shortcuts.json');
+  if (fs.existsSync(shortcutStore)) {
+    try { shortcuts = validateShortcuts({ ...shortcutDefaults, ...JSON.parse(fs.readFileSync(shortcutStore, 'utf8')) }) ?? shortcutDefaults; }
+    catch (error) { console.warn('Не удалось прочитать горячие клавиши:', error.message); }
+  }
+  if (fs.existsSync(zoomStore)) {
+    try {
+      const saved = JSON.parse(fs.readFileSync(zoomStore, 'utf8'));
+      siteZoom = new Map(saved.filter(entry => Array.isArray(entry) && typeof entry[0] === 'string' &&
+        entry[0].length <= 253 && remoteZoomFactors.includes(entry[1])).slice(0, 500));
+    } catch (error) { console.warn('Не удалось прочитать масштаб сайтов:', error.message); }
+  }
   if (fs.existsSync(themeStore)) {
     try {
       const { theme } = JSON.parse(fs.readFileSync(themeStore, 'utf8'));
@@ -784,6 +933,7 @@ app.whenReady().then(async () => {
       else {
         const allowed = ['index.html', 'app.js', 'map-geometry.js', 'map-terrain.js', 'styles.css', 'tavern.css', 'themes.js', 'themes.css',
           'ambience.css', 'ambience.js', 'scene.css', 'story.js', 'story.css', 'session.js', 'session.css', 'workspace.css', 'icons.css',
+          'shortcuts.js', 'campaign-tools.js', 'campaign-tools.css',
           ...bundledAssets.map(asset => asset.slice(1))];
         const relative = u.pathname.slice(1) || 'index.html';
         if (!allowed.includes(relative)) return new Response('Not found', { status: 404 });
@@ -809,7 +959,7 @@ app.whenReady().then(async () => {
   ]) : null);
   setupIPC(); setupUpdater();
   mainWindow = secureWindow({
-    title: 'Интерактивная ширма мастера',
+    title: 'Адвенчурикон',
     fullscreen: !TEST || process.env.DM_SCREEN_TEST_START_FULLSCREEN === '1'
   });
   for (const [event, active] of [['enter-full-screen', true], ['leave-full-screen', false]]) {

@@ -108,7 +108,7 @@ function createSessionTools({ getState, getCampaigns, dispatch, campaign, openDi
     renderScenes();
     openDialog(scenesDialog.id);
   };
-  return { render() {
+  return { openScene, render() {
     if (campaignDialog.open) renderCampaigns();
     if (scenesDialog.open) renderScenes();
     if (!get('preparation-scenes').hidden) renderPreparationScenes();
