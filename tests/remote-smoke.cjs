@@ -16,7 +16,9 @@ let app;
     expect.objectContaining({ url: expect.stringContaining('longstoryshort.app'), ready: 'complete' })
   ]));
   const sites = await app.evaluate(async ({ webContents }) => Promise.all(webContents.getAllWebContents().filter(w => /^https:\/\//.test(w.getURL())).map(async w => ({ id: w.id, url: w.getURL(), title: await w.executeJavaScript('document.title'), text: (await w.executeJavaScript('document.body.innerText')).slice(0, 180), nodeEnabled: w.getLastWebPreferences().nodeIntegration, preload: w.getLastWebPreferences().preload }))));
-  for (const site of sites) { assert.equal(site.nodeEnabled, false); assert.ok(!site.preload); assert.ok(!/404|ERR_|not found/i.test(site.title), JSON.stringify(site)); }
+  const expectedPreload = process.platform === 'darwin' ? 'remote-zoom-preload.cjs' : '';
+  const preloadName = file => file ? path.basename(file) : '';
+  for (const site of sites) { assert.equal(site.nodeEnabled, false); assert.equal(preloadName(site.preload), expectedPreload); assert.ok(!/404|ERR_|not found/i.test(site.title), JSON.stringify(site)); }
   const original = sites.find(s => s.url.includes('longstoryshort')).id;
   assert.ok(sites.find(s => s.url.includes('longstoryshort')).url.includes('/characters/list/'));
   const sheetVisible = () => app.evaluate(({ BrowserWindow }, id) => {
@@ -59,7 +61,7 @@ let app;
       return { url: view.webContents.getURL(), node: preferences.nodeIntegration, sandbox: preferences.sandbox, preload: preferences.preload };
     });
   });
-  assert.ok(infoViewState.some(view => /duckduckgo\.com/.test(view.url) && !view.node && view.sandbox && !view.preload));
+  assert.ok(infoViewState.some(view => /duckduckgo\.com/.test(view.url) && !view.node && view.sandbox && preloadName(view.preload) === expectedPreload));
   await refWindow.click('[data-detach="info"]');
   await page.click('#open-bookmarks');
   await page.click('#bookmarks-list [data-bookmark]');

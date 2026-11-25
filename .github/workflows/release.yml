@@ -65,6 +65,7 @@ jobs:
           node tests/welcome-smoke.cjs
           node tests/session-smoke.cjs
           node tests/workspace-smoke.cjs
+          node tests/browser-zoom-smoke.cjs
       - name: Install native Debian packager
         if: matrix.platform == 'linux' && matrix.arch == 'arm64'
         shell: bash
@@ -86,6 +87,7 @@ jobs:
             openbox >/tmp/dm-screen-openbox.log 2>&1 &
             node tests/welcome-smoke.cjs
             node tests/map-window-smoke.cjs
+            node tests/browser-zoom-smoke.cjs
           '
       - name: Verify packaged macOS desktop
         if: runner.os == 'macOS'
@@ -101,6 +103,7 @@ jobs:
           node tests/welcome-smoke.cjs
           node tests/map-window-smoke.cjs
           node tests/story-smoke.cjs
+          node tests/browser-zoom-smoke.cjs
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}

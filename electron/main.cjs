@@ -23,6 +23,7 @@ if (process.env.DM_SCREEN_DATA) app.setPath('userData', process.env.DM_SCREEN_DA
 protocol.registerSchemesAsPrivileged([{ scheme: 'dm', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 const PANELS = ['combat', 'music', 'map', 'info', 'characters'];
 const REMOTE = { info: DND_HOME, web: WEB_HOME, characters: 'https://longstoryshort.app/characters/list/' };
+const remoteZoomFactors = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 const partitionFor = id => id === 'web' ? 'dm-web' : `persist:dm-${id}`;
 const remotePanelFor = id => id === 'web' ? 'info' : id;
 let referenceTab = 'info';
@@ -196,14 +197,34 @@ function secureWindow(options = {}, showInactive = false) {
   });
   return w;
 }
+function adjustRemoteZoom(contents, direction) {
+  if (direction === 'reset') return contents.setZoomFactor(1);
+  const current = contents.getZoomFactor();
+  const next = direction === 'in'
+    ? remoteZoomFactors.find(factor => factor > current + 0.001)
+    : remoteZoomFactors.findLast(factor => factor < current - 0.001);
+  if (next !== undefined) contents.setZoomFactor(next);
+}
 function attachRemote(id, owner) {
   let record = remotes.get(id);
   if (!record) {
-    const view = new WebContentsView({ webPreferences: { partition: partitionFor(id), nodeIntegration: false, contextIsolation: true, sandbox: true } });
+    const view = new WebContentsView({ webPreferences: { partition: partitionFor(id), nodeIntegration: false, contextIsolation: true, sandbox: true,
+      ...(mac ? { preload: path.join(__dirname, 'remote-zoom-preload.cjs') } : {}) } });
     view.setVisible(false);
     record = { view, owner: null, requested: REMOTE[id], failed: false };
     remotes.set(id, record);
     const wc = view.webContents;
+    wc.setZoomMode('isolated');
+    if (!mac) wc.on('zoom-changed', (_, direction) => adjustRemoteZoom(wc, direction));
+    wc.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown' || input.alt || !(input.control || (mac && input.meta))) return;
+      const direction = ['Digit0', 'Numpad0'].includes(input.code) ? 'reset'
+        : ['Equal', 'NumpadAdd'].includes(input.code) ? 'in'
+          : ['Minus', 'NumpadSubtract'].includes(input.code) ? 'out' : null;
+      if (!direction) return;
+      event.preventDefault();
+      adjustRemoteZoom(wc, direction);
+    });
     wc.setWindowOpenHandler(({ url, disposition }) => {
       const destination = safeUrl(url);
       if (!destination) return { action: 'deny' };
@@ -631,6 +652,11 @@ function setupIPC() {
     } catch { /* Window may close during a resize. */ }
   });
   handle('reference-action', referenceAction);
+  if (mac) ipcMain.on('remote-wheel-zoom', (event, direction) => {
+    if ((direction !== 'in' && direction !== 'out') || event.senderFrame !== event.sender.mainFrame) return;
+    const record = [...remotes.values()].find(item => item.view.webContents === event.sender);
+    if (record?.view.getVisible()) adjustRemoteZoom(event.sender, direction);
+  });
   handle('remote-action', async (_, { id, action }) => {
     if (!Object.hasOwn(REMOTE, id)) throw new Error('Неизвестный сайт');
     const wc = remotes.get(id)?.view.webContents;
