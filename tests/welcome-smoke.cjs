@@ -146,6 +146,7 @@ let app;
   await master.getByRole('button', { name: 'Таверна', exact: true }).click();
   await expect(master.locator('html[data-theme]')).toHaveCount(0);
   await expect(master.locator('#theme-brand-icon')).toHaveAttribute('src', 'assets/icon.png');
+  await expect.poll(() => master.locator('#theme-brand-icon').evaluate(img => img.naturalWidth)).toBeGreaterThanOrEqual(512);
   await app.close();
   app = null;
   console.log('Pixel lights, light and dark themes, native icon, detached window, restart, welcome, tips and reduced motion passed.');
