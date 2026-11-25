@@ -45,15 +45,32 @@ async function main() {
       }
       return null;
     }, host);
-    const send = (host, input) => app.evaluate(({ BrowserWindow }, { host, input }) => {
+    const send = (host, input) => app.evaluate(async ({ BrowserWindow }, { host, input }) => {
       const owner = BrowserWindow.getAllWindows().find(owner => owner.contentView.children.some(view =>
         view.webContents?.getURL().startsWith(`https://${host}/`) && view.getVisible()
       ));
       const view = owner.contentView.children.find(view => view.webContents?.getURL().startsWith(`https://${host}/`));
+      const contents = view.webContents;
       owner.show();
       owner.focus();
-      view.webContents.focus();
-      view.webContents.sendInputEvent(input);
+      contents.focus();
+      if (input.type === 'mouseWheel' && process.platform === 'darwin') {
+        // Address the renderer directly. Native test focus can move asynchronously on CI.
+        const client = contents.debugger;
+        const { width, height } = view.getBounds();
+        client.attach();
+        try {
+          await client.sendCommand('Input.dispatchMouseEvent', {
+            type: 'mouseWheel', x: Math.floor(width / 2), y: Math.floor(height / 2), deltaX: 0, deltaY: -input.deltaY,
+            modifiers: input.modifiers.includes('control') ? 2 : input.modifiers.includes('meta') ? 4 : 0
+          });
+        } finally {
+          client.detach();
+        }
+      } else {
+        contents.sendInputEvent(input);
+        if (input.type === 'keyDown') contents.sendInputEvent({ ...input, type: 'keyUp' });
+      }
     }, { host, input });
     const wheel = (host, deltaY, modifiers = ['control']) => send(host, {
       type: 'mouseWheel', x: 50, y: 50, deltaY, wheelTicksY: Math.sign(deltaY), canScroll: true, modifiers
