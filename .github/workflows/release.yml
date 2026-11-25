@@ -192,7 +192,7 @@ jobs:
             test "$target" = "$RELEASE_COMMIT"
           else
             gh release create "$tag" --verify-tag --draft --target "$RELEASE_COMMIT" \
-              --title "Адвенчурикон $version" --generate-notes
+              --title "Адвентурикон $version" --generate-notes
           fi
           gh release upload "$tag" "${installers[@]}" "${updates[@]}" SHA256SUMS
           if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --silent; then

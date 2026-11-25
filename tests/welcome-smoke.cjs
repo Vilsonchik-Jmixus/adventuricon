@@ -41,6 +41,21 @@ let app;
   }
   await master.keyboard.press('Escape');
   await expect(welcome()).toBeHidden();
+  const garland = master.locator('#holiday-lights');
+  await garland.evaluate(element => { element.hidden = false; });
+  await expect(garland.locator('i')).toHaveCount(13);
+  const bulb = garland.locator('i').first();
+  const colors = await bulb.evaluate(element => {
+    const [animation] = element.getAnimations();
+    animation.pause();
+    return [0, 3000].map(time => {
+      animation.currentTime = time;
+      return getComputedStyle(element).color;
+    });
+  });
+  assert.notEqual(...colors, 'the first pixel bulb changes color');
+  const [strand, brand] = await Promise.all([garland.boundingBox(), master.locator('.brand').boundingBox()]);
+  assert.ok(strand.y + strand.height <= brand.y, 'the strand fits above the toolbar');
   const firstTip = await tip().textContent();
   await master.locator('#screen-tip').click();
   await expect(tip()).not.toHaveText(firstTip);
@@ -61,7 +76,21 @@ let app;
     });
   }
   await settings().click();
-  await expect(master.locator('.screen-theme')).toHaveCount(8);
+  await expect(master.locator('.screen-theme')).toHaveCount(10);
+  const light = master.getByRole('button', { name: 'Белая надежда', exact: true });
+  await light.click();
+  await expect(master.locator('html')).toHaveCSS('color-scheme', 'light');
+  await expect(master.locator('#theme-brand-icon')).toHaveAttribute('src', 'assets/themes/light.png');
+  await expect.poll(() => master.locator('#theme-brand-icon').evaluate(img => img.naturalWidth)).toBe(256);
+  if (process.env.DM_SCREEN_CAPTURE) {
+    await master.keyboard.press('Escape');
+    await master.screenshot({ path: path.join(env.DM_SCREEN_DATA, 'light.png'), animations: 'disabled' });
+    await settings().click();
+  }
+  await master.getByRole('button', { name: 'Чёрный сумрак', exact: true }).click();
+  await expect(master.locator('html')).toHaveCSS('color-scheme', 'dark');
+  await expect(master.locator('#theme-brand-icon')).toHaveAttribute('src', 'assets/themes/dark.png');
+  await expect.poll(() => master.locator('#theme-brand-icon').evaluate(img => img.naturalWidth)).toBe(256);
   const blue = master.getByRole('button', { name: 'Сумерки', exact: true });
   await blue.click();
   await expect(blue).toHaveAttribute('aria-pressed', 'true');
@@ -106,6 +135,7 @@ let app;
   await expect(master.getByRole('button', { name: 'Шалфей', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(master.getByRole('checkbox', { name: 'Джингл приветствия' })).not.toBeChecked();
   await master.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(master.locator('#holiday-lights i').first()).toHaveCSS('animation-name', 'none');
   await master.getByRole('button', { name: 'Показать приветствие' }).click();
   await expect(welcome()).toBeVisible();
   await expect(welcome()).toHaveCSS('animation-name', 'none');
@@ -118,7 +148,7 @@ let app;
   await expect(master.locator('#theme-brand-icon')).toHaveAttribute('src', 'assets/icon.png');
   await app.close();
   app = null;
-  console.log('Theme picker, native icon, detached window, restart, welcome, tips and reduced motion passed.');
+  console.log('Pixel lights, light and dark themes, native icon, detached window, restart, welcome, tips and reduced motion passed.');
 })().catch(async error => {
   console.error(error);
   await app?.close().catch(() => {});

@@ -19,7 +19,8 @@ const TEST = process.env.DM_SCREEN_TEST === '1';
 const mac = process.platform === 'darwin';
 const appImage = process.platform === 'linux' && !!process.env.APPIMAGE;
 const canAutoUpdate = process.platform === 'win32' || appImage;
-const releasesUrl = 'https://github.com/Vilsonchik-Jmixus/interactive-dm-screen/releases/latest';
+const releasesUrl = 'https://github.com/Vilsonchik-Jmixus/adventuricon/releases/latest';
+app.setName('Адвентурикон');
 if (appImage) app.commandLine.appendSwitch('disable-setuid-sandbox');
 app.setPath('userData', process.env.DM_SCREEN_DATA || path.join(app.getPath('appData'), 'interactive-dm-screen'));
 protocol.registerSchemesAsPrivileged([{ scheme: 'dm', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
@@ -959,7 +960,7 @@ app.whenReady().then(async () => {
   ]) : null);
   setupIPC(); setupUpdater();
   mainWindow = secureWindow({
-    title: 'Адвенчурикон',
+    title: 'Адвентурикон',
     fullscreen: !TEST || process.env.DM_SCREEN_TEST_START_FULLSCREEN === '1'
   });
   for (const [event, active] of [['enter-full-screen', true], ['leave-full-screen', false]]) {

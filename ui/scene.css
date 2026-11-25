@@ -1,43 +1,71 @@
+body:has(#holiday-lights:not([hidden])) { --appbar-height: 72px; }
+.appbar:has(#holiday-lights:not([hidden])) { padding-top: 24px; }
 #holiday-lights {
   position: absolute;
-  top: -5px;
+  top: 0;
   left: 50%;
   transform: translateX(-50%);
-  z-index: -1;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-around;
-  width: clamp(275px, 38vw, 540px);
-  height: 15px;
-  border-bottom: 2px solid #987252;
-  border-radius: 0 0 50% 50%;
+  display: grid;
+  grid-template-columns: repeat(13, 1fr);
+  justify-items: center;
+  align-items: start;
+  width: clamp(310px, 54vw, 730px);
+  height: 24px;
   pointer-events: none;
 }
-#holiday-lights i {
-  --bulb: #e5ba78;
-  --afterglow: #e4a284;
-  --sag: 14px;
-  width: 7px;
-  height: 9px;
-  margin-top: var(--sag);
-  color: var(--bulb);
-  background: currentColor;
-  border-radius: 2px 2px 1px 1px;
-  box-shadow: inset 0 -2px #22130d4f, 0 0 8px color-mix(in srgb, currentColor 72%, transparent);
-  opacity: .8;
-  animation: holiday-lights 5.4s ease-in-out infinite;
+#holiday-lights::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 11px;
+  background: linear-gradient(#9e886c, #554e3e);
+  clip-path: polygon(
+    0 0, 8% 0, 8% 2px, 16% 2px, 16% 4px, 25% 4px, 25% 6px, 36% 6px,
+    36% 8px, 64% 8px, 64% 6px, 75% 6px, 75% 4px, 84% 4px, 84% 2px, 92% 2px, 92% 0, 100% 0,
+    100% 2px, 92% 2px, 92% 4px, 84% 4px, 84% 6px, 75% 6px, 75% 8px, 64% 8px,
+    64% 10px, 36% 10px, 36% 8px, 25% 8px, 25% 6px, 16% 6px, 16% 4px, 8% 4px, 8% 2px, 0 2px
+  );
 }
-#holiday-lights i:nth-child(5n+2) { --bulb: #a9c993; --afterglow: #92c8c7; animation-delay: -1.1s; }
-#holiday-lights i:nth-child(5n+3) { --bulb: #e29181; --afterglow: #dab2d2; animation-delay: -3.3s; }
-#holiday-lights i:nth-child(5n+4) { --bulb: #9dc0dc; --afterglow: #a9c993; animation-delay: -2.1s; }
-#holiday-lights i:nth-child(5n+5) { --bulb: #ccaddd; --afterglow: #e5ba78; animation-delay: -4.4s; }
-#holiday-lights i:is(:first-child, :last-child) { --sag: 7px; }
-#holiday-lights i:is(:nth-child(2), :nth-last-child(2)) { --sag: 10px; }
-#holiday-lights i:is(:nth-child(3), :nth-last-child(3)) { --sag: 12px; }
+#holiday-lights i {
+  --bulb: #efb86f;
+  --afterglow: #f4808c;
+  --socket-y: 8px;
+  position: relative;
+  width: 10px;
+  height: 16px;
+  margin-top: var(--socket-y);
+  color: var(--bulb);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, currentColor 65%, transparent));
+  animation: holiday-lights 6s steps(7, end) infinite;
+}
+#holiday-lights i::before,
+#holiday-lights i::after { content: ''; position: absolute; }
+#holiday-lights i::before {
+  inset: 0 2px auto;
+  height: 5px;
+  background: linear-gradient(#b4a58e 0 1px, #403d36 1px 3px, #74654e 3px);
+}
+#holiday-lights i::after {
+  inset: 4px 0 0;
+  background:
+    linear-gradient(#fff9 0 0) 2px 3px / 2px 3px no-repeat,
+    linear-gradient(90deg, #0000 60%, #2117154d 60%),
+    linear-gradient(currentColor 0 75%, color-mix(in srgb, currentColor 57%, #302019) 75%);
+  clip-path: polygon(2px 0, 8px 0, 8px 2px, 10px 2px, 10px 8px, 8px 8px, 8px 10px, 6px 10px,
+    6px 12px, 4px 12px, 4px 10px, 2px 10px, 2px 8px, 0 8px, 0 2px, 2px 2px);
+}
+#holiday-lights i:nth-child(5n+2) { --bulb: #92d695; --afterglow: #7fdbd5; animation-delay: -1.1s; }
+#holiday-lights i:nth-child(5n+3) { --bulb: #ec8381; --afterglow: #f3afd3; animation-delay: -3.3s; }
+#holiday-lights i:nth-child(5n+4) { --bulb: #91baef; --afterglow: #9bda9a; animation-delay: -2.1s; }
+#holiday-lights i:nth-child(5n+5) { --bulb: #d2a5e7; --afterglow: #f3c476; animation-delay: -4.4s; }
+#holiday-lights i:is(:first-child, :last-child) { --socket-y: 0; }
+#holiday-lights i:is(:nth-child(2), :nth-last-child(2)) { --socket-y: 2px; }
+#holiday-lights i:is(:nth-child(3), :nth-last-child(3)) { --socket-y: 4px; }
+#holiday-lights i:is(:nth-child(4), :nth-child(5), :nth-last-child(4), :nth-last-child(5)) { --socket-y: 6px; }
 @keyframes holiday-lights {
-  0%, 100% { color: var(--bulb); opacity: .88; }
-  26%, 76% { opacity: .56; }
-  52% { color: var(--afterglow); opacity: .95; }
+  0%, 100% { color: var(--bulb); opacity: .98; }
+  24%, 76% { opacity: .67; }
+  50% { color: var(--afterglow); opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) { #holiday-lights i { animation: none; } }
 

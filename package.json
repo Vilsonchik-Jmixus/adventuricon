@@ -1,14 +1,14 @@
 {
   "name": "interactive-dm-screen",
-  "version": "3.0.0",
-  "description": "Адвенчурикон — рабочий стол ведущего D&D",
+  "version": "3.1.0",
+  "description": "Адвентурикон — рабочий стол ведущего D&D",
   "main": "electron/main.cjs",
   "author": "Vilsonchik-Jmixus",
   "license": "MIT",
-  "homepage": "https://github.com/Vilsonchik-Jmixus/interactive-dm-screen",
+  "homepage": "https://github.com/Vilsonchik-Jmixus/adventuricon",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Vilsonchik-Jmixus/interactive-dm-screen.git"
+    "url": "https://github.com/Vilsonchik-Jmixus/adventuricon.git"
   },
   "scripts": {
     "start": "electron .",
@@ -28,7 +28,7 @@
   },
   "build": {
     "appId": "app.dm-screen.desktop",
-    "productName": "Адвенчурикон",
+    "productName": "Адвентурикон",
     "directories": {
       "output": "dist"
     },
@@ -93,7 +93,7 @@
       {
         "provider": "github",
         "owner": "Vilsonchik-Jmixus",
-        "repo": "interactive-dm-screen",
+        "repo": "adventuricon",
         "releaseType": "release"
       }
     ]

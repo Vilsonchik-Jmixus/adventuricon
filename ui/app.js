@@ -1938,12 +1938,12 @@ api.onState(value => initialized ? applyWindowPatch(value) : pendingState.push(v
     dock.title = 'Вернуть в ширму';
     dock.setAttribute('aria-label', dock.title);
     const title = document.querySelector(`[data-panel="${detachedPanel}"] h1`)?.textContent ?? 'Листы персонажей';
-    document.title = title + ' · Адвенчурикон';
+    document.title = title + ' · Адвентурикон';
     if (isPlayerMap) {
       document.body.classList.add('player-map');
       if (isPreview) document.body.classList.add('preview-screen');
       document.querySelector('.map h1').textContent = 'Карта игроков';
-      document.title = isPreview ? 'Предпросмотр экрана игроков' : 'Карта игроков · Адвенчурикон';
+      document.title = isPreview ? 'Предпросмотр экрана игроков' : 'Карта игроков · Адвентурикон';
       viewport.inert = true;
       $('rotate-player-left').hidden = $('rotate-player-right').hidden = isPreview;
       $('player-blackout').hidden = !playerBlackout;

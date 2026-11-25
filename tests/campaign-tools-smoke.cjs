@@ -12,7 +12,7 @@ async function main() {
   try {
     let page = await app.firstWindow();
     await expect(page.locator('#version')).toHaveText(`v${require('../package.json').version}`);
-    await expect(page).toHaveTitle('Адвенчурикон');
+    await expect(page).toHaveTitle('Адвентурикон');
     await page.evaluate(async () => {
       for (const [type, payload] of [
         ['battle:save', { title: 'У ворот' }], ['combatant:add', { name: 'Страж ворот' }],
