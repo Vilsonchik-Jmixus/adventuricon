@@ -62,7 +62,7 @@ test('NumPad maps both banks and excludes top-row digits, navigation and extra m
 test('all chip sounds synthesize non-empty, distinct waveforms; only ambient pads loop', () => {
   const samples = [];
   class AudioContext {
-    createGain() { return { gain: {}, connect() {} }; }
+    createGain() { return { gain: { setTargetAtTime() {}, cancelScheduledValues() {} }, connect() {}, disconnect() {} }; }
     createBuffer(_, length) {
       const data = new Float32Array(length);
       samples.push(data);

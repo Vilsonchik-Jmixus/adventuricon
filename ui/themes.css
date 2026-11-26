@@ -70,6 +70,23 @@
   --inset: var(--theme-inset);
   color-scheme: light;
 }
+:root[data-theme="parchment"] {
+  --panel: #f7ebcf;
+  --wood: #ecd9b5;
+  --wood-light: #f3e2c3;
+  --theme-hover: #e7cfa4;
+  --theme-active: #e2c69b;
+  --line: #c7ae86;
+  --edge: #a18057;
+  --shadow: #4d392735;
+  --theme-inset: #fff3da;
+  --text: #32271e;
+  --muted: #644d3a;
+  --theme-bright: #694723;
+  --theme-on-accent: #fff4dc;
+  --inset: var(--theme-inset);
+  color-scheme: light;
+}
 
 [data-theme] body { background: radial-gradient(ellipse at 50% 0%, var(--wood), var(--bg) 70%); }
 [data-theme] .appbar, [data-theme] .panel-head {
@@ -143,11 +160,11 @@
 [data-theme] .story-rope-preview { stroke: var(--theme-bright); }
 [data-theme] ::-webkit-scrollbar-thumb { background: var(--edge); }
 
-[data-theme="light"] :is(.site-empty p, .site-empty small, .story-note-body, .story-note-title, #story-empty,
+:is([data-theme="light"], [data-theme="parchment"]) :is(.site-empty p, .site-empty small, .story-note-body, .story-note-title, #story-empty,
   #story-instruction, .add-button, .playback button:not(.play-button), .zoom-controls, .now-playing small, .equalizer,
   .save-status, #music-status, .combat-status) { color: var(--muted); }
-[data-theme="light"] :is(input, textarea)::placeholder { color: var(--muted); opacity: .85; }
-[data-theme="light"] :is(.map-toolbar, .slot-bar, .gallery-tools, .gallery-preview, .gallery-history,
+:is([data-theme="light"], [data-theme="parchment"]) :is(input, textarea)::placeholder { color: var(--muted); opacity: .85; }
+:is([data-theme="light"], [data-theme="parchment"]) :is(.map-toolbar, .slot-bar, .gallery-tools, .gallery-preview, .gallery-history,
   .map-presentation-toolbar, .condition-duration, .condition-editor label) { background: var(--wood); border-color: var(--line); }
-[data-theme="light"] :is(.map-viewport, #player-art) { background-color: #403325; }
-[data-theme="light"] dialog::backdrop { background: #32271e9c; }
+:is([data-theme="light"], [data-theme="parchment"]) :is(.map-viewport, #player-art) { background-color: #403325; }
+:is([data-theme="light"], [data-theme="parchment"]) dialog::backdrop { background: #32271e9c; }

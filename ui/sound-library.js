@@ -27,7 +27,8 @@
         (input.shiftKey ?? input.shift) || (input.metaKey ?? input.meta) || input.getModifierState?.('AltGraph')) return null;
     return pads[Number(digit[1]) + ((input.altKey ?? input.alt) ? 10 : 0)][0];
   }
-  const api = { pads, moves, conditions, preferenceDefaults, padShortcut,
+  const ambientIds = pads.filter(([, , loop]) => loop).map(([id]) => id);
+  const api = { pads, ambientIds, moves, conditions, preferenceDefaults, padShortcut,
     moveSound: (id, fallback = 'step') => moves.some(([key]) => key === id) ? id : fallback };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else window.SoundLibrary = api;

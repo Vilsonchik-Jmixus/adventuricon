@@ -1,6 +1,6 @@
 {
   "name": "interactive-dm-screen",
-  "version": "4.1.0",
+  "version": "4.2.0",
   "description": "Адвентурикон — рабочий стол ведущего D&D",
   "main": "electron/main.cjs",
   "author": "Vilsonchik-Jmixus",

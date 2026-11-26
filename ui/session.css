@@ -6,6 +6,32 @@ body.detached #open-campaigns, body.detached #open-session-scenes { display: non
 .session-scene button:first-child { width: 100%; text-align: left; overflow-wrap: anywhere; }
 #session-scene-list { max-height: 50vh; overflow: auto; }
 #map-note-pins { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+#map-portals { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+#map-portals [data-portal-id] {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  transform: translate(-50%, -50%) rotate(var(--token-orientation));
+  color: var(--mint);
+  border: 1px solid var(--mint);
+  background: var(--panel);
+  border-radius: 4px;
+}
+#map-portals button { pointer-events: auto; }
+.placing-token #map-portals button { pointer-events: none; }
+.scene-ambient-loops { display: grid; grid-template-columns: repeat(auto-fit, minmax(124px, 1fr)); gap: 8px; }
+.scene-ambient-loops label, .inline-check { flex-direction: row; align-items: center; }
+#scene-sound-options { display: grid; min-width: 0; gap: 12px; border: 1px solid var(--line); }
+#scene-sound-options[hidden] { display: none; }
+#portal-map-preview { overflow: hidden; }
+#portal-travel-tokens { max-height: 38vh; overflow: auto; margin-block: 6px; }
+#portal-exit-map { width: min(100%, 385px); display: block; position: relative; padding: 0; margin-inline: auto; max-height: 36vh; overflow: hidden; cursor: crosshair; background: #27221d; }
+#portal-exit-map img, #portal-exit-grid { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#portal-exit-grid { background-image: linear-gradient(90deg, #fff6 1px, transparent 1px), linear-gradient(#fff6 1px, transparent 1px); }
+#portal-exit-marker { position: absolute; width: 10px; height: 10px; transform: translate(-50%, -50%); border: 2px solid #17110d; outline: 1px solid #ffe9ac; border-radius: 50%; background: #ffd36e; pointer-events: none; }
 #map-note-pins button {
   position: absolute;
   transform: translate(-50%, -50%) rotate(var(--token-orientation));

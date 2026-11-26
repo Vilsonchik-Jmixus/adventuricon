@@ -13,9 +13,19 @@
     ['blackout', 'B', 'Затемнить или вернуть экран игроков'],
     ['fog', 'F', 'Включить или выключить туман войны'],
     ['fullscreen', 'P', 'Полноэкранный режим'],
-    ['shortcut-help', 'H', 'Настройки горячих клавиш']
+    ['shortcut-help', 'H', 'Настройки горячих клавиш'],
+    ['dice', 'D', 'Меню бросков']
   ];
   const defaults = Object.fromEntries(definitions.map(([id, letter]) => [id, letter]));
+  function restoreShortcuts(value) {
+    const saved = Object.fromEntries(definitions.filter(([id]) => Object.hasOwn(value ?? {}, id)).map(([id]) => [id, value[id]]));
+    if (!Object.hasOwn(saved, 'dice')) {
+      const { dice, ...older } = { ...defaults, ...saved };
+      const used = new Set(Object.values(older));
+      saved.dice = [defaults.dice, ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].find(letter => !used.has(letter));
+    }
+    return validateShortcuts({ ...defaults, ...saved }) ?? defaults;
+  }
   function validateShortcuts(value) {
     const keys = definitions.map(([id]) => value?.[id]);
     if (!keys.every(letter => typeof letter === 'string' && /^[A-Z]$/.test(letter)) || new Set(keys).size !== keys.length) return null;
@@ -29,7 +39,7 @@
     if (!ctrl || !alt || meta || shift || input.getModifierState?.('AltGraph')) return null;
     return definitions.find(([id]) => input.code === 'Key' + bindings[id])?.[0] ?? null;
   }
-  const api = { definitions, defaults, validateShortcuts, matchShortcut };
+  const api = { definitions, defaults, validateShortcuts, restoreShortcuts, matchShortcut };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else window.DmShortcuts = api;
 })();

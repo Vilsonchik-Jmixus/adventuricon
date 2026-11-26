@@ -75,12 +75,19 @@ jobs:
           command -v fpm
           echo 'USE_SYSTEM_FPM=true' >> "$GITHUB_ENV"
       - name: Build installers
-        run: npm run build -- --${{ matrix.platform }} --${{ matrix.arch }}
-      - name: Verify packaged Windows Sound Update
+        shell: bash
+        run: |
+          for attempt in 1 2; do
+            if npm run build -- --${{ matrix.platform }} --${{ matrix.arch }}; then exit 0; fi
+            if [[ "$attempt" == 2 ]]; then exit 1; fi
+            sleep 5
+          done
+      - name: Verify packaged Windows sound, dice and map transitions
         if: runner.os == 'Windows'
         run: |
           $env:DM_SCREEN_EXECUTABLE = (Resolve-Path -LiteralPath 'dist/win-unpacked/Адвентурикон.exe').Path
           node tests/sound-update-smoke.cjs
+          node tests/dice-portals-smoke.cjs
       - name: Verify packaged Linux desktop
         if: runner.os == 'Linux'
         shell: bash

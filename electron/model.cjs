@@ -1,7 +1,7 @@
 const { randomUUID, randomInt } = require('node:crypto');
 const { roleOf, effectsFor, MANUAL_IDS, revealsFog } = require('./combat-rules.cjs');
 const { blockingWalls, validCell, routeBlocked, distanceToSegment, visibleCells } = require('../ui/map-geometry.js');
-const { moveSound } = require('../ui/sound-library.js');
+const { moveSound, ambientIds } = require('../ui/sound-library.js');
 const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
 const finite = (n, fallback) => Number.isFinite(Number(n)) ? Number(n) : fallback;
 const text = (v, max = 120) => String(v ?? '').trim().slice(0, max);
@@ -185,6 +185,23 @@ function placeToken(board, id, { col, row }) {
   }
   board.tokens.push({ combatantId: id, col, row });
 }
+function portalCells(target, exit, ids) {
+  const moving = new Set(ids);
+  const occupied = new Set(target.tokens.filter(token => !moving.has(token.combatantId)).map(token => `${token.col},${token.row}`));
+  const walls = blockingWalls(target.terrain);
+  const exits = [];
+  for (let radius = 0; radius <= 12 && exits.length < ids.length; radius++) {
+    for (let dy = -radius; dy <= radius && exits.length < ids.length; dy++) {
+      for (let dx = -radius; dx <= radius && exits.length < ids.length; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+        const cell = { col: exit.col + dx, row: exit.row + dy };
+        if (validCell(cell) && !occupied.has(`${cell.col},${cell.row}`) && !routeBlocked(target.map, walls, [exit, cell])) exits.push(cell);
+      }
+    }
+  }
+  if (exits.length !== ids.length) throw new Error('Рядом с выходом не хватает свободных клеток');
+  return ids.map((combatantId, index) => ({ combatantId, ...exits[index] }));
+}
 function eventActions(payload, state) {
   const templateId = typeof payload.templateId === 'string' && payload.templateId || null;
   const doorId = typeof payload.doorId === 'string' && payload.doorId || null;
@@ -242,6 +259,13 @@ function copyForAction(state, type, p) {
       if (type === 'combat:next') copy.acted = [...battle.acted];
       return copy;
     });
+    return s;
+  }
+  if (['terrain:travel', 'map:select', 'battle:select'].includes(type)) return s;
+  if (type.startsWith('scene:')) {
+    if (type === 'scene:open') s.music = { ...state.music };
+    if (type === 'scene:save') s.scenes = p.id
+      ? replaceActive(state.scenes, p.id, scene => ({ ...scene })) : [...state.scenes];
     return s;
   }
   if (/^(token:|terrain:|fog:|map:(draw|erase|pin|unpin|settings|image|save)$)/.test(type)) {
@@ -362,6 +386,7 @@ function reducer(state, action) {
       const index = s.boards.findIndex(entry => entry.id === p.id);
       if (index < 0 || s.boards.length === 1) throw new Error('Оставь хотя бы одну карту');
       s.boards.splice(index, 1);
+      for (const entry of s.boards) entry.terrain = entry.terrain.filter(item => item.kind !== 'portal' || item.targetMapId !== p.id);
       for (const scene of s.scenes) if (scene.mapId === p.id) scene.mapId = null;
       for (const entry of s.battles) if (entry.linkedMapId === p.id) entry.linkedMapId = null;
       if (s.activeMapId === p.id) s.activeMapId = s.boards[Math.min(index, s.boards.length - 1)].id;
@@ -376,6 +401,14 @@ function reducer(state, action) {
       const fields = { title: text(p.title) || 'Новая сцена',
         mapId: reference(p.mapId, s.boards), battleId: reference(p.battleId, s.battles),
         trackId: reference(p.trackId, s.music.tracks), noteId: reference(p.noteId, s.story.notes) };
+      if (p.sound) {
+        fields.sound = {
+          loops: ambientIds.filter(id => Array.isArray(p.sound.loops) && p.sound.loops.includes(id)),
+          ambientVolume: clamp(finite(p.sound.ambientVolume, 1), 0, 1),
+          musicVolume: clamp(finite(p.sound.musicVolume, s.music.volume), 0, 1),
+          loop: p.sound.loop === true
+        };
+      } else fields.sound = null;
       const scene = s.scenes.find(entry => entry.id === p.id);
       if (p.id && !scene) throw new Error('Сцена уже удалена');
       if (scene) Object.assign(scene, fields);
@@ -391,6 +424,11 @@ function reducer(state, action) {
       s.music.current = track?.id ?? null;
       s.music.playing = !!track;
       s.music.reset = (s.music.reset || 0) + 1;
+      if (scene.sound) {
+        s.music.volume = scene.sound.musicVolume;
+        s.music.loop = scene.sound.loop;
+        s.music.fadeIn = s.music.reset;
+      }
       break;
     }
     case 'scene:remove':
@@ -635,13 +673,18 @@ function reducer(state, action) {
     }
     case 'token:remove': board.tokens = board.tokens.filter(t => t.combatantId !== p.id); break;
     case 'terrain:add': {
-      if (!['wall', 'door', 'window', 'light', 'item'].includes(p.kind)) throw new Error('Выбери инструмент карты');
+      if (!['wall', 'door', 'window', 'light', 'item', 'portal'].includes(p.kind)) throw new Error('Выбери инструмент карты');
       const light = p.kind === 'light';
       if (board.terrain.filter(item => (item.kind === 'light') === light).length >= (light ? 24 : 400)) {
         throw new Error('На карте слишком много объектов этого типа');
       }
       const a = terrainPoint(p.a);
-      if (p.kind === 'item') {
+      if (p.kind === 'portal') {
+        if (!s.boards.some(entry => entry.id === p.targetMapId && entry.id !== board.id)) throw new Error('Выбери другую карту');
+        if (!validCell(p.exit ?? {})) throw new Error('Укажи клетку выхода от 0 до 2000');
+        board.terrain.push({ id: randomUUID(), kind: 'portal', a, name: text(p.name) || 'Переход',
+          targetMapId: p.targetMapId, exit: { col: p.exit.col, row: p.exit.row } });
+      } else if (p.kind === 'item') {
         board.terrain.push({ id: randomUUID(), kind: 'item', a, name: text(p.name) || 'Предмет', image: text(p.image, 100) || null });
       } else if (!light) {
         const b = terrainPoint(p.b);
@@ -652,11 +695,36 @@ function reducer(state, action) {
       }
       break;
     }
+    case 'terrain:travel': {
+      const portal = board.terrain.find(entry => entry.kind === 'portal' && entry.id === p.id);
+      const target = portal && s.boards.find(entry => entry.id === portal.targetMapId && entry.id !== board.id);
+      if (!target) throw new Error('Карта назначения недоступна');
+      const available = new Set(board.tokens.map(token => token.combatantId));
+      const ids = Array.isArray(p.ids) ? [...new Set(p.ids)] : [];
+      if (ids.length > 100 || ids.some(id => !available.has(id))) throw new Error('Состав жетонов изменился');
+      const moving = new Set(ids);
+      const arrivals = portalCells(target, portal.exit, ids);
+      s.boards = s.boards.map(entry => {
+        if (entry === board && ids.length) return { ...entry, tokens: entry.tokens.filter(token => !moving.has(token.combatantId)) };
+        if (entry === target && ids.length) return { ...entry, tokens: [...entry.tokens.filter(token => !moving.has(token.combatantId)), ...arrivals] };
+        return entry;
+      });
+      s.activeMapId = target.id;
+      break;
+    }
     case 'terrain:edit-item': {
       const item = board.terrain.find(object => object.id === p.id && object.kind === 'item');
       if (!item) throw new Error('Предмет уже удалён');
       item.name = text(p.name) || item.name;
       item.image = text(p.image, 100) || null;
+      break;
+    }
+    case 'terrain:edit-portal': {
+      if (!board.terrain.some(item => item.kind === 'portal' && item.id === p.id)) throw new Error('Переход уже удалён');
+      if (!s.boards.some(entry => entry.id === p.targetMapId && entry.id !== board.id)) throw new Error('Выбери другую карту');
+      if (!validCell(p.exit ?? {})) throw new Error('Укажи клетку выхода от 0 до 2000');
+      board.terrain = replaceActive(board.terrain, p.id, item => ({ ...item, name: text(p.name) || 'Переход',
+        targetMapId: p.targetMapId, exit: { col: p.exit.col, row: p.exit.row } }));
       break;
     }
     case 'terrain:door': {
@@ -851,8 +919,11 @@ function reducer(state, action) {
       visionChanged = !!previous && !!next && revealsFog(previous) !== revealsFog(next);
     }
   }
-  if (visionChanged || gridChanged ||
-      /^(token:|terrain:(add|door|remove)$|fog:|map:(image|select)$|battle:select$|scene:open$|library:deploy$|combat:event-run$)/.test(action.type)) {
+  const terrainChanged = action.type === 'terrain:door' ||
+    action.type === 'terrain:add' && ['wall', 'door', 'window'].includes(p.kind) ||
+    action.type === 'terrain:remove' && beforeBoard.terrain.some(item => item.id === p.id && ['wall', 'door', 'window'].includes(item.kind));
+  if (visionChanged || gridChanged || terrainChanged ||
+      /^(token:|terrain:travel$|fog:|map:(image|select)$|battle:select$|scene:open$|library:deploy$|combat:event-run$)/.test(action.type)) {
     s.boards = replaceActive(s.boards, s.activeMapId, current => {
       if (!current.fog.enabled) return current;
       const updated = { ...current, fog: { ...current.fog } };

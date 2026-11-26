@@ -125,7 +125,8 @@ function createSoundTools({ retro, api, result, openDialog, toast }) {
   }
   function status(message) {
     if (!retro) return;
-    if (message.pad) trigger(message.id);
+    if (message.ambience) setActive(retro.setAmbience(message.ambience), true);
+    else if (message.pad) trigger(message.id);
     else if (message.ids) message.ids.forEach((id, index) => {
       setTimeout(() => retro.play(id, message.category), index * 175);
     });
@@ -141,6 +142,7 @@ function createSoundTools({ retro, api, result, openDialog, toast }) {
   document.addEventListener('click', event => {
     const button = event.target.closest('button');
     if (!button || button.disabled || button.closest('#sound-pad, #sound-options') || button.id === 'sound-preview-step' ||
+        button.matches('#dice-form [type=submit]') ||
         button.matches('[data-roll-actor], [data-roll-role]') || !preferences.enabled || !preferences.clicks) return;
     if (retro) retro.play('click', 'clicks');
     else result(api.soundClick());

@@ -5,6 +5,21 @@ function createSessionTools({ getState, getCampaigns, dispatch, campaign, openDi
   const scenes = get('session-scene-list'), sceneEditor = get('session-scene-edit'), form = get('session-scene-form');
   const preparationScene = get('preparation-scene'), preparationOpen = get('preparation-open-scene');
   let editingScene;
+  const sound = get('scene-sound-options');
+  const preset = form.elements.soundEnabled;
+  const ambient = SoundLibrary.pads.filter(([, , loop]) => loop);
+  for (const [id, name] of ambient) {
+    const label = document.createElement('label'), input = document.createElement('input');
+    input.type = 'checkbox';
+    input.name = 'ambient';
+    input.value = id;
+    label.append(input, name);
+    get('scene-ambient-loops').append(label);
+  }
+  preset.onchange = () => { sound.hidden = !preset.checked; };
+  for (const slider of sound.querySelectorAll('input[type=range]')) {
+    slider.oninput = () => { slider.nextElementSibling.value = slider.value + '%'; };
+  }
 
   function renderCampaigns() {
     const { profiles, active } = getCampaigns();
@@ -56,6 +71,13 @@ function createSessionTools({ getState, getCampaigns, dispatch, campaign, openDi
       select.replaceChildren(new Option(empty, ''), ...options.map(item => new Option(item.title, item.id)));
       select.value = (entry ? entry[key] : current) ?? '';
     }
+    preset.checked = Boolean(entry?.sound);
+    preset.onchange();
+    form.elements.musicVolume.value = Math.round((entry?.sound?.musicVolume ?? state.music.volume) * 100);
+    form.elements.ambientVolume.value = Math.round((entry?.sound?.ambientVolume ?? 1) * 100);
+    form.elements.musicLoop.checked = entry?.sound?.loop ?? state.music.loop;
+    for (const input of sound.querySelectorAll('[name=ambient]')) input.checked = entry?.sound?.loops.includes(input.value) ?? false;
+    for (const slider of sound.querySelectorAll('input[type=range]')) slider.oninput();
     get('delete-session-scene').hidden = !entry;
     closeDialog(scenesDialog);
     openDialog(sceneEditor.id);
@@ -97,7 +119,11 @@ function createSessionTools({ getState, getCampaigns, dispatch, campaign, openDi
   get('new-session-scene').onclick = () => editScene();
   form.onsubmit = async event => {
     event.preventDefault();
-    if (!(await dispatch('scene:save', { ...Object.fromEntries(new FormData(form)), id: editingScene }))?.ok) return;
+    const data = new FormData(form);
+    const sound = preset.checked ? { loops: data.getAll('ambient'), ambientVolume: Number(data.get('ambientVolume')) / 100,
+      musicVolume: Number(data.get('musicVolume')) / 100, loop: data.has('musicLoop') } : null;
+    const { title, mapId, battleId, trackId, noteId } = Object.fromEntries(data);
+    if (!(await dispatch('scene:save', { title, mapId, battleId, trackId, noteId, sound, id: editingScene }))?.ok) return;
     closeDialog(sceneEditor);
     renderScenes();
     openDialog(scenesDialog.id);

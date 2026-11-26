@@ -12,10 +12,10 @@ const { DND_HOME, WEB_HOME, GEMINI, REFERENCE_LINKS, safeUrl, searchUrl } = requ
 const { autoUpdater } = require('electron-updater');
 const { ScreenThemes, themeIcon } = require('../ui/themes.js');
 const { createCampaignStore, writeJSON, encodeCampaign, assetPattern } = require('./campaigns.cjs');
-const { rememberMapAction, undoMapAction } = require('./map-history.cjs');
-const { defaults: shortcutDefaults, validateShortcuts, matchShortcut } = require('../ui/shortcuts.js');
+const { rememberMapAction, rememberTravel, undoMapAction } = require('./map-history.cjs');
+const { defaults: shortcutDefaults, validateShortcuts, restoreShortcuts, matchShortcut } = require('../ui/shortcuts.js');
 const { searchCampaign } = require('./campaign-search.cjs');
-const { pads, preferenceDefaults, padShortcut, moveSound } = require('../ui/sound-library.js');
+const { pads, ambientIds, preferenceDefaults, padShortcut, moveSound } = require('../ui/sound-library.js');
 const { audioResponse } = require('./audio-response.cjs');
 const TEST = process.env.DM_SCREEN_TEST === '1';
 const mac = process.platform === 'darwin';
@@ -119,7 +119,7 @@ function windowState(owner, view = activeView(state)) {
       state: { activeMapId: view.activeMapId, map: view.map, tokens: view.tokens,
         mapCombatants: actors.get(shareHealth),
         visionOrigins: view.visionOrigins,
-        terrain: view.terrain, drawings: view.drawings, fog: view.fog, turn: view.turn },
+        terrain: playerTerrain(view.terrain), drawings: view.drawings, fog: view.fog, turn: view.turn },
       detached: ['map'], presentation, recentImages: [], mapCamera, campaignId: campaigns.index.active, playerBlackout, playerFrame: playerFrame()
     };
   }
@@ -128,6 +128,13 @@ function windowState(owner, view = activeView(state)) {
     campaigns: campaigns.index.profiles, canUndoMap: !!mapHistory.get(state.activeMapId)?.length,
     recentImages: recentImages.map(resolveImage).filter(Boolean), mapCamera
   };
+}
+const visibleTerrain = new WeakMap();
+function playerTerrain(terrain) {
+  if (!visibleTerrain.has(terrain)) {
+    visibleTerrain.set(terrain, terrain.some(item => item.kind === 'portal') ? terrain.filter(item => item.kind !== 'portal') : terrain);
+  }
+  return visibleTerrain.get(terrain);
 }
 function changedFields(next, previous) {
   return Object.fromEntries(Object.entries(next).filter(([key, value]) => previous[key] !== value));
@@ -157,6 +164,7 @@ function commit(action) {
   if (action.payload?.expectedCampaignId && campaigns.index.active !== action.payload.expectedCampaignId) {
     throw new Error('Кампания переключилась. Повтори действие.');
   }
+  const priorBoards = state.boards;
   const next = reducer(state, action);
   const oldBattle = state.battles.find(entry => entry.id === state.activeBattleId);
   const nextBattle = next.battles.find(entry => entry.id === oldBattle.id);
@@ -167,14 +175,26 @@ function commit(action) {
   const undo = after && rememberMapAction(action, board, after);
   writeJSON(store, next, encodeCampaign);
   state = next;
-  if (action.type === 'scene:open') presentation = null;
+  if (action.type === 'scene:open' || action.type === 'terrain:travel') presentation = null;
   if (undo) mapHistory.set(board.id, [...(mapHistory.get(board.id) ?? []), undo].slice(-30));
+  if (action.type === 'terrain:travel') {
+    const targetId = state.activeMapId;
+    const previousTarget = priorBoards.find(map => map.id === targetId);
+    const nextTarget = state.boards.find(map => map.id === targetId);
+    const entry = rememberTravel(board, previousTarget, after, nextTarget);
+    mapHistory.set(targetId, [...(mapHistory.get(targetId) ?? []), entry].slice(-30));
+  }
   if (action.type === 'map:remove') {
     mapCameras.delete(action.payload.id);
     mapHistory.delete(action.payload.id);
+    for (const [id, entries] of mapHistory) mapHistory.set(id, entries.filter(entry => entry.from !== action.payload.id));
   }
   if (action.type === 'map:settings' && 'rotation' in action.payload) mapCameras.delete(state.activeMapId);
   broadcast();
+  if (action.type === 'scene:open') {
+    const sound = state.scenes.find(scene => scene.id === action.payload.id)?.sound;
+    if (sound) soundToMaster({ ambience: sound });
+  }
   if (fired.length) {
     for (const owner of new Set([mainWindow, windows.get('combat')])) {
       if (owner && !owner.isDestroyed()) owner.webContents.send('status', { scope: 'round-events', events: fired });
@@ -545,8 +565,16 @@ function switchCampaign(id) {
   recentImages = [];
   playerBlackout = windows.has('map');
   broadcast();
+  soundToMaster({ ambience: { loops: [], ambientVolume: 1 } });
 }
 function setupIPC() {
+  handle('portal-map-preview', (_, { mapId, expectedCampaignId }) => {
+    checkCampaign(expectedCampaignId);
+    const board = state.boards.find(entry => entry.id === mapId);
+    if (!board) throw new Error('Карта не найдена');
+    const { image, grid, offsetX, offsetY, demo } = board.map;
+    return { ok: true, image, grid, offsetX, offsetY, demo };
+  });
   handle('event-map-doors', (_, { mapId, expectedCampaignId }) => {
     checkCampaign(expectedCampaignId);
     const board = state.boards.find(entry => entry.id === mapId);
@@ -605,7 +633,7 @@ function setupIPC() {
     return { ok: true };
   });
   handle('sound-pad-state', (event, ids) => {
-    if (event.sender !== mainWindow.webContents || !Array.isArray(ids) || ids.length > 4 || ids.some(id => !padIds.has(id))) {
+    if (event.sender !== mainWindow.webContents || !Array.isArray(ids) || ids.length > ambientIds.length || ids.some(id => !ambientIds.includes(id))) {
       throw new Error('Недопустимое состояние звуков');
     }
     activePads = ids;
@@ -613,6 +641,7 @@ function setupIPC() {
     return { ok: true };
   });
   handle('sound-click', () => { soundToMaster({ id: 'click', category: 'clicks' }); return { ok: true }; });
+  handle('sound-dice', () => { soundToMaster({ id: 'dice', category: 'dice' }); return { ok: true }; });
   handle('sound-movement-preview', (_, id) => { soundToMaster({ id: moveSound(id) }); return { ok: true }; });
   ipcMain.on('music-position', (event, data) => {
     if (event.sender !== mainWindow?.webContents || data?.campaignId !== campaigns.index.active ||
@@ -681,10 +710,11 @@ function setupIPC() {
     }
     const history = mapHistory.get(state.activeMapId);
     if (!history?.length) return { ok: true };
-    const next = undoMapAction(state, history.at(-1));
+    const entry = history.at(-1);
+    const next = undoMapAction(state, entry);
     writeJSON(store, next, encodeCampaign);
     state = next;
-    if (history.at(-1).field === 'map') mapCameras.delete(state.activeMapId);
+    if (entry.field === 'map') mapCameras.delete(state.activeMapId);
     history.pop();
     broadcast();
     return { ok: true };
@@ -1001,7 +1031,7 @@ app.whenReady().then(async () => {
     catch (error) { console.warn('Не удалось прочитать настройки звука:', error.message); }
   }
   if (fs.existsSync(shortcutStore)) {
-    try { shortcuts = validateShortcuts({ ...shortcutDefaults, ...JSON.parse(fs.readFileSync(shortcutStore, 'utf8')) }) ?? shortcutDefaults; }
+    try { shortcuts = restoreShortcuts(JSON.parse(fs.readFileSync(shortcutStore, 'utf8'))); }
     catch (error) { console.warn('Не удалось прочитать горячие клавиши:', error.message); }
   }
   if (fs.existsSync(zoomStore)) {
@@ -1035,6 +1065,7 @@ app.whenReady().then(async () => {
         const allowed = ['index.html', 'app.js', 'map-geometry.js', 'map-terrain.js', 'styles.css', 'tavern.css', 'themes.js', 'themes.css',
           'ambience.css', 'ambience.js', 'scene.css', 'story.js', 'story.css', 'session.js', 'session.css', 'workspace.css', 'icons.css',
           'shortcuts.js', 'campaign-tools.js', 'campaign-tools.css', 'sound-library.js', 'retro-audio.js', 'sound-tools.js', 'sound-tools.css',
+          'dice.js', 'dice.css', 'portal-tools.js',
           ...bundledAssets.map(asset => asset.slice(1))];
         const relative = u.pathname.slice(1) || 'index.html';
         if (!allowed.includes(relative)) return new Response('Not found', { status: 404 });

@@ -1,13 +1,13 @@
-function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, expand, isExpanded, readOnly, editItem, assetURL }) {
+function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, expand, isExpanded, readOnly, editItem, editPortal, assetURL }) {
   const get = id => document.getElementById(id);
   const view = get('map-viewport'), toolbar = get('terrain-toolbar');
   const overlay = get('terrain-preview'), fogLayer = get('map-fog');
   const exploredLayer = document.createElement('canvas');
   const ink = get('map-drawings'), strokes = get('map-strokes'), previewStroke = get('map-draft-stroke');
   const tools = toolbar.querySelectorAll('[data-terrain-tool]');
-  let editing = false, tool = 'select', selected = null, draft = null, acceptedMap;
-  let lightsKey = '', inkKey = '', fogKey = '', exploredKey = '', exploredCells, visible = new Set(), cancelDrawing;
-  let lastDrawings, lastTerrain, lastLightGrid;
+  let editing = false, tool = 'select', selected = null, draft = null, acceptedMap, acceptedCampaign;
+  let fogKey, exploredKey = '', exploredCells, visible = new Set(), cancelDrawing;
+  let lastDrawings, lastTerrain, lastLightGrid, lastLightWalls, lastLights = [], inkViewBox;
   let wallTerrain, walls, itemsKey = [], doorsKey = [];
   const terrainColors = { wall: '#e99c75', window: '#8ed0ea' };
   const labels = {
@@ -26,15 +26,26 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
   }
 
   function renderDrawings(drawings, layout) {
-    ink.setAttribute('viewBox', `0 0 ${layout.width / layout.zoom} ${layout.height / layout.zoom}`);
+    const viewBox = `0 0 ${layout.width / layout.zoom} ${layout.height / layout.zoom}`;
+    if (inkViewBox !== viewBox) {
+      inkViewBox = viewBox;
+      ink.setAttribute('viewBox', viewBox);
+    }
     if (lastDrawings === drawings) return;
     lastDrawings = drawings;
-    const key = JSON.stringify(drawings);
-    if (key === inkKey) return;
-    inkKey = key;
     const svg = 'http://www.w3.org/2000/svg';
-    strokes.replaceChildren(...drawings.map(stroke => {
+    const previous = new Map([...strokes.children].map(node => [node.dataset.stroke, node]));
+    let cursor = strokes.firstElementChild;
+    for (const stroke of drawings) {
+      const kept = previous.get(stroke.id);
+      if (kept) {
+        previous.delete(stroke.id);
+        if (kept === cursor) cursor = cursor.nextElementSibling;
+        else strokes.insertBefore(kept, cursor);
+        continue;
+      }
       const group = document.createElementNS(svg, 'g');
+      group.dataset.stroke = stroke.id;
       const line = document.createElementNS(svg, 'path');
       line.setAttribute('d', penPath(stroke.points));
       line.setAttribute('stroke', stroke.color);
@@ -48,8 +59,9 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
         hit.dataset.mapStroke = stroke.id;
         group.append(hit);
       }
-      return group;
-    }));
+      strokes.insertBefore(group, cursor);
+    }
+    for (const node of previous.values()) node.remove();
   }
 
   function prepareCanvas(canvas, width, height) {
@@ -64,14 +76,18 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
 
   function renderLights(terrain, walls, zoom, grid) {
     const layer = get('map-lights');
-    layer.style.setProperty('--terrain-zoom', zoom);
+    if (layer.style.getPropertyValue('--terrain-zoom') !== String(zoom)) layer.style.setProperty('--terrain-zoom', zoom);
     if (lastTerrain === terrain && lastLightGrid === grid) return;
+    const gridChanged = lastLightGrid !== grid;
     lastTerrain = terrain;
     lastLightGrid = grid;
-    const key = JSON.stringify([grid, terrain]);
-    if (key === lightsKey) return;
-    lightsKey = key;
-    layer.replaceChildren(...terrain.filter(item => item.kind === 'light').map(({ a, radius }) => {
+    const lights = terrain.filter(item => item.kind === 'light');
+    const unchanged = lastLightWalls === walls && lastLights.length === lights.length && lastLights.every((light, index) =>
+      light === lights[index] || light.radius === lights[index].radius && light.a.x === lights[index].a.x && light.a.y === lights[index].a.y);
+    if (unchanged && (walls.length === 0 || !gridChanged)) return;
+    lastLightWalls = walls;
+    lastLights = lights;
+    layer.replaceChildren(...lights.map(({ a, radius }) => {
       const light = document.createElement('span');
       light.className = 'scene-light';
       light.style.setProperty('--light-left', (a.x - radius) + 'px');
@@ -97,7 +113,7 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
       ctx.lineWidth = unit * (accent ? 3 : 2);
       ctx.setLineDash(item.kind === 'window' || item.kind === 'door' && item.open ? [unit * 5, unit * 4] : []);
       ctx.beginPath();
-      if (item.kind === 'item') ctx.arc(item.a.x, item.a.y, unit * 5, 0, Math.PI * 2);
+      if (item.kind === 'item' || item.kind === 'portal') ctx.arc(item.a.x, item.a.y, unit * 5, 0, Math.PI * 2);
       else if (item.kind === 'light') ctx.arc(item.a.x, item.a.y, Math.max(1, item.radius), 0, Math.PI * 2);
       else { ctx.moveTo(item.a.x, item.a.y); ctx.lineTo(item.b.x, item.b.y); }
       ctx.stroke();
@@ -113,7 +129,7 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
     if (exploredKey === key && exploredCells === state.fog.explored) return;
     exploredKey = key;
     exploredCells = state.fog.explored;
-    fogKey = '';
+    fogKey = null;
     const ctx = prepareCanvas(exploredLayer, width, height);
     ctx.fillStyle = '#100d0d';
     ctx.fillRect(0, 0, width, height);
@@ -130,15 +146,15 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
 
   function renderFog(state, walls, preview, width, height) {
     fogLayer.hidden = !state.fog.enabled;
-    if (fogLayer.hidden) { fogKey = ''; visible = new Set(); return; }
+    if (fogLayer.hidden) { fogKey = null; visible.clear(); return; }
     const visionIds = new Set(state.visionOrigins);
     const origins = state.tokens.filter(token => visionIds.has(token.combatantId)).map(token =>
       token.combatantId === preview?.id ? preview : token);
     const { grid } = state.map;
     renderExploredFog(state, width, height);
-    const key = JSON.stringify([walls, origins]);
-    if (fogKey === key) return;
-    fogKey = key;
+    if (fogKey?.walls === walls && fogKey.origins.length === origins.length &&
+        fogKey.origins.every((origin, index) => origin.col === origins[index].col && origin.row === origins[index].row)) return;
+    fogKey = { walls, origins };
     visible = MapGeometry.visibleCells(state.map, origins, walls);
     const ctx = prepareCanvas(fogLayer, width, height);
     ctx.drawImage(exploredLayer, 0, 0, width, height);
@@ -165,17 +181,22 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
     get('terrain-hint').textContent = labels[tool];
     get('terrain-remove').hidden = !item;
     get('edit-map-item').hidden = item?.kind !== 'item';
+    get('edit-map-portal').hidden = item?.kind !== 'portal';
     get('terrain-door').hidden = item?.kind !== 'door';
     get('terrain-door').textContent = item?.open ? 'Закрыть дверь' : 'Открыть дверь';
     tools.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.terrainTool === tool)));
   }
 
-  function render(state, layout, preview) {
+  function render(state, layout, preview, campaign) {
     const terrain = state.terrain;
     const walls = wallsFor(terrain);
-    if (acceptedMap !== state.activeMapId) {
+    if (acceptedMap !== state.activeMapId || acceptedCampaign !== campaign) {
       cancelDrawing?.();
       acceptedMap = state.activeMapId;
+      acceptedCampaign = campaign;
+      lastDrawings = null;
+      strokes.replaceChildren();
+      itemsKey = [];
       selected = draft = null;
     }
     if (editing && !isExpanded()) {
@@ -393,6 +414,8 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
   get('terrain-remove').onclick = () => dispatch('terrain:remove', { id: selected });
   get('create-map-item').onclick = () => editItem();
   get('edit-map-item').onclick = () => editItem(getState().terrain.find(item => item.id === selected));
+  get('create-map-portal').onclick = () => editPortal?.();
+  get('edit-map-portal').onclick = () => editPortal?.(getState().terrain.find(item => item.id === selected));
   get('fog-reset').onclick = () => {
     const expectedMapId = getState().activeMapId;
     if (confirm('Скрыть исследованные области этой карты? Текущий обзор жетонов сохранится.')) {
@@ -412,7 +435,8 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
   function wallsFor(terrain) {
     if (wallTerrain !== terrain) {
       wallTerrain = terrain;
-      walls = MapGeometry.blockingWalls(terrain);
+      const next = MapGeometry.blockingWalls(terrain);
+      if (!MapGeometry.sameWalls(walls, next)) walls = next;
     }
     return walls;
   }

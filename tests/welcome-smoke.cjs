@@ -76,7 +76,13 @@ let app;
     });
   }
   await settings().click();
-  await expect(master.locator('.screen-theme')).toHaveCount(10);
+  await expect(master.locator('.screen-theme')).toHaveCount(Object.keys(require('../ui/themes.js').ScreenThemes).length);
+  for (const [name, id, scheme] of [['Лунное серебро', 'moon', 'dark'], ['Старый пергамент', 'parchment', 'light']]) {
+    await master.getByRole('button', { name, exact: true }).click();
+    await expect(master.locator('html')).toHaveCSS('color-scheme', scheme);
+    await expect(master.locator('#theme-brand-icon')).toHaveAttribute('src', `assets/themes/${id}.png`);
+    await expect.poll(() => master.locator('#theme-brand-icon').evaluate(img => img.naturalWidth)).toBe(256);
+  }
   const light = master.getByRole('button', { name: 'Белая надежда', exact: true });
   await light.click();
   await expect(master.locator('html')).toHaveCSS('color-scheme', 'light');

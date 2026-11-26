@@ -15,6 +15,7 @@
   <link rel="stylesheet" href="icons.css">
   <link rel="stylesheet" href="campaign-tools.css">
   <link rel="stylesheet" href="sound-tools.css">
+  <link rel="stylesheet" href="dice.css">
 </head>
 <body>
   <header class="appbar">
@@ -39,7 +40,7 @@
   </header>
   <main id="workspace" class="workspace">
     <section class="panel combat" data-panel="combat">
-      <header class="panel-head"><div class="panel-title"><h1 data-pixel-icon="swords">Трекер боя</h1><span id="combat-count" class="badge">0</span></div><div class="panel-tools"><button data-detach="combat" title="В отдельное окно" data-pixel-icon="external" aria-label="В отдельное окно"></button><button data-expand="combat" title="Развернуть панель" data-pixel-icon="expand" aria-label="Развернуть панель"></button></div></header>
+      <header class="panel-head"><div class="panel-title"><h1 data-pixel-icon="swords">Трекер боя</h1><span id="combat-count" class="badge">0</span></div><div class="panel-tools"><button id="open-tracker-dice" type="button" data-pixel-icon="dice" aria-label="Броски в трекере" title="Броски в трекере"></button><button data-detach="combat" title="В отдельное окно" data-pixel-icon="external" aria-label="В отдельное окно"></button><button data-expand="combat" title="Развернуть панель" data-pixel-icon="expand" aria-label="Развернуть панель"></button></div></header>
       <div class="panel-content combat-content">
         <div class="slot-bar">
     <select id="battle-select" aria-label="Бой"></select>
@@ -162,13 +163,15 @@
           </select>
           <span id="terrain-hint"></span>
           <button type="button" id="create-map-item" data-pixel-icon="bag">Предмет</button>
+          <button type="button" id="create-map-portal" data-pixel-icon="door">Переход</button>
+          <button type="button" id="edit-map-portal" hidden data-pixel-icon="pen">Изменить переход</button>
           <button type="button" id="pin-map-note" data-pixel-icon="pin">Заметка</button>
           <button type="button" id="edit-map-item" hidden data-pixel-icon="pen">Изменить предмет</button>
           <button type="button" id="terrain-door" hidden data-pixel-icon="door"></button>
           <button type="button" id="terrain-remove" hidden data-pixel-icon="trash">Удалить</button>
           <button type="button" id="close-terrain" class="small-button" data-pixel-icon="check">Готово</button>
         </div>
-        <div id="map-viewport" class="map-viewport" tabindex="0" aria-label="Карта: вставьте изображение из буфера"><div id="map-frame"><div id="map-world" class="map-world"><img id="map-image" draggable="false" alt="Карта приключения" src="assets/demo-map.svg"><div id="map-lights" aria-hidden="true"></div><div id="map-grid" class="map-grid"></div><svg id="map-drawings" preserveAspectRatio="none" aria-hidden="true"><g id="map-strokes"></g><path id="map-draft-stroke"></path></svg><canvas id="terrain-preview" aria-hidden="true" hidden></canvas><div id="map-doors"></div><div id="map-items"></div><div id="map-tokens" class="map-tokens"></div><canvas id="map-fog" aria-hidden="true" hidden></canvas><div id="map-note-pins"></div></div></div>
+        <div id="map-viewport" class="map-viewport" tabindex="0" aria-label="Карта: вставьте изображение из буфера"><div id="map-frame"><div id="map-world" class="map-world"><img id="map-image" draggable="false" alt="Карта приключения" src="assets/demo-map.svg"><div id="map-lights" aria-hidden="true"></div><div id="map-grid" class="map-grid"></div><svg id="map-drawings" preserveAspectRatio="none" aria-hidden="true"><g id="map-strokes"></g><path id="map-draft-stroke"></path></svg><canvas id="terrain-preview" aria-hidden="true" hidden></canvas><div id="map-doors"></div><div id="map-items"></div><div id="map-tokens" class="map-tokens"></div><canvas id="map-fog" aria-hidden="true" hidden></canvas><div id="map-note-pins"></div><div id="map-portals"></div></div></div>
           <div id="movement-ruler" hidden><svg aria-hidden="true"><polyline></polyline></svg><output></output></div>
         </div><div id="placement-hint" role="status" hidden></div></div>
       <div id="map-condition-legend" class="condition-legend" aria-label="Обозначения состояний" hidden></div><div id="player-art" hidden><img id="presented-image" alt=""></div><div id="player-blackout" hidden></div><button class="resize-grip" title="Потяните для изменения размера"></button>
@@ -236,7 +239,7 @@
     </section>
     <div class="splitter vertical split-one" data-split="left"></div><div class="splitter vertical split-two" data-split="middle"></div><div class="splitter horizontal" data-split="top"></div><div class="splitter horizontal split-right" data-split="top"></div>
   </main>
-  <footer class="statusbar"><span><i class="status-dot"></i> Локальная кампания</span><span id="version">v0.1.0</span></footer>
+  <footer class="statusbar"><span><i class="status-dot"></i> Локальная кампания</span><span id="version">v0.1.0</span><button id="toggle-dice-menu" hidden type="button" popovertarget="dice-menu" aria-label="Меню бросков" aria-controls="dice-menu" aria-expanded="false" data-pixel-icon="dice"></button></footer>
   <div id="toast" class="toast" role="status"></div>
   <dialog id="story-dialog" aria-labelledby="story-dialog-title">
     <form id="story-form">
@@ -413,10 +416,66 @@
       <label>Название<input name="title" maxlength="120" required autofocus></label>
       <div class="form-row"><label>Карта<select name="mapId"></select></label><label>Бой<select name="battleId"></select></label></div>
       <label>Музыка<select name="trackId"></select></label>
+      <label class="inline-check"><input type="checkbox" name="soundEnabled"> Звуковой пресет сцены</label>
+      <fieldset id="scene-sound-options" hidden>
+        <legend>Звуковой пресет</legend>
+        <div id="scene-ambient-loops" class="scene-ambient-loops"></div>
+        <div class="form-row">
+          <label>Громкость музыки<input name="musicVolume" type="range" min="0" max="100"><output></output></label>
+          <label>Громкость фона<input name="ambientVolume" type="range" min="0" max="100"><output></output></label>
+        </div>
+        <label class="inline-check"><input type="checkbox" name="musicLoop"> Повторять трек</label>
+      </fieldset>
       <label>Заметка<select name="noteId"></select></label>
       <div class="session-actions"><button id="delete-session-scene" type="button" class="quiet" hidden data-pixel-icon="trash">Удалить</button><button type="submit" class="primary-button" data-pixel-icon="check">Сохранить</button></div>
     </form>
   </dialog>
+  <dialog id="map-portal-editor" class="session-dialog">
+    <form>
+      <div class="dialog-heading"><h2>Переход между картами</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
+      <label>Название<input name="name" maxlength="120" placeholder="Например, лестница в подвал" required></label>
+      <label>Карта назначения<select name="targetMapId" required></select></label>
+      <div class="form-row"><label>Столбец выхода<input name="col" type="number" value="0" min="0" max="2000" required></label><label>Строка выхода<input name="row" type="number" value="0" min="0" max="2000" required></label></div>
+      <button id="portal-pick-exit" type="button" data-pixel-icon="map">Выбрать выход на карте</button>
+      <div id="portal-map-preview" hidden>
+        <button id="portal-exit-map" type="button" aria-label="Карта назначения. Щёлкни по клетке выхода">
+          <img alt="" hidden><span id="portal-exit-grid"></span><span id="portal-exit-marker"></span>
+        </button>
+      </div>
+      <button type="submit" class="primary-button" data-pixel-icon="check">Сохранить</button>
+    </form>
+  </dialog>
+  <dialog id="map-portal-travel" class="session-dialog">
+    <form>
+      <div class="dialog-heading"><h2 id="portal-travel-title">Переход</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
+      <div class="session-actions"><button type="button" id="portal-select-party" class="quiet">Выбрать союзников</button><button type="button" id="portal-clear-party" class="quiet">Снять выбор</button></div>
+      <div id="portal-travel-tokens" class="scene-ambient-loops"></div>
+      <button type="submit" class="primary-button" data-pixel-icon="turn">Перейти</button>
+    </form>
+  </dialog>
+  <section id="dice-menu" popover="auto" aria-label="Меню бросков">
+      <div id="dice-pool" class="dice-pool" aria-label="Кости"></div>
+      <form id="dice-form">
+        <div class="dice-adjust">
+          <button type="button" data-dice-mod="-1" aria-label="Уменьшить модификатор">−</button>
+          <input name="modifier" type="number" min="-9999" max="9999" value="0" aria-label="Модификатор">
+          <button type="button" data-dice-mod="1" aria-label="Увеличить модификатор">+</button>
+          <button type="submit" class="primary-button" data-pixel-icon="dice">Бросить</button>
+        </div>
+        <div class="dice-formula">
+          <input name="formula" aria-label="Формула броска" placeholder="2d20kh1+3" maxlength="120" autocomplete="off">
+          <button type="button" id="dice-reset" data-pixel-icon="close" aria-label="Очистить набор"></button>
+        </div>
+        <div class="dice-actions">
+          <button type="button" data-dice-check="kh" class="quiet">Преимущество</button>
+          <button type="button" data-dice-check="kl" class="quiet">Помеха</button>
+          <button type="button" id="save-dice" class="quiet" data-pixel-icon="pin">Закрепить</button>
+        </div>
+      </form>
+      <div id="dice-favorites" class="dice-favorites" hidden></div>
+      <output id="dice-result" aria-live="polite"></output>
+      <details id="dice-log" hidden><summary>История бросков</summary><ol id="dice-history"></ol></details>
+  </section>
   <dialog id="map-note-dialog" class="session-dialog">
     <form id="map-note-form">
       <div class="dialog-heading"><h2>Заметка на карте</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
@@ -500,6 +559,8 @@
   <script src="sound-library.js"></script>
   <script src="retro-audio.js"></script>
   <script src="sound-tools.js"></script>
+  <script src="dice.js"></script>
+  <script src="portal-tools.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

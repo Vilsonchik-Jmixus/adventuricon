@@ -30,10 +30,16 @@ const MapGeometry = (() => {
   }
   const epsilon = 0.000001;
   const delta = (a, b) => ({ x: b.x - a.x, y: b.y - a.y });
-  const cross = (a, b) => a.x * b.y - a.y * b.x;
   const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-  const blockingWalls = walls => walls.filter(wall =>
-    wall.kind === 'wall' || wall.kind === 'window' || (wall.kind === 'door' && !wall.open));
+  const wallLists = new WeakMap();
+  function blockingWalls(terrain) {
+    let walls = wallLists.get(terrain);
+    if (!walls) {
+      walls = terrain.filter(wall => wall.kind === 'wall' || wall.kind === 'window' || (wall.kind === 'door' && !wall.open));
+      wallLists.set(terrain, walls);
+    }
+    return walls;
+  }
   const cellCenter = (map, col, row) => ({
     x: map.offsetX + (col + 0.5) * map.grid, y: map.offsetY + (row + 0.5) * map.grid,
   });
@@ -48,24 +54,29 @@ const MapGeometry = (() => {
     return 5 * (straight + diagonal + (alternating ? Math.floor(diagonal / 2) : 0));
   }
   function routeBlocked(map, walls, cells) {
+    if (walls.length === 0) return false;
     const points = cells.map(({ col, row }) => cellCenter(map, col, row));
     return points.slice(1).some((point, i) => blocked(walls, points[i], point));
   }
-  function hit(origin, ray, { a, b }) {
-    const edge = delta(a, b), side = delta(origin, a), det = cross(ray, edge);
+  function hit(originX, originY, rayX, rayY, { a, b }) {
+    const edgeX = b.x - a.x, edgeY = b.y - a.y;
+    const sideX = a.x - originX, sideY = a.y - originY;
+    const det = rayX * edgeY - rayY * edgeX;
     if (Math.abs(det) < epsilon) {
-      if (Math.abs(cross(side, ray)) >= epsilon) return Infinity;
-      const dot = v => (v.x * ray.x + v.y * ray.y) / (ray.x ** 2 + ray.y ** 2);
-      const first = dot(side), second = dot(delta(origin, b));
+      if (Math.abs(sideX * rayY - sideY * rayX) >= epsilon) return Infinity;
+      const lengthSquared = rayX * rayX + rayY * rayY;
+      const first = (sideX * rayX + sideY * rayY) / lengthSquared;
+      const second = ((b.x - originX) * rayX + (b.y - originY) * rayY) / lengthSquared;
       return Math.max(first, second) > epsilon ? Math.max(Math.min(first, second), epsilon) : Infinity;
     }
-    const alongEdge = cross(side, ray) / det, alongRay = cross(side, edge) / det;
+    const alongEdge = (sideX * rayY - sideY * rayX) / det;
+    const alongRay = (sideX * edgeY - sideY * edgeX) / det;
     return alongEdge >= -epsilon && alongEdge <= 1 + epsilon && alongRay > epsilon ? alongRay : Infinity;
   }
   function blocked(walls, from, to) {
     if (from.x === to.x && from.y === to.y) return false;
-    const ray = delta(from, to);
-    return walls.some(wall => hit(from, ray, wall) <= 1 + epsilon);
+    const rayX = to.x - from.x, rayY = to.y - from.y;
+    return walls.some(wall => hit(from.x, from.y, rayX, rayY, wall) <= 1 + epsilon);
   }
   function distanceToSegment(point, a, b) {
     const edge = delta(a, b), offset = delta(a, point);
@@ -73,6 +84,13 @@ const MapGeometry = (() => {
     const t = lengthSquared ? Math.max(0, Math.min(1, (offset.x * edge.x + offset.y * edge.y) / lengthSquared)) : 0;
     return distance(point, { x: a.x + t * edge.x, y: a.y + t * edge.y });
   }
+  const sameWalls = (a, b) => a === b || a?.length === b.length &&
+    b.every((wall, index) => {
+      const previous = a[index];
+      return previous === wall || previous.kind === wall.kind &&
+        previous.a.x === wall.a.x && previous.a.y === wall.a.y &&
+        previous.b.x === wall.b.x && previous.b.y === wall.b.y;
+    });
   function nearbySightWalls(origin, radius, walls, windowRange) {
     return walls.filter(wall => {
       const distance = distanceToSegment(origin, wall.a, wall.b);
@@ -89,9 +107,10 @@ const MapGeometry = (() => {
       }
     }
     return angles.sort((a, b) => a - b).map(angle => {
-      const ray = { x: Math.cos(angle), y: Math.sin(angle) };
-      const length = nearby.reduce((nearest, wall) => Math.min(nearest, hit(origin, ray, wall)), radius);
-      return { x: origin.x + ray.x * length, y: origin.y + ray.y * length };
+      const rayX = Math.cos(angle), rayY = Math.sin(angle);
+      let length = radius;
+      for (const wall of nearby) length = Math.min(length, hit(origin.x, origin.y, rayX, rayY, wall));
+      return { x: origin.x + rayX * length, y: origin.y + rayY * length };
     });
   }
   function visibleCells(map, origins, walls, range = 12) {
@@ -110,6 +129,6 @@ const MapGeometry = (() => {
     return visible;
   }
   return { orientedSize, project, inverse, transform, cellCenter, validCell, routeDistance, routeBlocked,
-    blockingWalls, blocked, lightPolygon, distanceToSegment, visibleCells };
+    blockingWalls, sameWalls, blocked, lightPolygon, distanceToSegment, visibleCells };
 })();
 if (typeof module !== 'undefined') module.exports = MapGeometry;

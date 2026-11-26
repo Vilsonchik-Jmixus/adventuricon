@@ -16,9 +16,12 @@ let playerBlackout = false;
 let selectedToken = null, placement = null, removal = null, editingTemplate = null;
 let mapItemDraft = null, importedCharacter = null, readingCharacter = false;
 let cancelEventCells;
-let musicPosition, seekingTrack = false;
+let musicPosition, seekingTrack = false, cancelMusicFade;
 const retro = !detachedPanel ? createRetroAudio() : null;
 const soundTools = isPlayerMap ? null : createSoundTools({ retro, api, result, openDialog, toast });
+if (!isPlayerMap && (!detachedPanel || detachedPanel === 'combat')) {
+  createDiceMenu({ onToggle: syncRemoteBounds, playSound: () => result(api.soundDice()), toast });
+}
 const tokenDragType = 'application/x-dm-screen-token';
 let combatRoles = {}, conditionDefinitions = [], conditionEdit, initiativeContext;
 let reference = { tab: 'info', pages: {} };
@@ -35,7 +38,12 @@ async function result(promise) { const value = await promise; if (value?.error) 
 const currentContext = () => ({ expectedBattleId: state?.activeBattleId, expectedMapId: state?.activeMapId, expectedCampaignId: campaignId });
 const dispatch = (type, payload = {}, context = currentContext()) => result(api.dispatch(type, { ...payload, ...context }));
 const mirrorMap = (preview, mapId = state.activeMapId) => api.mirrorMap({ ...preview, mapId, campaignId });
-function openDialog(id) { $(id).showModal(); syncRemoteBounds(); }
+function openDialog(id) {
+  const dice = $('dice-menu');
+  if (dice.matches(':popover-open')) dice.hidePopover();
+  $(id).showModal();
+  syncRemoteBounds();
+}
 function closeDialog(dialog) { dialog.close(); syncRemoteBounds(); }
 const textField = target => target instanceof Element && !!target.closest('input, textarea, select, [contenteditable]');
 function imageDraft(dialog, { choose, paste, remove, status, preview, limit = 1 }) {
@@ -304,7 +312,8 @@ function renderMap() {
   $('player-settings').hidden = !!detachedPanel || !detached.some(id => id === 'map' || id === 'preview');
   $('undo-map').disabled = !canUndoMap;
   layoutMap();
-  mapScene.render(state, boardLayout, previewToken);
+  mapScene.render(state, boardLayout, previewToken, campaignId);
+  portalTools?.render(zoom, mapScene.isEditing());
   if (!isPlayerMap) renderNotePins(zoom);
   renderMapTokens(zoom);
   if (restoreMapCamera && img.complete) {
@@ -376,14 +385,43 @@ function renderMusic() {
   if (document.activeElement !== $('volume')) $('volume').value = state.music.volume * 100;
   // One permanent audio owner prevents double playback when the music panel detaches.
   if (!detachedPanel) {
-    const audio = $('audio'); audio.volume = state.music.volume; audio.loop = state.music.loop;
-    if (audio.dataset.reset !== String(state.music.reset || 0)) { if (audio.readyState) audio.currentTime = 0; audio.dataset.reset = String(state.music.reset || 0); }
+    const audio = $('audio'), reset = state.music.reset || 0;
+    const source = current ? assetURL(current.asset) : null;
+    const sourceChanged = (audio.dataset.source ?? null) !== source;
+    audio.loop = state.music.loop;
+    const resetting = audio.dataset.reset !== String(reset);
+    if (resetting) {
+      if (audio.readyState) audio.currentTime = 0;
+      audio.dataset.reset = String(reset);
+    }
+    if (resetting || sourceChanged || !state.music.playing) cancelMusicFade?.();
+    if (!cancelMusicFade) audio.volume = state.music.volume;
     if (!current) {
       if (audio.hasAttribute('src')) { audio.pause(); audio.removeAttribute('src'); audio.load(); delete audio.dataset.source; }
     }
     else {
-      const source = assetURL(current.asset);
-      if (audio.dataset.source !== source) { audio.src = source; audio.dataset.source = source; }
+      if (sourceChanged) { audio.src = source; audio.dataset.source = source; }
+      if (resetting && state.music.playing && state.music.fadeIn === reset) {
+        audio.volume = 0;
+        let frame;
+        const startFade = () => {
+          const start = performance.now();
+          const update = now => {
+            const fraction = Math.max(0, Math.min(1, (now - start) / 350));
+            audio.volume = state.music.volume * fraction;
+            if (fraction < 1) frame = requestAnimationFrame(update);
+            else cancelMusicFade = null;
+          };
+          frame = requestAnimationFrame(update);
+        };
+        cancelMusicFade = () => {
+          audio.removeEventListener('playing', startFade);
+          cancelAnimationFrame(frame);
+          cancelMusicFade = null;
+        };
+        if (!audio.paused && audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) startFade();
+        else audio.addEventListener('playing', startFade, { once: true });
+      }
       if (state.music.playing && audio.paused) {
         const context = currentContext();
         const currentTrack = current.id;
@@ -471,10 +509,13 @@ function renderAll() {
 }
 function syncRemoteBounds() {
   const modal = !!document.querySelector('dialog[open]');
+  const diceBounds = document.querySelector('#dice-menu:popover-open')?.getBoundingClientRect();
   document.querySelectorAll('[data-remote-surface]').forEach(el => {
     const panel = el.closest('.panel'); const rect = el.getBoundingClientRect();
     const failed = reference.pages[el.dataset.remoteSurface]?.failed;
-    const visible = !failed && !modal && !animating && !el.closest('[hidden]') && !panel.classList.contains('is-detached') &&
+    const overlapsDice = diceBounds && rect.left < diceBounds.right && rect.right > diceBounds.left &&
+      rect.top < diceBounds.bottom && rect.bottom > diceBounds.top;
+    const visible = !failed && !modal && !overlapsDice && !animating && !el.closest('[hidden]') && !panel.classList.contains('is-detached') &&
       (!expanded || panel.dataset.panel === expanded);
     api.remoteBounds(el.dataset.remoteSurface, visible ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null);
   });
@@ -1184,7 +1225,16 @@ const mapScene = createMapTerrain({
   },
   dispatch, redraw: renderMap,
   expand: () => expandPanel('map'), isExpanded: () => expanded === 'map', readOnly: isPlayerMap,
-  editItem: openMapItemEditor, assetURL,
+  editItem: openMapItemEditor, editPortal: portal => portalTools?.edit(portal), assetURL,
+});
+const portalTools = isPlayerMap || detachedPanel ? null : createPortalTools({
+  getState: () => state, context: currentContext, selectedToken: () => selectedToken,
+  dispatch, openDialog, closeDialog, toast, preview: data => result(api.portalMapPreview(data)), assetURL,
+  place(entry) {
+    mapScene.hideEditor();
+    setPlacement(entry);
+    viewport.focus({ preventScroll: true });
+  },
 });
 
 function renderItemIcon() {
@@ -1379,6 +1429,8 @@ async function placeAt(event, entry) {
   const payload = { id: entry.id, ...cell };
   const alreadyOnMap = state.tokens.some(token => token.combatantId === entry.id);
   const response = entry.kind === 'note' ? await dispatch('map:pin', { noteId: entry.id, ...MapGeometry.cellCenter(state.map, cell.col, cell.row) }, entry.context)
+    : entry.kind === 'portal' ? await dispatch('terrain:add', { kind: 'portal', name: entry.name, targetMapId: entry.targetMapId,
+      exit: entry.exit, a: MapGeometry.cellCenter(state.map, cell.col, cell.row) }, entry.context)
     : entry.kind === 'item' ? await putItem(entry, cell, state.map, entry.context)
     : entry.kind === 'template' ? await dispatch('library:deploy', { ...payload, place: true }, entry.context)
     : await dispatch(alreadyOnMap ? 'token:move' : 'token:add', payload, entry.context);
@@ -1503,7 +1555,7 @@ viewport.addEventListener('wheel', e => {
   changeZoom(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - rect.left, e.clientY - rect.top);
 }, { passive: false });
 viewport.addEventListener('pointerdown', e => {
-  if (isPlayerMap || e.button !== 0 || e.target.closest('[data-door-id], [data-note-pin]') || !boardProjection) return;
+  if (isPlayerMap || e.button !== 0 || e.target.closest('[data-door-id], [data-note-pin], button[data-portal-id]') || !boardProjection) return;
   if (placement) {
     e.preventDefault();
     placeAt(e, placement);
@@ -1606,7 +1658,7 @@ function openShortcutSettings() {
 }
 function updateShortcuts(bindings) {
   shortcutBindings = bindings;
-  const buttons = { search: 'open-campaign-search', journal: 'open-journal', 'next-turn': 'next-turn',
+  const buttons = { dice: 'toggle-dice-menu', search: 'open-campaign-search', journal: 'open-journal', 'next-turn': 'next-turn',
     'new-combatant': 'add-combatant', 'round-events': 'open-round-events', 'reference-new': 'new-reference-tab',
     'reference-address': 'reference-query', music: 'play-pause', scenes: 'open-session-scenes' };
   for (const [id, , title] of DmShortcuts.definitions) {
@@ -1641,11 +1693,12 @@ async function runReferenceCommand(command) {
 }
 function runShortcut(command) {
   if (!state || isPlayerMap || document.querySelector('dialog[open]') || draggingToken) return;
-  if (detachedPanel && command !== 'fullscreen' && !(detachedPanel === 'info' && command.startsWith('reference-'))) {
+  if (detachedPanel && command !== 'fullscreen' && !(detachedPanel === 'combat' && command === 'dice') &&
+      !(detachedPanel === 'info' && command.startsWith('reference-'))) {
     return result(api.masterShortcut(command));
   }
   if (command.startsWith('reference-')) return runReferenceCommand(command);
-  const controls = { search: 'open-campaign-search', journal: 'open-journal', 'next-turn': 'next-turn',
+  const controls = { dice: 'toggle-dice-menu', search: 'open-campaign-search', journal: 'open-journal', 'next-turn': 'next-turn',
     'new-combatant': 'add-combatant', 'round-events': 'open-round-events', music: 'play-pause', scenes: 'open-session-scenes' };
   if (controls[command]) return $(controls[command]).click();
   if (command === 'shortcut-help') return openShortcutSettings();
@@ -1692,6 +1745,7 @@ document.addEventListener('keydown', e => {
     if (e.code === 'KeyF') { e.preventDefault(); mapScene.toggleFog(); return; }
   }
   if (e.key === 'Escape' && !modal) {
+    if ($('dice-menu').matches(':popover-open')) return;
     if (cancelEventCells) { e.preventDefault(); cancelEventCells(); return; }
     if (cancelTokenDrag) { e.preventDefault(); cancelTokenDrag(); return; }
     if (placement) { e.preventDefault(); setPlacement(null); return; }
@@ -1846,7 +1900,11 @@ $('music-seek').onchange = event => {
 for (const event of ['loadedmetadata', 'durationchange', 'timeupdate', 'emptied', 'seeked']) {
   if (!detachedPanel) $('audio').addEventListener(event, reportMusicPosition);
 }
-$('volume').oninput = e => { if (!detachedPanel) $('audio').volume = Number(e.target.value) / 100; };
+$('volume').oninput = e => {
+  if (detachedPanel) return;
+  cancelMusicFade?.();
+  $('audio').volume = Number(e.target.value) / 100;
+};
 $('volume').onchange = e => dispatch('music:settings', { volume: Number(e.target.value) / 100 });
 $('audio').onended = () => { if (!state.music.loop) dispatch('music:settings', { playing: false }); };
 $('audio').onerror = () => { if (state?.music.playing) { toast('Аудиофайл недоступен или имеет неподдерживаемый формат'); dispatch('music:settings', { playing: false }); } };
@@ -2011,6 +2069,9 @@ function readWindowState(value) {
   const switched = changingCampaign || state?.activeMapId !== value.state.activeMapId;
   const rotated = !switched && !isPlayerMap && (state?.map.rotation ?? 0) !== (value.state.map.rotation ?? 0);
   if (switched && $('player-dialog').open) closeDialog($('player-dialog'));
+  if (switched) {
+    for (const id of ['map-portal-editor', 'map-portal-travel']) if ($(id).open) closeDialog($(id));
+  }
   if (switched || state?.activeBattleId !== value.state.activeBattleId) setPlacement(null);
   if (switched) selectedToken = null;
   if (switched || rotated) {
@@ -2028,7 +2089,8 @@ function readWindowState(value) {
     selectedImage = previewImage = null;
     currentFolder = 'Общее';
     $('audio').pause();
-    delete $('audio').dataset.asset;
+    cancelMusicFade?.();
+    delete $('audio').dataset.source;
     combatBattle = null;
   }
   state = value.state;

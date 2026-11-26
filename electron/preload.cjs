@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('dm', {
   soundPad: id => ipcRenderer.invoke('sound-pad', id),
   soundPadState: ids => ipcRenderer.invoke('sound-pad-state', ids),
   soundClick: () => ipcRenderer.invoke('sound-click'),
+  soundDice: () => ipcRenderer.invoke('sound-dice'),
+  portalMapPreview: data => ipcRenderer.invoke('portal-map-preview', data),
   soundMovementPreview: id => ipcRenderer.invoke('sound-movement-preview', id),
   publishMusicPosition: data => ipcRenderer.send('music-position', data),
   seekMusic: data => ipcRenderer.invoke('music-seek', data),

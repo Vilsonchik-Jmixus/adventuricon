@@ -1,9 +1,9 @@
 function createRetroAudio() {
-  const { pads, conditions } = SoundLibrary;
-  const loops = new Set(pads.filter(([, , loop]) => loop).map(([id]) => id));
-  const playing = new Map(), buffers = new Map();
+  const { ambientIds, conditions } = SoundLibrary;
+  const loops = new Set(ambientIds);
+  const playing = new Map(), fading = new Map(), buffers = new Map();
   const voices = new Set();
-  let context, gain, preferences = SoundLibrary.preferenceDefaults;
+  let context, gain, ambientGain, ambientVolume = 1, preferences = SoundLibrary.preferenceDefaults;
   const rate = 12000;
   // Each voice is a short chip-synth envelope with an optional sample-and-hold noise channel.
   const pulse = (start, length, wave, from, to, volume, interval = 0) => ({ start, length, wave, from, to, volume, interval });
@@ -96,25 +96,39 @@ function createRetroAudio() {
     for (let n = 0; n < samples.length; n++) samples[n] = Math.round(Math.max(-1, Math.min(1, samples[n])) * 127) / 127;
     return buffer;
   }
-  function stop(id) {
-    const source = playing.get(id);
-    if (!source) return;
+  function stop(id, fade = 0) {
+    const voice = playing.get(id);
+    if (!voice) return;
     playing.delete(id);
-    source.stop();
+    if (fade && voice.level.gain.setTargetAtTime) {
+      fading.get(id)?.source.stop();
+      fading.set(id, voice);
+      voice.level.gain.setTargetAtTime(0, context.currentTime, fade / 4);
+      voice.source.stop(context.currentTime + fade);
+    } else voice.source.stop();
   }
   function apply(next) {
     preferences = next;
     if (gain) gain.gain.value = preferences.enabled ? preferences.volume : 0;
-    if (!preferences.enabled) for (const id of playing.keys()) stop(id);
+    if (!preferences.enabled) {
+      for (const id of playing.keys()) stop(id);
+      for (const voice of fading.values()) voice.source.stop();
+      fading.clear();
+    }
   }
-  function play(id, category, toggle = false) {
+  function play(id, category, toggle = false, fade = 0) {
     if (toggle && playing.has(id)) { stop(id); return false; }
+    if (playing.has(id)) return true;
     if (!preferences.enabled || category && !preferences[category] ||
         !Object.hasOwn(recipes, id) && !loops.has(id)) return false;
+    fading.get(id)?.source.stop();
     if (!context) {
       context = new AudioContext();
       gain = context.createGain();
       gain.connect(context.destination);
+      ambientGain = context.createGain();
+      ambientGain.gain.value = ambientVolume;
+      ambientGain.connect(gain);
       apply(preferences);
     }
     if (context.state === 'suspended') context.resume().catch(() => {});
@@ -126,12 +140,33 @@ function createRetroAudio() {
     const source = context.createBufferSource();
     source.buffer = buffers.get(id);
     source.loop = loops.has(id);
-    source.connect(gain);
-    if (source.loop) playing.set(id, source);
+    let level;
+    if (source.loop) {
+      level = context.createGain();
+      level.gain.value = fade ? 0 : 1;
+      if (fade) level.gain.setTargetAtTime(1, context.currentTime, fade / 4);
+      source.connect(level);
+      level.connect(ambientGain);
+      playing.set(id, { source, level });
+    } else source.connect(gain);
     voices.add(source);
-    source.onended = () => { voices.delete(source); source.disconnect(); };
+    source.onended = () => {
+      if (fading.get(id)?.source === source) fading.delete(id);
+      voices.delete(source);
+      source.disconnect();
+      level?.disconnect();
+    };
     source.start();
     return source.loop;
   }
-  return { play, apply, stop };
+  function setAmbience({ loops: selected, ambientVolume: volume }) {
+    ambientVolume = volume;
+    if (ambientGain) {
+      ambientGain.gain.cancelScheduledValues(context.currentTime);
+      ambientGain.gain.setTargetAtTime(volume, context.currentTime, .06);
+    }
+    for (const id of playing.keys()) if (!selected.includes(id)) stop(id, .28);
+    return selected.filter(id => play(id, null, false, .28));
+  }
+  return { play, apply, stop, setAmbience };
 }

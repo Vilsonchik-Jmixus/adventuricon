@@ -9,6 +9,8 @@ const ScreenThemes = Object.freeze({
   cyan: { name: 'Морская волна', background: '#1e2528', accent: '#93bcbe' },
   blue: { name: 'Сумерки', background: '#20222b', accent: '#9dacd2' },
   violet: { name: 'Сиреневый', background: '#25212d', accent: '#baa8d2' },
+  moon: { name: 'Лунное серебро', background: '#1c2026', accent: '#a7bed0' },
+  parchment: { name: 'Старый пергамент', background: '#f0e2c4', accent: '#80542d' },
 });
 
 function themeIcon(id) {
