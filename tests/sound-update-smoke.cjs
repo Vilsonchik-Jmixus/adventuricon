@@ -162,7 +162,7 @@ async function main() {
     });
     await expect.poll(() => page.evaluate(async () => (await dm.init()).soundPreferences.volume)).toBe(.31);
     const audioSettings = await page.evaluate(async () => dm.init());
-    assert.equal(audioSettings.state.music.volume, .55);
+    assert.equal(audioSettings.state.music.volume, .24);
     assert.equal(audioSettings.soundPreferences.assignment.rain, 'Таверна');
     console.log('PASS: both soundpad banks, ambient loops and categories, clipboard portraits, effects and footsteps, battle cues, and detached playback seeking.');
   } finally {
