@@ -348,17 +348,27 @@ function renderMapTokens(zoom) {
     if (legend.innerHTML !== content) legend.innerHTML = content;
   }
 }
-let renderedMusic;
+let renderedMusic = {};
 function renderMusic() {
-  if (!state.music.folders.includes(currentFolder)) currentFolder = state.music.folders[0];
-  const listKey = JSON.stringify([currentFolder, state.music.current, state.music.folders, state.music.tracks]);
-  if (renderedMusic !== listKey) {
-    renderedMusic = listKey;
+  const { folders, tracks, current: trackId } = state.music;
+  if (!folders.includes(currentFolder)) currentFolder = folders[0];
+  const folderChanged = renderedMusic.folder !== currentFolder || renderedMusic.folders !== folders;
+  const listChanged = folderChanged || renderedMusic.tracks !== tracks;
+  if (folderChanged) {
     $('folders').innerHTML = state.music.folders.map(f => `<button class="folder ${f === currentFolder ? 'selected' : ''}" data-folder="${escapeHTML(f)}" data-pixel-icon="folder">${escapeHTML(f)}</button>`).join('');
-    const tracks = state.music.tracks.filter(t => t.folder === currentFolder);
-    $('track-list').innerHTML = tracks.length ? tracks.map(t => `<div class="track ${state.music.current === t.id ? 'current' : ''}"><button class="track-play" data-play="${t.id}" title="Воспроизвести" data-pixel-icon="play"></button><span class="track-title" title="${escapeHTML(t.title)}">${escapeHTML(t.title)}</span><select data-move-track="${t.id}" aria-label="Папка трека">${state.music.folders.map(f => `<option ${t.folder === f ? 'selected' : ''}>${escapeHTML(f)}</option>`).join('')}</select><button class="track-delete" data-delete-track="${t.id}" title="Удалить трек" data-pixel-icon="trash"></button></div>`).join('') : '<div class="empty-state"><strong>В этой папке пока нет треков</strong></div>';
   }
-  const current = state.music.tracks.find(t => t.id === state.music.current);
+  if (listChanged) {
+    const folderTracks = tracks.filter(t => t.folder === currentFolder);
+    const options = folders.map(f => `<option${f === currentFolder ? ' selected' : ''}>${escapeHTML(f)}</option>`).join('');
+    $('track-list').innerHTML = folderTracks.length ? folderTracks.map(t => `<div class="track"><button class="track-play" data-play="${t.id}" title="Воспроизвести" data-pixel-icon="play"></button><span class="track-title" title="${escapeHTML(t.title)}">${escapeHTML(t.title)}</span><select data-move-track="${t.id}" aria-label="Папка трека">${options}</select><button class="track-delete" data-delete-track="${t.id}" title="Удалить трек" data-pixel-icon="trash"></button></div>`).join('') : '<div class="empty-state"><strong>В этой папке пока нет треков</strong></div>';
+  }
+  if (listChanged || renderedMusic.trackId !== trackId) {
+    $('track-list').querySelector('.track.current')?.classList.remove('current');
+    $('track-list').querySelector(`[data-play="${CSS.escape(trackId ?? '')}"]`)?.closest('.track').classList.add('current');
+    seekingTrack = false;
+  }
+  renderedMusic = { folder: currentFolder, folders, tracks, trackId };
+  const current = tracks.find(t => t.id === trackId);
   $('current-title').textContent = current?.title || 'Выберите трек';
   $('play-pause').dataset.pixelIcon = state.music.playing ? 'pause' : 'play';
   $('play-pause').setAttribute('aria-label', state.music.playing ? 'Пауза' : 'Воспроизвести');
@@ -368,9 +378,12 @@ function renderMusic() {
   if (!detachedPanel) {
     const audio = $('audio'); audio.volume = state.music.volume; audio.loop = state.music.loop;
     if (audio.dataset.reset !== String(state.music.reset || 0)) { if (audio.readyState) audio.currentTime = 0; audio.dataset.reset = String(state.music.reset || 0); }
-    if (!current) { audio.pause(); audio.removeAttribute('src'); delete audio.dataset.asset; }
+    if (!current) {
+      if (audio.hasAttribute('src')) { audio.pause(); audio.removeAttribute('src'); audio.load(); delete audio.dataset.source; }
+    }
     else {
-      if (audio.dataset.asset !== current.asset) { audio.src = assetURL(current.asset); audio.dataset.asset = current.asset; }
+      const source = assetURL(current.asset);
+      if (audio.dataset.source !== source) { audio.src = source; audio.dataset.source = source; }
       if (state.music.playing && audio.paused) {
         const context = currentContext();
         const currentTrack = current.id;
@@ -396,8 +409,9 @@ function renderMusicPosition() {
   slider.disabled = !(position?.duration > 0);
   slider.max = position?.duration || 1;
   if (!seekingTrack || slider.disabled) slider.value = position?.time || 0;
-  $('music-time').textContent = trackClock(Number(slider.value));
-  $('music-duration').textContent = trackClock(position?.duration || 0);
+  const time = trackClock(Number(slider.value)), duration = trackClock(position?.duration || 0);
+  if ($('music-time').textContent !== time) $('music-time').textContent = time;
+  if ($('music-duration').textContent !== duration) $('music-duration').textContent = duration;
 }
 function reportMusicPosition() {
   if (!state?.music) return;
@@ -2038,8 +2052,9 @@ function readWindowState(value) {
 }
 const pendingState = [];
 function applyWindowPatch(patch) {
-  const before = state, next = { ...state, ...patch.state };
   const campaignChanged = Object.hasOwn(patch, 'campaignId') && campaignId !== patch.campaignId;
+  const before = state, next = { ...state, ...patch.state };
+  if (patch.state.music && !campaignChanged) next.music = { ...before.music, ...patch.state.music };
   const updated = (...keys) => campaignChanged || keys.some(key => Object.hasOwn(patch.state, key));
   const metadata = (...keys) => campaignChanged || keys.some(key => Object.hasOwn(patch, key));
   readWindowState({ ...windowSnapshot, ...patch, state: next });
@@ -2067,8 +2082,8 @@ function applyWindowPatch(patch) {
   if (updated('library') && $('library-dialog').open) renderLibrary();
   if ((updated('gallery') || metadata('recentImages')) && charactersTab === 'gallery') renderGallery();
   if (updated('story') && charactersTab === 'notes') storyBoard.render();
-  if (!detachedPanel && (slotsChanged || before.layout.mode !== next.layout.mode ||
-      updated('scenes', 'story', 'music') || metadata('campaigns', 'detached'))) sessionTools.render();
+  if (!detachedPanel && (before.layout.mode !== next.layout.mode ||
+      updated('scenes') || metadata('campaigns', 'detached'))) sessionTools.render();
   if (layoutChanged || slotsChanged) requestAnimationFrame(syncRemoteBounds);
 }
 let initialized = false;

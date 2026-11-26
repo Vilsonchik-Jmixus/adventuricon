@@ -5,8 +5,47 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { createHash } = require('node:crypto');
 const { initialState, migrateState, reducer } = require('../electron/model.cjs');
+const { encodeCampaign } = require('../electron/campaigns.cjs');
+const { youtubeVideoId } = require('../electron/music-import.cjs');
 const SoundLibrary = require('../ui/sound-library.js');
 const { pads, padShortcut } = SoundLibrary;
+
+test('YouTube import canonicalizes common video links and rejects other hosts and playlists', () => {
+  const id = 'aqz-KE-bpKQ';
+  for (const url of [
+    `https://www.youtube.com/watch?v=${id}&list=example`,
+    `youtu.be/${id}/?si=example`,
+    `http://music.youtube.com/watch/?v=${id}`,
+    `https://youtube.com/shorts/${id}/`,
+    `https://m.youtube.com/live/${id}`,
+    `https://youtube.com/embed/${id}`
+  ]) assert.equal(youtubeVideoId(url), id, url);
+  for (const url of ['https://www.youtube.com/playlist?list=example',
+    `https://youtube.com.example.org/watch?v=${id}`, `https://name@youtu.be/${id}`,
+    `https://youtu.be:1234/${id}`, 'https://youtu.be/short', undefined]) {
+    assert.equal(youtubeVideoId(url), null, url);
+  }
+});
+
+test('music changes preserve unrelated campaign data and remove deleted tracks from battle events', () => {
+  let state = initialState();
+  const run = (type, payload) => { state = reducer(state, { type, payload }); };
+  run('music:add', { title: 'Таверна', asset: 'track.mp3' });
+  const track = state.music.tracks[0];
+  run('combat:event-save', { title: 'Музыка', round: 1, actions: { trackId: track.id } });
+  const board = state.boards[0];
+  const previous = state;
+  encodeCampaign(previous);
+  run('music:settings', { volume: .3 });
+  assert.equal(state.music.tracks, previous.music.tracks);
+  run('music:move', { id: track.id, folder: 'Бой' });
+  assert.equal(track.folder, 'Общее');
+  assert.equal(JSON.parse(encodeCampaign(state)).music.tracks[0].folder, 'Бой');
+  run('music:remove', { id: track.id });
+  assert.equal(state.battles[0].events[0].actions, null);
+  assert.equal(previous.battles[0].events[0].actions.trackId, track.id);
+  assert.equal(state.boards[0], board);
+});
 
 test('NumPad maps both banks and excludes top-row digits, navigation and extra modifiers', () => {
   assert.equal(new Set(pads.map(([id]) => id)).size, 20);

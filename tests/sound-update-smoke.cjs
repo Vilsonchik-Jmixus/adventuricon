@@ -136,6 +136,10 @@ async function main() {
     }, audioPath);
     await page.click('#music-tracks-tab');
     await expect(page.locator('#music-seek')).toBeEnabled();
+    const trackElement = await page.locator('.track').elementHandle();
+    await page.evaluate(() => dm.dispatch('music:settings', { volume: .24 }));
+    await expect(page.locator('#volume')).toHaveValue('24');
+    assert.equal(await trackElement.evaluate(element => element.isConnected), true);
     const seek = async (window, fraction) => window.locator('#music-seek').evaluate((slider, fraction) => {
       slider.value = Number(slider.max) * fraction;
       slider.dispatchEvent(new Event('input'));

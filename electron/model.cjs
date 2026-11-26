@@ -214,7 +214,8 @@ function updateExploration(state, board) {
   if (!seen.size) return;
   const explored = new Set(board.fog.explored);
   if ([...seen].every(cell => explored.has(cell))) return;
-  board.fog.explored = [...new Set([...explored, ...seen])].slice(-32000);
+  for (const cell of seen) explored.add(cell);
+  board.fog.explored = [...explored].slice(-32000);
 }
 const terrainPoint = point => {
   if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) throw new Error('Укажи точку на карте');
@@ -267,7 +268,12 @@ function copyForAction(state, type, p) {
     if (type === 'story:draw') s.story.strokes = [...state.story.strokes];
     return s;
   }
-  if (['music:settings', 'music:play', 'music:stop'].includes(type)) { s.music = { ...state.music }; return s; }
+  if (type.startsWith('music:')) {
+    s.music = { ...state.music };
+    if (type === 'music:folder') s.music.folders = [...state.music.folders];
+    if (type === 'music:add' || type === 'music:save-import') s.music.tracks = [...state.music.tracks];
+    return s;
+  }
   if (type.startsWith('layout:')) {
     s.layout = { ...state.layout, windows: { ...state.layout.windows }, preparation: { ...preparationSizes, ...state.layout.preparation } };
     return s;
@@ -777,8 +783,8 @@ function reducer(state, action) {
     case 'music:save-import': {
       const asset = text(p.asset, 100);
       const folder = s.music.folders.includes(p.folder) ? p.folder : 'Общее';
-      for (const track of s.music.tracks) {
-        if (p.previousAsset && track.asset === p.previousAsset) track.asset = asset;
+      if (p.previousAsset) {
+        s.music.tracks = s.music.tracks.map(track => track.asset === p.previousAsset ? { ...track, asset } : track);
       }
       if (!s.music.tracks.some(track => track.asset === asset && track.folder === folder)) {
         s.music.tracks.push({ id: randomUUID(), title: text(p.title), asset, folder, source: text(p.source, 300) });
@@ -786,11 +792,27 @@ function reducer(state, action) {
       break;
     }
     case 'music:move': {
-      const t = s.music.tracks.find(t => t.id === p.id); if (t && s.music.folders.includes(p.folder)) t.folder = p.folder; break;
+      if (s.music.folders.includes(p.folder)) {
+        s.music.tracks = replaceActive(s.music.tracks, p.id, track => ({ ...track, folder: p.folder }));
+      }
+      break;
     }
     case 'music:remove':
       s.music.tracks = s.music.tracks.filter(t => t.id !== p.id);
-      for (const scene of s.scenes) if (scene.trackId === p.id) scene.trackId = null;
+      if (s.scenes.some(scene => scene.trackId === p.id)) {
+        s.scenes = s.scenes.map(scene => scene.trackId === p.id ? { ...scene, trackId: null } : scene);
+      }
+      if (s.battles.some(entry => entry.events.some(event => event.actions?.trackId === p.id))) {
+        s.battles = s.battles.map(entry => {
+          if (!entry.events.some(event => event.actions?.trackId === p.id)) return entry;
+          const events = entry.events.map(event => {
+            if (event.actions?.trackId !== p.id) return event;
+            const actions = { ...event.actions, trackId: null };
+            return { ...event, actions: actions.templateId || actions.doorId ? actions : null };
+          });
+          return { ...entry, events };
+        });
+      }
       if (s.music.current === p.id) { s.music.current = null; s.music.playing = false; } break;
     case 'music:play':
       if (s.music.tracks.some(t => t.id === p.id)) { s.music.current = p.id; s.music.playing = true; } break;

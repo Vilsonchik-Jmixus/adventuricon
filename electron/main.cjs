@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { fileURLToPath, pathToFileURL } = require('node:url');
 const { randomUUID } = require('node:crypto');
-const { beginMusicImport, mediaTools } = require('./music-import.cjs');
+const { beginMusicImport, mediaTools, youtubeVideoId } = require('./music-import.cjs');
 const { activeView, reducer, canMoveToken } = require('./model.cjs');
 const { readCharacter } = require('./lss-import.cjs');
 const { publicDndUrl, readPublicResponse } = require('./dnd-import.cjs');
@@ -145,6 +145,9 @@ function broadcast() {
       }
       const { state: localState, ...metadata } = changedFields(next, previous);
       const fields = localState ? changedFields(localState, previous.state) : {};
+      if (fields.music && previous.state.music && next.campaignId === previous.campaignId) {
+        fields.music = changedFields(fields.music, previous.state.music);
+      }
       windowSnapshots.set(owner, next);
       if (Object.keys(fields).length || Object.keys(metadata).length) owner.send('state', { ...metadata, state: fields });
     }
@@ -923,30 +926,22 @@ function setupIPC() {
     return { ok: true };
   });
 }
-function youtubeVideoId(value) {
-  let url;
-  try { url = new URL(value); }
-  catch { return null; }
-  const hosts = ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be'];
-  if (url.protocol !== 'https:' || !hosts.includes(url.hostname)) return null;
-  const id = url.hostname === 'youtu.be' ? url.pathname.slice(1)
-    : url.pathname === '/watch' ? url.searchParams.get('v')
-    : url.pathname.match(/^\/(?:shorts|live|embed)\/([^/]+)\/?$/)?.[1];
-  return /^[a-zA-Z0-9_-]{11}$/.test(id || '') ? id : null;
-}
 function reportMusic(phase, text, percent = null) {
   musicStatus = { scope: 'music', phase, text, percent };
   sendAll('status', musicStatus);
 }
 async function downloadMusic({ url, folder }) {
   const videoId = youtubeVideoId(url);
-  if (!videoId) throw new Error('Вставьте HTTPS-ссылку на отдельное видео YouTube');
+  if (!videoId) throw new Error('Вставьте ссылку на отдельное видео YouTube');
   if (downloadProcess) throw new Error('Дождитесь завершения текущей загрузки');
   if (!state.music.folders.includes(folder)) folder = 'Общее';
   const source = 'https://www.youtube.com/watch?v=' + videoId;
-  const available = state.music.tracks.filter(track => youtubeVideoId(track.source) === videoId &&
-    fs.existsSync(path.join(assets, assetName(track.asset))));
-  const mp3 = available.find(track => track.asset.endsWith('.mp3'));
+  const available = state.music.tracks.filter(track => {
+    if (youtubeVideoId(track.source) !== videoId || !assetPattern.test(track.asset)) return false;
+    const file = fs.statSync(path.join(assets, track.asset), { throwIfNoEntry: false });
+    return file?.isFile() && file.size > 0;
+  });
+  const mp3 = available.find(track => /\.mp3$/i.test(track.asset));
   const save = ({ asset, title, previousAsset }) => commit({
     type: 'music:save-import',
     payload: { asset, title: title || videoId, previousAsset, folder, source }

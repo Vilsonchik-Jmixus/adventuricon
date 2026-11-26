@@ -36,7 +36,7 @@ function encodeCampaign(state) {
     if (key === 'battles' || key === 'boards') {
       return cachedJSON(value, entries => '[' + entries.map(entry => cachedJSON(entry, recordJSON)).join(',') + ']');
     }
-    return cachedJSON(value, key === 'story' ? recordJSON : JSON.stringify);
+    return cachedJSON(value, key === 'story' || key === 'music' ? recordJSON : JSON.stringify);
   });
 }
 
