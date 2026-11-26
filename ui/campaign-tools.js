@@ -1,12 +1,13 @@
-function createCampaignTools({ getState, getContext, dispatch, search, openDialog, closeDialog, askText, navigate }) {
+function createCampaignTools({ getState, getContext, dispatch, search, eventMapDoors, pickEventCells, openDialog, closeDialog, askText, navigate }) {
   const get = id => document.getElementById(id);
   const searchDialog = get('campaign-search-dialog'), query = get('campaign-query'), results = get('campaign-search-results');
   const roundDialog = get('round-events-dialog'), eventForm = get('round-event-form'), eventButton = get('open-round-events');
+  const saveEvent = get('save-round-event'), chooseCells = get('pick-round-cells');
   const journalDialog = get('journal-dialog'), journalForm = get('journal-form'), sessionSelect = get('journal-session');
   const kinds = { scene: 'Сцена', map: 'Карта', battle: 'Бой', actor: 'Участник', note: 'Заметка', session: 'Сессия', entry: 'Журнал' };
   const date = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' });
   let searchRequest = 0, searchTimer, selectedResult = 0;
-  let eventId = null, eventContext, lastEventBattle, lastEvents, pendingEvents = new Set();
+  let eventId = null, eventContext, lastEventBattle, lastEvents, pendingEvents = new Set(), doorRequest = 0;
   let sessionId, editingEntry = null, journalContext;
 
   function button(label, icon, action) {
@@ -71,13 +72,66 @@ function createCampaignTools({ getState, getContext, dispatch, search, openDialo
   };
 
   function editEvent(entry) {
+    const state = getState(), fields = eventForm.elements, actions = entry?.actions;
     eventId = entry?.id ?? null;
     eventContext = getContext();
-    eventForm.elements.round.value = entry?.round ?? Math.min(9999, getState().round + (getState().turn ? 1 : 0));
-    eventForm.elements.title.value = entry?.title ?? '';
-    get('save-round-event').textContent = entry ? 'Сохранить' : 'Добавить событие';
+    fields.round.value = entry?.round ?? Math.min(9999, state.round + (state.turn ? 1 : 0));
+    fields.title.value = entry?.title ?? '';
+    fields.mapId.replaceChildren(...state.mapChoices.map(map => new Option(map.title, map.id)));
+    fields.mapId.value = actions?.mapId || state.activeMapId;
+    if (!fields.mapId.value) fields.mapId.value = state.activeMapId;
+    selectOptions(fields.templateId, state.library, 'Без подкрепления', actions?.templateId, 'name');
+    selectOptions(fields.trackId, state.music.tracks, 'Текущая музыка', actions?.trackId);
+    fields.cells.value = (actions?.cells ?? []).map(({ col, row }) => `${col}, ${row}`).join('; ');
+    get('round-event-cells').hidden = !fields.templateId.value;
+    showEventError('');
+    refreshDoors(actions?.doorId);
+    saveEvent.textContent = entry ? 'Сохранить' : 'Добавить событие';
     get('cancel-event-edit').hidden = !entry;
   }
+  function selectOptions(field, entries, empty, selected, titleKey = 'title') {
+    const options = [new Option(empty, ''), ...entries.map(item => new Option(item[titleKey], item.id))];
+    if (selected && !entries.some(item => item.id === selected)) options.push(new Option('Недоступно — выбери заново', selected));
+    field.replaceChildren(...options);
+    field.value = selected || '';
+  }
+  function showEventError(error) {
+    const output = get('round-event-error');
+    output.textContent = error ?? '';
+    output.hidden = !error;
+  }
+  async function refreshDoors(selected) {
+    const ticket = ++doorRequest, fields = eventForm.elements;
+    const mapId = fields.mapId.value, owner = eventContext;
+    selectOptions(fields.doorId, [], 'Без открытия двери', selected);
+    fields.doorId.disabled = true;
+    saveEvent.disabled = true;
+    const response = await eventMapDoors({ mapId, expectedCampaignId: owner.expectedCampaignId });
+    if (ticket !== doorRequest) return;
+    selectOptions(fields.doorId, response?.doors ?? [], 'Без открытия двери', selected, 'label');
+    fields.doorId.disabled = false;
+    saveEvent.disabled = false;
+    if (response?.error) showEventError(response.error);
+  }
+  eventForm.elements.mapId.onchange = () => { showEventError(''); refreshDoors(); };
+  eventForm.elements.templateId.onchange = () => { get('round-event-cells').hidden = !eventForm.elements.templateId.value; };
+  chooseCells.hidden = !pickEventCells;
+  function parseCells(input) {
+    return input.trim().split(';').map(part => /^\s*(\d{1,4})\s*,\s*(\d{1,4})\s*$/.exec(part)).map(pair =>
+      pair ? { col: Number(pair[1]), row: Number(pair[2]) } : null);
+  }
+  chooseCells.onclick = () => {
+    const { mapId, cells } = eventForm.elements;
+    if (mapId.value !== getState().activeMapId) return showEventError('Чтобы выбрать клетки мышью, сначала открой нужную карту.');
+    const before = parseCells(cells.value).filter(Boolean);
+    closeDialog(roundDialog);
+    pickEventCells(before, next => {
+      if (eventContext.expectedCampaignId !== getContext().expectedCampaignId ||
+          eventContext.expectedBattleId !== getContext().expectedBattleId) return;
+      if (next) cells.value = next.map(({ col, row }) => `${col}, ${row}`).join('; ');
+      openDialog(roundDialog.id);
+    });
+  };
   function renderRoundEvents(force = false) {
     const state = getState();
     if (lastEventBattle !== state.activeBattleId) {
@@ -102,7 +156,22 @@ function createCampaignTools({ getState, getContext, dispatch, search, openDialo
       });
       remove.setAttribute('aria-label', 'Удалить событие ' + entry.title);
       row.append(label('Раунд ' + entry.round, 'result-kind'), title, remove);
-      if (entry.fired) row.append(label('Сработало', 'result-detail'));
+      if (entry.executed) row.append(label('Выполнено', 'result-detail'));
+      else if (entry.actions && entry.fired) {
+        const controls = document.createElement('div');
+        controls.className = 'round-event-controls';
+        const run = button('Запустить', 'play', async () => {
+          const response = await dispatch('combat:event-run', { id: entry.id }, getContext());
+          if (!response?.ok) showEventError(response?.error);
+        });
+        const delay = button('На раунд позже', 'clock', async () => {
+          const response = await dispatch('combat:event-delay', { id: entry.id }, getContext());
+          if (!response?.ok) showEventError(response?.error);
+        });
+        controls.append(run, delay);
+        row.append(controls);
+      } else if (entry.fired) row.append(label('Сработало', 'result-detail'));
+      else if (entry.actions) row.append(label('Есть действия', 'result-detail'));
       return row;
     }));
     if (!lastEvents.length) list.append(label('Добавь напоминание для нужного раунда.', 'dialog-hint'));
@@ -116,7 +185,14 @@ function createCampaignTools({ getState, getContext, dispatch, search, openDialo
   get('cancel-event-edit').onclick = () => editEvent();
   eventForm.onsubmit = async event => {
     event.preventDefault();
-    if ((await dispatch('combat:event-save', { ...Object.fromEntries(new FormData(eventForm)), id: eventId }, eventContext))?.ok) editEvent();
+    const { title, round, mapId, templateId, doorId, trackId, cells: rawCells } = Object.fromEntries(new FormData(eventForm));
+    if (eventForm.elements.doorId.disabled) return;
+    const cells = templateId ? parseCells(rawCells) : [];
+    if (cells.includes(null)) return showEventError('Введи клетки как «4, 5; 5, 5».');
+    const response = await dispatch('combat:event-save', { title, round, id: eventId,
+      actions: { mapId, templateId, doorId, trackId, cells } }, eventContext);
+    if (response?.ok) editEvent();
+    else showEventError(response?.error);
   };
 
   function editJournal(entry) {

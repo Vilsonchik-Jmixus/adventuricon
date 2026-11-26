@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="workspace.css">
   <link rel="stylesheet" href="icons.css">
   <link rel="stylesheet" href="campaign-tools.css">
+  <link rel="stylesheet" href="sound-tools.css">
 </head>
 <body>
   <header class="appbar">
@@ -62,6 +63,7 @@
           <button id="add-combatant" class="add-button" data-pixel-icon="plus" aria-label="Добавить участника"><span class="control-label">Добавить участника</span><span class="compact-label" aria-hidden="true">Добавить</span></button>
           <button id="open-library" class="quiet" data-pixel-icon="folder">Заготовки</button>
           <button id="import-lss" class="quiet" title="Выбрать JSON-экспорт Long Story Short" data-pixel-icon="download">LSS</button>
+          <button id="paste-lss" type="button" class="quiet" title="Вставить JSON Long Story Short из буфера" aria-label="Вставить JSON из буфера" data-pixel-icon="clipboard"></button>
         </div>
       </div>
       <div class="detached-placeholder"><span>↗</span><p>Трекер в отдельном окне</p><button data-focus="combat" data-pixel-icon="external">Показать окно</button></div>
@@ -104,7 +106,28 @@
     </section>
     <section class="panel music" data-panel="music">
       <header class="panel-head"><div class="panel-title"><h1 data-pixel-icon="music">Музыка</h1></div><div class="panel-tools"><button data-detach="music" title="В отдельное окно" data-pixel-icon="external" aria-label="В отдельное окно"></button><button data-expand="music" title="Развернуть панель" data-pixel-icon="expand" aria-label="Развернуть панель"></button></div></header>
-      <div class="panel-content music-content"><div class="music-import"><button id="import-audio" class="small-button" data-pixel-icon="music">Аудиофайл</button><button id="import-youtube" class="quiet" data-pixel-icon="link">Ссылка YouTube</button></div><div class="folder-row"><div id="folders" class="folders"></div><button id="add-folder" class="icon-button" title="Новая папка" data-pixel-icon="folder" aria-label="Новая папка"></button></div><div id="track-list" class="track-list"></div><div id="music-transfer" class="music-transfer" hidden><div id="music-status" class="inline-status" role="status"></div><progress id="music-progress" aria-label="Загрузка музыки" max="100" hidden></progress><button id="cancel-music" class="quiet" hidden data-pixel-icon="close">Отменить</button></div><div class="player"><div class="now-playing"><span class="equalizer">▂▅▃▆</span><div><small>СЕЙЧАС ИГРАЕТ</small><strong id="current-title">Выберите трек</strong></div></div><div class="playback"><button id="play-pause" class="play-button" title="Воспроизведение / пауза" data-pixel-icon="play" aria-label="Воспроизведение / пауза"></button><button id="stop-music" title="Стоп" data-pixel-icon="stop" aria-label="Стоп"></button><button id="loop-music" title="Повтор" data-pixel-icon="repeat" aria-label="Повтор"></button><input id="volume" aria-label="Громкость" type="range" min="0" max="100" value="55"></div></div></div>
+      <div class="panel-content music-content">
+        <div class="music-tabs" role="group" aria-label="Панель музыки">
+          <button id="music-tracks-tab" type="button" aria-pressed="true" data-pixel-icon="music">Треки</button>
+          <button id="sound-pad-tab" type="button" aria-pressed="false" data-pixel-icon="spark">Саундпад</button>
+        </div>
+        <div id="sound-pad" hidden>
+          <div class="sound-category-bar">
+            <select id="sound-category" aria-label="Категория саундпада"></select>
+            <button id="edit-sound-categories" type="button" data-pixel-icon="folder" title="Настроить категории">Категории</button>
+          </div>
+          <fieldset><legend>Ctrl + NumPad 0–9</legend><div class="sound-pad-grid" id="sound-pad-a"></div></fieldset>
+          <fieldset><legend>Ctrl + Alt + NumPad 0–9</legend><div class="sound-pad-grid" id="sound-pad-b"></div></fieldset>
+          <p class="dialog-hint">Для сочетаний включи Num Lock. Фоновые звуки выключаются повторным нажатием.</p>
+          <button id="stop-ambient" type="button" class="quiet" data-pixel-icon="stop" disabled>Остановить фоновые звуки</button>
+        </div>
+        <div id="music-tracks"><div class="music-import"><button id="import-audio" class="small-button" data-pixel-icon="music">Аудиофайл</button><button id="import-youtube" class="quiet" data-pixel-icon="link">Ссылка YouTube</button></div><div class="folder-row"><div id="folders" class="folders"></div><button id="add-folder" class="icon-button" title="Новая папка" data-pixel-icon="folder" aria-label="Новая папка"></button></div><div id="track-list" class="track-list"></div><div id="music-transfer" class="music-transfer" hidden><div id="music-status" class="inline-status" role="status"></div><progress id="music-progress" aria-label="Загрузка музыки" max="100" hidden></progress><button id="cancel-music" class="quiet" hidden data-pixel-icon="close">Отменить</button></div><div class="player"><div class="now-playing"><span class="equalizer">▂▅▃▆</span><div><small>СЕЙЧАС ИГРАЕТ</small><strong id="current-title">Выберите трек</strong></div></div><div class="playback"><button id="play-pause" class="play-button" title="Воспроизведение / пауза" data-pixel-icon="play" aria-label="Воспроизведение / пауза"></button><button id="stop-music" title="Стоп" data-pixel-icon="stop" aria-label="Стоп"></button><button id="loop-music" title="Повтор" data-pixel-icon="repeat" aria-label="Повтор"></button><input id="volume" aria-label="Громкость музыки" type="range" min="0" max="100" value="55"></div>
+          <div class="music-timeline">
+            <span id="music-time">0:00</span>
+            <input id="music-seek" type="range" min="0" max="1" step="any" value="0" aria-label="Позиция трека" disabled>
+            <span id="music-duration">0:00</span>
+          </div>
+        </div></div></div>
       <div class="detached-placeholder"><span>↗</span><p>Музыка в отдельном окне</p><button data-focus="music" data-pixel-icon="external">Показать окно</button></div><button class="resize-grip" title="Потяните для изменения размера"></button>
     </section>
     <section class="panel map" data-panel="map">
@@ -244,9 +267,14 @@
         <button id="remove-portrait" type="button" class="quiet" hidden data-pixel-icon="trash">Убрать</button>
       </div>
       <output id="portrait-status" role="status" hidden></output>
+      <p id="import-portrait-hint" class="dialog-hint" hidden></p>
       <label>Имя<input name="name" required maxlength="120" placeholder="Например, гоблин-разведчик" autofocus></label>
       <div class="form-row"><label id="current-hp-field" hidden>Текущие ХП<input name="hp" type="number" min="0" max="999999" disabled></label><label>Максимум ХП<input name="maxHp" type="number" min="1" max="999999" value="12" required></label></div>
       <div class="form-row"><label>Сторона<select name="role" id="combatant-role"></select></label><label id="initiative-bonus-field">Бонус инициативы<input name="initiativeBonus" type="number" min="-50" max="50" value="0" required></label></div>
+      <div class="movement-sound-picker">
+        <label>Звук движения<select name="movementSound"></select></label>
+        <button id="sound-preview-step" type="button" data-pixel-icon="play">Прослушать</button>
+      </div>
       <div class="scene-confirm editor-actions"><button id="editor-submit" type="submit" class="primary-button" data-pixel-icon="check">Добавить в трекер</button><button id="save-template-copy" type="button" class="quiet" hidden data-pixel-icon="folder">В заготовки</button></div>
     </form>
   </dialog>
@@ -320,7 +348,9 @@
   <dialog id="library-dialog" aria-labelledby="library-title">
     <div class="dialog-heading"><h2 id="library-title">Заготовки персонажей</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
     <button id="create-character-template" type="button" class="small-button" data-pixel-icon="plus">Новая заготовка</button>
-    <p id="library-empty" class="dialog-hint">Добавь персонажа заранее или сохрани участника боя через его карточку.</p>
+    <button id="library-import-lss" type="button" class="small-button" data-pixel-icon="download">Импорт JSON</button>
+    <button id="library-paste-lss" type="button" class="quiet" data-pixel-icon="clipboard">Вставить JSON</button>
+    <p id="library-empty" class="dialog-hint">Добавь персонажа или перетащи сюда JSON-экспорт Long Story Short.</p>
     <div id="library-list"></div>
   </dialog>
   <dialog id="remove-token-dialog" aria-labelledby="remove-token-title">
@@ -354,6 +384,15 @@
       <label><input type="checkbox" data-screen-option="tips"> Советы в шапке</label>
     </div>
     <button type="button" id="preview-welcome" class="small-button" data-pixel-icon="eye">Показать приветствие</button>
+    <fieldset id="sound-options">
+      <legend>8-битные звуки</legend>
+      <label class="checkbox-label"><input type="checkbox" data-sound-option="enabled" checked> Включить 8-битные звуки</label>
+      <label>Громкость эффектов <input type="range" data-sound-option="volume" min="0" max="100" value="48"></label>
+      <label class="checkbox-label"><input type="checkbox" data-sound-option="clicks" checked> Клики интерфейса</label>
+      <label class="checkbox-label"><input type="checkbox" data-sound-option="dice" checked> Броски кубиков</label>
+      <label class="checkbox-label"><input type="checkbox" data-sound-option="effects" checked> Состояния на токенах</label>
+      <label class="checkbox-label"><input type="checkbox" data-sound-option="movement" checked> Движение токенов с Ctrl</label>
+    </fieldset>
   </dialog>
   <audio id="welcome-jingle" preload="none"></audio>
   <dialog id="campaign-dialog" class="session-dialog">
@@ -406,6 +445,19 @@
     <div id="round-events-list" class="tool-list"></div>
     <form id="round-event-form">
       <div class="form-row"><label class="round-field">Раунд<input name="round" type="number" min="1" max="9999" required></label><label>Напоминание<input name="title" maxlength="240" required placeholder="Например, прибывает подкрепление"></label></div>
+      <fieldset id="round-event-actions">
+        <legend>Действия при запуске</legend>
+        <label>Карта<select name="mapId"></select></label>
+        <label>Подкрепление из заготовок<select name="templateId"></select></label>
+        <div class="event-cells" id="round-event-cells" hidden>
+          <label>Клетки (столбец, строка)<input name="cells" maxlength="140" placeholder="4, 5; 5, 5"></label>
+          <button id="pick-round-cells" type="button" data-pixel-icon="map">Выбрать на карте</button>
+          <p class="dialog-hint">До 12 клеток. Первая клетка карты — 0, 0.</p>
+        </div>
+        <label>Открыть дверь<select name="doorId"></select></label>
+        <label>Включить трек<select name="trackId"></select></label>
+      </fieldset>
+      <p id="round-event-error" role="status" class="dialog-hint" hidden></p>
       <div class="session-actions"><button id="cancel-event-edit" type="button" hidden class="quiet">Отмена</button><button id="save-round-event" type="submit" class="primary-button" data-pixel-icon="check">Добавить событие</button></div>
     </form>
   </dialog>
@@ -420,6 +472,23 @@
     </form>
   </dialog>
   <audio id="audio" preload="metadata"></audio>
+  <dialog id="sound-categories-dialog" class="session-dialog" aria-labelledby="sound-categories-title">
+    <div class="dialog-heading"><h2 id="sound-categories-title">Категории саундпада</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
+    <form id="new-sound-category">
+      <label>Название новой категории<input name="name" maxlength="40" placeholder="Например, таверна" required></label>
+      <button type="submit" class="quiet" data-pixel-icon="plus">Создать категорию</button>
+    </form>
+    <div class="sound-category-bar">
+      <select id="remove-category-choice" aria-label="Категория для удаления"></select>
+      <button id="remove-sound-category" type="button" class="quiet" data-pixel-icon="trash">Удалить категорию</button>
+    </div>
+    <div id="sound-assignments"></div>
+  </dialog>
+  <div id="event-cell-picker" hidden>
+    <span id="event-cell-count" role="status"></span>
+    <button id="event-cell-done" type="button" data-pixel-icon="check">Готово</button>
+    <button id="event-cell-cancel" type="button" data-pixel-icon="close">Отмена</button>
+  </div>
   <script src="themes.js"></script>
   <script src="map-geometry.js"></script>
   <script src="map-terrain.js"></script>
@@ -428,6 +497,9 @@
   <script src="session.js"></script>
   <script src="shortcuts.js"></script>
   <script src="campaign-tools.js"></script>
+  <script src="sound-library.js"></script>
+  <script src="retro-audio.js"></script>
+  <script src="sound-tools.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

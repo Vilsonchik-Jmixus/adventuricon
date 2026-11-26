@@ -71,6 +71,8 @@ async function main() {
   }) }));
   await app.evaluate(({ dialog }, file) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] }); }, lssFile);
   await page.click('#import-lss');
+  await loaded(page.locator('#portrait-preview img'));
+  await page.click('#editor-submit');
   const archer = page.locator('.combat-card', { hasText: 'Лучник' });
   await loaded(archer.locator('img'));
   await expect(archer.locator('.hp-readout')).toContainText('7');

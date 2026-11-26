@@ -211,6 +211,8 @@ async function main() {
   }, lssFile);
   await master.keyboard.press('Escape');
   await master.click('#import-lss');
+  await expect(master.locator('#import-portrait-hint')).toBeVisible();
+  await master.click('#editor-submit');
   const imported = master.locator('.combat-card').filter({ hasText: 'ЛСС · Сова' });
   await expect(imported.locator('.hp-readout')).toHaveText('8 / 21');
   await expect(imported.locator('.combat-meta')).toContainText('Иниц. +5');

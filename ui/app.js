@@ -14,7 +14,11 @@ let restoreMapCamera = false, cancelTokenDrag = null;
 let masterAutoFit = false, expandedMapMode = 'fill', boardLayout, boardProjection;
 let playerBlackout = false;
 let selectedToken = null, placement = null, removal = null, editingTemplate = null;
-let mapItemDraft = null;
+let mapItemDraft = null, importedCharacter = null, readingCharacter = false;
+let cancelEventCells;
+let musicPosition, seekingTrack = false;
+const retro = !detachedPanel ? createRetroAudio() : null;
+const soundTools = isPlayerMap ? null : createSoundTools({ retro, api, result, openDialog, toast });
 const tokenDragType = 'application/x-dm-screen-token';
 let combatRoles = {}, conditionDefinitions = [], conditionEdit, initiativeContext;
 let reference = { tab: 'info', pages: {} };
@@ -379,6 +383,37 @@ function renderMusic() {
       else if (!state.music.playing && !audio.paused) audio.pause();
     }
   }
+  renderMusicPosition();
+}
+function trackClock(seconds) {
+  const total = Math.floor(seconds);
+  return Math.floor(total / 60) + ':' + String(total % 60).padStart(2, '0');
+}
+function renderMusicPosition() {
+  if (!state?.music) return;
+  const position = musicPosition?.campaignId === campaignId && musicPosition.trackId === state.music.current ? musicPosition : null;
+  const slider = $('music-seek');
+  slider.disabled = !(position?.duration > 0);
+  slider.max = position?.duration || 1;
+  if (!seekingTrack || slider.disabled) slider.value = position?.time || 0;
+  $('music-time').textContent = trackClock(Number(slider.value));
+  $('music-duration').textContent = trackClock(position?.duration || 0);
+}
+function reportMusicPosition() {
+  if (!state?.music) return;
+  const audio = $('audio');
+  const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+  const time = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+  musicPosition = { campaignId, trackId: state.music.current, duration, time };
+  renderMusicPosition();
+  if (detached.includes('music')) api.publishMusicPosition(musicPosition);
+}
+function seekTrack(request) {
+  const audio = $('audio');
+  if (!state?.music.current || request.campaignId !== campaignId || request.trackId !== state.music.current ||
+      !Number.isFinite(request.time) || !Number.isFinite(audio.duration) || audio.duration <= 0) return;
+  audio.currentTime = Math.max(0, Math.min(audio.duration, request.time));
+  reportMusicPosition();
 }
 function renderDetachedPanels() {
   document.querySelectorAll('[data-panel]').forEach(panel =>
@@ -676,7 +711,9 @@ const sessionTools = createSessionTools({
   dispatch, campaign: api.campaign, openDialog, closeDialog, askText, showNote: openStoryNote,
 });
 const campaignTools = createCampaignTools({
-  getState: () => state, getContext: currentContext, dispatch, search: api.campaignSearch, openDialog, closeDialog, askText,
+  getState: () => state, getContext: currentContext, dispatch, search: api.campaignSearch,
+  eventMapDoors: api.eventMapDoors, pickEventCells: detachedPanel ? null : pickEventCells,
+  openDialog, closeDialog, askText,
   async navigate(entry) {
     if (entry.kind === 'scene') return sessionTools.openScene(state.scenes.find(scene => scene.id === entry.id));
     if (entry.kind === 'note') {
@@ -815,12 +852,20 @@ $('confirm-remove-token').onclick = () => {
   closeDialog($('remove-token-dialog'));
   dispatch('token:remove', { id }, context);
 };
-async function importLss(file) {
-  const response = await result(api.importLss(file, state.activeBattleId));
-  if (response?.ok) toast([
-    response.portraitImported ? 'Лист и портрет Long Story Short добавлены в бой.' : 'Лист Long Story Short добавлен без портрета.',
-    response.initiativeNeedsReview && 'Проверь бонус инициативы из формулы листа.'
-  ].filter(Boolean).join(' '));
+async function importLss(file, template = false, fromClipboard = false) {
+  if (readingCharacter) return;
+  const context = currentContext();
+  readingCharacter = true;
+  try {
+    const response = await result(api.importLss(file, { ...context, template, fromClipboard }));
+    if (!response?.ok || context.expectedCampaignId !== campaignId ||
+        !template && context.expectedBattleId !== state.activeBattleId) return;
+    if (template && $('library-dialog').open) closeDialog($('library-dialog'));
+    else if (document.querySelector('dialog[open]')) return;
+    openCombatantEditor(response.actor, template, response);
+  } finally {
+    readingCharacter = false;
+  }
 }
 function dndCardLink(value) {
   try {
@@ -894,6 +939,9 @@ $('drag-dnd-card').onclick = async () => {
   await beginItemPlacement(item, context);
 };
 $('import-lss').onclick = () => importLss();
+$('paste-lss').onclick = () => importLss(null, false, true);
+$('library-import-lss').onclick = () => importLss(null, true);
+$('library-paste-lss').onclick = () => importLss(null, true, true);
 const combatContent = document.querySelector('.combat-content');
 combatContent.addEventListener('dragover', event => {
   if (event.dataTransfer.types.some(type => ['Files', 'text/uri-list', 'text/plain', 'text/html'].includes(type))) event.preventDefault();
@@ -906,6 +954,26 @@ combatContent.addEventListener('drop', async event => {
   if (link) await importDndCreature(link);
   else importLss(file);
 });
+const libraryDialog = $('library-dialog');
+libraryDialog.addEventListener('dragover', event => {
+  if (event.dataTransfer.types.includes('Files')) event.preventDefault();
+});
+libraryDialog.addEventListener('drop', event => {
+  const file = event.dataTransfer.files[0];
+  if (!file?.name.toLowerCase().endsWith('.json')) return;
+  event.preventDefault();
+  importLss(file, true);
+});
+document.addEventListener('paste', event => {
+  if (!state || isPlayerMap || textField(event.target)) return;
+  const template = libraryDialog.open;
+  if (!template && (document.querySelector('dialog[open]') || !event.target.closest('.combat'))) return;
+  const file = [...event.clipboardData.files].find(item => item.name.toLowerCase().endsWith('.json'));
+  const content = event.clipboardData.getData('text/plain').trimStart();
+  if (!file && !content.startsWith('{')) return;
+  event.preventDefault();
+  importLss(file, template, !file);
+});
 $('combat-list').addEventListener('dragstart', event => {
   const card = event.target.closest('.combat-card');
   if (!card) return;
@@ -913,25 +981,35 @@ $('combat-list').addEventListener('dragstart', event => {
   event.dataTransfer.effectAllowed = 'copyMove';
 });
 
-function openCombatantEditor(combatant, template = false) {
+function openCombatantEditor(combatant, template = false, imported = null) {
   const form = $('combatant-form');
   form.reset();
+  importedCharacter = imported;
   editingCombatant = template ? null : combatant?.id ?? null;
   editingTemplate = template ? combatant?.id ?? '' : null;
   editingContext = currentContext();
   portraitDraft.reset([combatant?.image]);
   form.elements.role.value = combatant?.role ?? 'enemy';
-  form.elements.initiativeBonus.value = combatant?.initiativeBonus ?? 0;
+  form.elements.initiativeBonus.value = Math.max(-50, Math.min(50, Math.round(combatant?.initiativeBonus ?? 0)));
+  form.elements.movementSound.value = SoundLibrary.moveSound(combatant?.movementSound);
+  $('sound-preview-step').disabled = form.elements.movementSound.value === 'none';
   $('editor-title').textContent = template ? (combatant ? 'Редактировать заготовку' : 'Новая заготовка')
     : (combatant ? 'Редактировать участника' : 'Добавить участника');
-  $('editor-submit').textContent = template || combatant ? 'Сохранить' : 'Добавить в трекер';
+  if (imported) $('editor-title').textContent = template ? 'Импорт в заготовки' : 'Импорт в трекер';
+  $('import-portrait-hint').hidden = !imported;
+  $('import-portrait-hint').textContent = imported
+    ? `Проверь портрет. Можно оставить картинку из JSON, выбрать файл или вставить изображение из буфера.${imported.initiativeNeedsReview ? ' Проверь бонус инициативы из листа.' : ''}`
+    : '';
+  $('editor-submit').textContent = template || editingCombatant ? 'Сохранить' : 'Добавить в трекер';
   $('save-template-copy').hidden = !editingCombatant;
-  $('current-hp-field').hidden = !editingCombatant;
-  form.elements.hp.disabled = !editingCombatant;
-  form.elements.hp.required = !!editingCombatant;
+  const showHp = !!editingCombatant || !!imported && !template;
+  $('current-hp-field').hidden = !showHp;
+  form.elements.hp.disabled = !showHp;
+  form.elements.hp.required = showHp;
   if (combatant) {
-    for (const field of ['name', 'maxHp']) form.elements[field].value = combatant[field];
-    if (editingCombatant) form.elements.hp.value = combatant.hp;
+    form.elements.name.value = combatant.name;
+    form.elements.maxHp.value = Math.max(1, Math.min(999999, Math.round(combatant.maxHp)));
+    if (showHp) form.elements.hp.value = Math.max(0, Math.min(Number(form.elements.maxHp.value), Math.round(combatant.hp)));
   }
   openDialog('editor');
 }
@@ -949,13 +1027,17 @@ async function saveCombatant(copyTemplate) {
   const payload = {
     name: f.get('name'), maxHp: Number(f.get('maxHp')),
     initiativeBonus: Number(form.elements.initiativeBonus.value),
-    role: f.get('role'), image: portraitDraft.assets[0] ?? null
+    role: f.get('role'), image: portraitDraft.assets[0] ?? null, movementSound: f.get('movementSound')
   };
   const template = editingTemplate !== null || copyTemplate;
   if (template && editingTemplate) payload.id = editingTemplate;
   if (!template && editingCombatant) Object.assign(payload, { id: editingCombatant, hp: Number(f.get('hp')) });
+  if (!template && importedCharacter) payload.hp = Number(f.get('hp'));
   const r = await dispatch(template ? 'library:save' : editingCombatant ? 'combatant:edit' : 'combatant:add', payload, editingContext);
-  if (r?.ok) closeDialog($('editor'));
+  if (r?.ok) {
+    closeDialog($('editor'));
+    if (template && importedCharacter) $('open-library').click();
+  }
   if (r?.ok && copyTemplate) toast('Персонаж сохранён в заготовках');
 }
 $('combat-list').addEventListener('submit', async e => {
@@ -1177,6 +1259,58 @@ function placementCell(event) {
   const col = Math.max(0, Math.min(2000, Math.floor((point.x / zoom - map.offsetX) / map.grid)));
   const row = Math.max(0, Math.min(2000, Math.floor((point.y / zoom - map.offsetY) / map.grid)));
   return { col, row };
+}
+async function pickEventCells(initial, done) {
+  setPlacement(null);
+  mapScene.hideEditor();
+  if (expanded && expanded !== 'map') await expandPanel(expanded);
+  const bar = $('event-cell-picker'), counter = $('event-cell-count'), picked = [...initial];
+  const marks = document.createElement('div');
+  marks.className = 'event-cell-marks';
+  marks.setAttribute('aria-hidden', 'true');
+  $('map-world').append(marks);
+  const controller = new AbortController();
+  const options = { capture: true, signal: controller.signal };
+  const update = () => {
+    counter.textContent = picked.length ? 'Выбрано клеток: ' + picked.length : 'Выбери до 12 клеток на карте';
+    marks.replaceChildren(...picked.map(({ col, row }) => {
+      const mark = document.createElement('i');
+      mark.style.setProperty('--col', col);
+      mark.style.setProperty('--row', row);
+      return mark;
+    }));
+  };
+  const finish = save => {
+    controller.abort();
+    marks.remove();
+    bar.hidden = true;
+    viewport.classList.remove('event-cell-picking');
+    cancelEventCells = null;
+    done(save ? picked : null);
+  };
+  function choose(event) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const cell = placementCell(event);
+    if (!cell) return;
+    const index = picked.findIndex(other => other.col === cell.col && other.row === cell.row);
+    if (index >= 0) picked.splice(index, 1);
+    else if (picked.length < 12) picked.push(cell);
+    update();
+  }
+  bar.hidden = false;
+  viewport.classList.add('event-cell-picking');
+  cancelEventCells = () => finish(false);
+  viewport.addEventListener('pointerdown', choose, options);
+  viewport.addEventListener('click', event => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }, options);
+  $('event-cell-done').addEventListener('click', () => finish(true), options);
+  $('event-cell-cancel').addEventListener('click', cancelEventCells, options);
+  viewport.focus({ preventScroll: true });
+  update();
 }
 async function putItem(item, cell, map, context) {
   const a = MapGeometry.cellCenter(map, cell.col, cell.row);
@@ -1509,6 +1643,7 @@ function runShortcut(command) {
   }
 }
 document.addEventListener('keydown', e => {
+  if (soundTools?.shortcut(e)) return;
   const modal = document.querySelector('dialog[open]');
   const command = !isPlayerMap && DmShortcuts.matchShortcut(e, shortcutBindings);
   if (command && !modal) {
@@ -1543,6 +1678,7 @@ document.addEventListener('keydown', e => {
     if (e.code === 'KeyF') { e.preventDefault(); mapScene.toggleFog(); return; }
   }
   if (e.key === 'Escape' && !modal) {
+    if (cancelEventCells) { e.preventDefault(); cancelEventCells(); return; }
     if (cancelTokenDrag) { e.preventDefault(); cancelTokenDrag(); return; }
     if (placement) { e.preventDefault(); setPlacement(null); return; }
     if (mapScene.hideEditor()) { e.preventDefault(); return; }
@@ -1551,6 +1687,7 @@ document.addEventListener('keydown', e => {
   }
   if (e.key === 'F11') { e.preventDefault(); result(api.fullscreen()); }
   if (!isPlayerMap && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) && !document.querySelector('dialog[open]')) {
+    if (e.target.closest('.combat')) return;
     e.preventDefault();
     if (charactersTab === 'notes' && document.activeElement?.closest('#story')) return storyBoard.pasteNewNote();
     if (charactersTab === 'gallery' && (!expanded || expanded === 'characters') && !document.activeElement?.closest('[data-panel="map"]')) {
@@ -1601,6 +1738,8 @@ $('map-tokens').addEventListener('pointerdown', e => {
   const listeners = new AbortController();
   const options = { signal: listeners.signal };
   const waypoints = [];
+  const movementSound = SoundLibrary.moveSound(state.mapCombatants.find(actor => actor.id === id)?.movementSound);
+  let lastStep = -Infinity;
   let position = original, cursor = original, moved = false, blocked = false, previewFrame = 0;
   const mirrors = () => detached.some(panel => panel === 'map' || panel === 'preview');
   const sameCell = (a, b) => a.col === b.col && a.row === b.row;
@@ -1627,7 +1766,12 @@ $('map-tokens').addEventListener('pointerdown', e => {
       row: Math.max(0, Math.min(2000, Math.floor((point.y / z - m.offsetY) / m.grid))) };
     if (sameCell(target, cursor)) return;
     cursor = target;
+    const previous = position;
     refresh();
+    if (event.ctrlKey && !sameCell(previous, position) && event.timeStamp - lastStep >= 140 && movementSound !== 'none') {
+      lastStep = event.timeStamp;
+      retro?.play(movementSound, 'movement');
+    }
   };
   rulerShortcut = undo => {
     if (undo && waypoints.length) {
@@ -1675,6 +1819,19 @@ $('play-pause').onclick = () => {
 };
 $('stop-music').onclick = () => dispatch('music:stop');
 $('loop-music').onclick = () => dispatch('music:settings', { loop: !state.music.loop });
+$('music-seek').oninput = event => {
+  seekingTrack = true;
+  $('music-time').textContent = trackClock(Number(event.target.value));
+};
+$('music-seek').onchange = event => {
+  const request = { campaignId, trackId: state.music.current, time: Number(event.target.value) };
+  seekingTrack = false;
+  if (detachedPanel) result(api.seekMusic(request));
+  else seekTrack(request);
+};
+for (const event of ['loadedmetadata', 'durationchange', 'timeupdate', 'emptied', 'seeked']) {
+  if (!detachedPanel) $('audio').addEventListener(event, reportMusicPosition);
+}
 $('volume').oninput = e => { if (!detachedPanel) $('audio').volume = Number(e.target.value) / 100; };
 $('volume').onchange = e => dispatch('music:settings', { volume: Number(e.target.value) / 100 });
 $('audio').onended = () => { if (!state.music.loop) dispatch('music:settings', { playing: false }); };
@@ -1745,6 +1902,11 @@ api.onStatus(status => {
   }
   else if (status.scope === 'music') updateMusicStatus(status);
   else if (status.scope === 'shortcuts') updateShortcuts(status.bindings);
+  else if (status.scope === 'sound-preferences') soundTools?.apply(status.preferences);
+  else if (status.scope === 'retro-sound') soundTools?.status(status);
+  else if (status.scope === 'sound-pad-state') soundTools?.setActive(status.ids);
+  else if (status.scope === 'music-position') { musicPosition = status; renderMusicPosition(); }
+  else if (status.scope === 'music-seek' && !detachedPanel) seekTrack(status);
   else if (status.scope === 'shortcut') runShortcut(status.command);
   else if (status.scope === 'workspace-command') {
     if (status.command === 'note') openStoryNote(status.id);
@@ -1881,7 +2043,9 @@ function applyWindowPatch(patch) {
   const updated = (...keys) => campaignChanged || keys.some(key => Object.hasOwn(patch.state, key));
   const metadata = (...keys) => campaignChanged || keys.some(key => Object.hasOwn(patch, key));
   readWindowState({ ...windowSnapshot, ...patch, state: next });
+  if (cancelEventCells && (campaignChanged || before.activeMapId !== next.activeMapId || before.activeBattleId !== next.activeBattleId)) cancelEventCells();
   const layoutChanged = updated('layout') || metadata('detached');
+  if (!detachedPanel && metadata('detached') && detached.includes('music')) reportMusicPosition();
   const mapChanged = updated('activeMapId', 'map', 'tokens', 'terrain', 'drawings', 'fog', 'visionOrigins', 'mapCombatants', 'turn', 'notePins') ||
     metadata('detached', 'canUndoMap', 'playerFrame') || (!isPlayerMap && next.story.notes !== before.story.notes && next.notePins.length);
   if (isPlayerMap) {
@@ -1921,6 +2085,9 @@ api.onState(value => initialized ? applyWindowPatch(value) : pendingState.push(v
   conditionDefinitions = initial.conditionDefinitions;
   reference = initial.reference;
   updateShortcuts(initial.shortcuts);
+  soundTools?.apply(initial.soundPreferences);
+  soundTools?.setActive(initial.activePads);
+  musicPosition = initial.musicPosition;
   $('combatant-role').replaceChildren(...Object.entries(combatRoles).map(([id, label]) => new Option(label, id)));
   $('combat-role-filter').append(...Object.entries(combatRoles).map(([id, label]) => new Option(label, id)));
   const referenceIcons = { classes: 'people', races: 'people', spells: 'spark', monsters: 'swords', armor: 'shield',

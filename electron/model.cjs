@@ -1,6 +1,7 @@
 const { randomUUID, randomInt } = require('node:crypto');
 const { roleOf, effectsFor, MANUAL_IDS, revealsFog } = require('./combat-rules.cjs');
 const { blockingWalls, validCell, routeBlocked, distanceToSegment, visibleCells } = require('../ui/map-geometry.js');
+const { moveSound } = require('../ui/sound-library.js');
 const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
 const finite = (n, fallback) => Number.isFinite(Number(n)) ? Number(n) : fallback;
 const text = (v, max = 120) => String(v ?? '').trim().slice(0, max);
@@ -163,7 +164,7 @@ function advanceConditions(actor) {
 function characterFields(p) {
   return { name: text(p.name) || 'Безымянный', image: text(p.image, 100) || null,
     maxHp: clamp(Math.round(finite(p.maxHp, 10)), 1, 999999), role: roleOf(p.role),
-    initiativeBonus: initiativeBonus(p.initiativeBonus) };
+    initiativeBonus: initiativeBonus(p.initiativeBonus), movementSound: moveSound(p.movementSound) };
 }
 function newCombatant(fields, hp = fields.maxHp) {
   return { ...fields, id: randomUUID(), hp, initiative: null, conditions: [], exhaustion: 0 };
@@ -183,6 +184,22 @@ function placeToken(board, id, { col, row }) {
     row = Math.floor(index / 8);
   }
   board.tokens.push({ combatantId: id, col, row });
+}
+function eventActions(payload, state) {
+  const templateId = typeof payload.templateId === 'string' && payload.templateId || null;
+  const doorId = typeof payload.doorId === 'string' && payload.doorId || null;
+  const trackId = typeof payload.trackId === 'string' && payload.trackId || null;
+  const map = state.boards.find(board => board.id === payload.mapId);
+  const cells = Array.isArray(payload.cells) ? payload.cells : [];
+  if (templateId && (!state.library.some(item => item.id === templateId) || !cells.length || cells.length > 12 ||
+      cells.some(cell => !validCell(cell)) || new Set(cells.map(cell => `${cell.col},${cell.row}`)).size !== cells.length)) {
+    throw new Error('Выбери заготовку и от 1 до 12 разных клеток с координатами от 0 до 2000');
+  }
+  if ((templateId || doorId) && !map) throw new Error('Выбери карту для действий');
+  if (doorId && !map.terrain.some(item => item.id === doorId && item.kind === 'door')) throw new Error('Дверь не найдена на этой карте');
+  if (trackId && !state.music.tracks.some(track => track.id === trackId)) throw new Error('Трек не найден');
+  if (!templateId && !doorId && !trackId) return null;
+  return { mapId: templateId || doorId ? map.id : null, templateId, cells: templateId ? cells.map(({ col, row }) => ({ col, row })) : [], doorId, trackId };
 }
 function canMoveToken(board, token, col, row, waypoints = []) {
   return Array.isArray(waypoints) && waypoints.length <= 32 && waypoints.every(validCell) &&
@@ -213,7 +230,7 @@ function copyForAction(state, type, p) {
   if (/^(combat:|combatant:)/.test(type) && type !== 'combatant:remove') {
     s.battles = replaceActive(state.battles, state.activeBattleId, battle => {
       const copy = { ...battle };
-      if (['combatant:add', 'combatant:import', 'combatant:duplicate'].includes(type)) copy.combatants = [...battle.combatants];
+      if (['combatant:add', 'combatant:import', 'combatant:duplicate', 'combat:event-run'].includes(type)) copy.combatants = [...battle.combatants];
       if (['combatant:edit', 'combatant:hp', 'combatant:conditions', 'combat:initiative',
         'combatant:undo', 'combat:roll-initiative', 'combat:reset-initiative'].includes(type)) {
         const id = type === 'combatant:undo' ? battle.history.at(-1)?.id : p.id;
@@ -293,7 +310,7 @@ function reducer(state, action) {
       const next = newBattle(text(p.title) || (battle.title + ' · копия'));
       next.linkedMapId = battle.linkedMapId;
       next.combatants = battle.combatants.map(c => copyCombatant(c));
-      next.events = battle.events.map(event => ({ ...event, id: randomUUID(), fired: false }));
+      next.events = battle.events.map(event => ({ ...event, id: randomUUID(), fired: false, executed: false }));
       s.battles.push(next);
       s.activeBattleId = next.id;
       if (next.linkedMapId) s.activeMapId = next.linkedMapId;
@@ -374,7 +391,8 @@ function reducer(state, action) {
       s.scenes = s.scenes.filter(entry => entry.id !== p.id);
       break;
     case 'combatant:add': {
-      battle.combatants.push(newCombatant(characterFields(p)));
+      const fields = characterFields(p);
+      battle.combatants.push(newCombatant(fields, clamp(Math.round(finite(p.hp, fields.maxHp)), 0, fields.maxHp)));
       break;
     }
     case 'combatant:import': {
@@ -416,6 +434,7 @@ function reducer(state, action) {
       Object.assign(c, {
         name: text(p.name) || c.name,
         image: 'image' in p ? text(p.image, 100) || null : c.image,
+        movementSound: moveSound(p.movementSound, moveSound(c.movementSound)),
         initiativeBonus: bonus, role: 'role' in p ? roleOf(p.role) : roleOf(c.role),
         hp, maxHp
       });
@@ -495,7 +514,9 @@ function reducer(state, action) {
       battle.round = 1;
       battle.turn = null;
       battle.acted = [];
-      if (battle.events.some(event => event.fired)) battle.events = battle.events.map(event => ({ ...event, fired: false }));
+      if (battle.events.some(event => event.fired || event.executed)) {
+        battle.events = battle.events.map(event => ({ ...event, fired: false, executed: false }));
+      }
       break;
     case 'combat:event-save': {
       const label = text(p.title, 240), round = Number(p.round);
@@ -503,13 +524,45 @@ function reducer(state, action) {
       const existing = p.id && battle.events.find(item => item.id === p.id);
       if (p.id && !existing) throw new Error('Событие уже удалено');
       if (!existing && battle.events.length >= 100) throw new Error('В одном бою помещается до 100 событий');
-      const item = { id: existing?.id ?? randomUUID(), title: label, round, fired: Boolean(existing?.fired && existing.round === round) };
+      const actions = eventActions(p.actions || {}, s);
+      const keepsRound = existing?.round === round;
+      const item = { id: existing?.id ?? randomUUID(), title: label, round, actions,
+        fired: Boolean(keepsRound && existing.fired), executed: Boolean(keepsRound && existing.executed) };
       battle.events = existing ? replaceActive(battle.events, item.id, () => item) : [...battle.events, item];
       break;
     }
     case 'combat:event-remove':
       battle.events = battle.events.filter(event => event.id !== p.id);
       break;
+    case 'combat:event-delay': {
+      const event = battle.events.find(item => item.id === p.id);
+      if (!event || !event.fired || event.executed || !event.actions || battle.round >= 9999) throw new Error('Событие нельзя отложить');
+      battle.events = replaceActive(battle.events, event.id, item => ({ ...item, round: battle.round + 1, fired: false }));
+      break;
+    }
+    case 'combat:event-run': {
+      const event = battle.events.find(item => item.id === p.id);
+      if (!event?.actions || !event.fired || event.executed) throw new Error('Событие ещё не готово или уже запущено');
+      const actions = eventActions(event.actions, s);
+      if (!actions) throw new Error('У события нет действий');
+      if (actions.mapId && actions.mapId !== board.id) throw new Error('Открой карту, выбранную для этого события');
+      if (actions.mapId) {
+        const target = { ...board, tokens: [...board.tokens] };
+        if (actions.templateId) {
+          const entry = s.library.find(item => item.id === actions.templateId);
+          for (const cell of actions.cells) {
+            const actor = newCombatant(entry);
+            placeToken(target, actor.id, cell);
+            battle.combatants.push(actor);
+          }
+        }
+        if (actions.doorId) target.terrain = replaceActive(board.terrain, actions.doorId, item => ({ ...item, open: true }));
+        s.boards = replaceActive(s.boards, target.id, () => target);
+      }
+      if (actions.trackId) s.music = { ...s.music, current: actions.trackId, playing: true };
+      battle.events = replaceActive(battle.events, event.id, item => ({ ...item, executed: true }));
+      break;
+    }
     case 'combat:next': {
       const order = battleOrder(battle).map(c => c.id);
       if (!order.length) break;
@@ -777,7 +830,7 @@ function reducer(state, action) {
     }
   }
   if (visionChanged || gridChanged ||
-      /^(token:|terrain:(add|door|remove)$|fog:|map:(image|select)$|battle:select$|scene:open$|library:deploy$)/.test(action.type)) {
+      /^(token:|terrain:(add|door|remove)$|fog:|map:(image|select)$|battle:select$|scene:open$|library:deploy$|combat:event-run$)/.test(action.type)) {
     s.boards = replaceActive(s.boards, s.activeMapId, current => {
       if (!current.fog.enabled) return current;
       const updated = { ...current, fog: { ...current.fog } };
