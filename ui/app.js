@@ -1660,17 +1660,20 @@ viewport.addEventListener('pointerdown', e => {
     placeAt(e, placement);
     return;
   }
-  if (mapScene.pointerDown(e, currentContext()) || e.target.closest('[data-token]') || e.target === viewport) return;
-  pickToken(null);
-  viewport.focus({ preventScroll: true });
+  if (mapScene.pointerDown(e, currentContext())) return;
   if (e.shiftKey && !detachedPanel) {
     const point = mapPointAt(e.clientX, e.clientY);
+    if (point.x < 0 || point.y < 0 || point.x >= boardLayout.width || point.y >= boardLayout.height) return;
+    e.preventDefault();
     const zoom = mapDrawingZoom();
     const ping = { x: point.x / zoom, y: point.y / zoom };
     showMapPing(ping);
     mirrorMap({ ping });
     return;
   }
+  if (e.target.closest('[data-token]') || e.target === viewport) return;
+  pickToken(null);
+  viewport.focus({ preventScroll: true });
   const { scrollLeft, scrollTop } = viewport;
   const startX = e.clientX, startY = e.clientY;
   viewport.classList.add('panning');
@@ -1897,7 +1900,7 @@ function drawMovementRuler(map, cells, blocked) {
   label.style.top = Math.max(0, Math.min(end.y - 32, viewport.clientHeight - label.offsetHeight - 2)) + 'px';
 }
 $('map-tokens').addEventListener('pointerdown', e => {
-  const token = e.target.closest('[data-token]'); if (!token || isPlayerMap || placement || mapTools?.active() || mapScene.isEditing() || e.button !== 0 || !boardProjection) return;
+  const token = e.target.closest('[data-token]'); if (!token || isPlayerMap || placement || mapTools?.active() || mapScene.isEditing() || e.shiftKey || e.button !== 0 || !boardProjection) return;
   const id = token.dataset.token, m = { ...state.map }, z = mapDrawingZoom();
   const original = state.tokens.find(t => t.combatantId === id);
   if (!original) return;

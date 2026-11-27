@@ -86,8 +86,19 @@ let application;
   await expect.poll(async () => (await page.evaluate(() => window.dm.init())).state.tokens[0].col).toBeGreaterThan(0);
   const live = await page.evaluate(() => window.dm.init());
   assert.ok(live.state.tokens[0].col > 0 && live.state.tokens[0].row > 0);
-  await page.locator('#map-world').click({ position: { x: 220, y: 80 }, modifiers: ['Shift'] });
-  await expect(mapPage.locator('.map-ping')).toHaveCount(1);
+  await mapPage.evaluate(() => {
+    window.sawPing = false;
+    const world = document.querySelector('#map-world');
+    const observer = new MutationObserver(records => {
+      if (records.some(record => [...record.addedNodes].some(node => node.classList?.contains('map-ping')))) {
+        window.sawPing = true;
+        observer.disconnect();
+      }
+    });
+    observer.observe(world, { childList: true });
+  });
+  await token.click({ modifiers: ['Shift'] });
+  await expect.poll(() => mapPage.evaluate(() => window.sawPing)).toBe(true);
   await page.click('#zoom-in');
   await expect.poll(() => mapPage.locator('#map-world').evaluate(el => el.style.getPropertyValue('--grid-size'))).toBe('80px');
   const centerX = await page.locator('#map-viewport').evaluate(el => {
