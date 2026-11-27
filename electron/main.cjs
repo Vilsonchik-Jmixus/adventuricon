@@ -10,6 +10,7 @@ const { publicDndUrl, readPublicResponse } = require('./dnd-import.cjs');
 const { ROLES, CONDITIONS, playerMapActors, effectsFor } = require('./combat-rules.cjs');
 const { DND_HOME, WEB_HOME, GEMINI, REFERENCE_LINKS, safeUrl, searchUrl } = require('./reference.cjs');
 const { autoUpdater } = require('electron-updater');
+const { ReleaseUpdater, releases } = require('./release-updater.cjs');
 const { ScreenThemes, themeIcon } = require('../ui/themes.js');
 const { createCampaignStore, writeJSON, encodeCampaign, assetPattern } = require('./campaigns.cjs');
 const { rememberMapAction, rememberTravel, undoMapAction } = require('./map-history.cjs');
@@ -21,7 +22,6 @@ const TEST = process.env.DM_SCREEN_TEST === '1';
 const mac = process.platform === 'darwin';
 const appImage = process.platform === 'linux' && !!process.env.APPIMAGE;
 const canAutoUpdate = process.platform === 'win32' || appImage;
-const releasesUrl = 'https://github.com/Vilsonchik-Jmixus/adventuricon/releases/latest';
 app.setName('Адвентурикон');
 if (appImage) app.commandLine.appendSwitch('disable-setuid-sandbox');
 app.setPath('userData', process.env.DM_SCREEN_DATA || path.join(app.getPath('appData'), 'interactive-dm-screen'));
@@ -982,13 +982,17 @@ function setupIPC() {
   handle('update', async (_, action) => {
     if (!app.isPackaged || TEST) return { ok: false, error: 'Обновления доступны в установленной версии. Сборки — на GitHub Releases.' };
     if (!canAutoUpdate) {
-      if (action === 'check') await shell.openExternal(releasesUrl);
+      if (action === 'check') await shell.openExternal(releases);
       return { ok: true };
     }
-    if (action === 'check') await autoUpdater.checkForUpdates();
-    else if (action === 'download' && updateStatus.phase === 'available') await autoUpdater.downloadUpdate();
-    else if (action === 'install' && updateStatus.phase === 'downloaded') { autoUpdater.quitAndInstall(false, true); }
-    return { ok: true };
+    try {
+      if (action === 'check') await autoUpdater.checkForUpdates();
+      else if (action === 'download' && updateStatus.phase === 'available') await autoUpdater.downloadUpdate();
+      else if (action === 'install' && updateStatus.phase === 'downloaded') autoUpdater.quitAndInstall(false, true);
+      return { ok: true };
+    } catch {
+      return { ok: false };
+    }
   });
 }
 function reportMusic(phase, text, percent = null) {
@@ -1032,6 +1036,7 @@ async function downloadMusic({ url, folder }) {
 }
 function setupUpdater() {
   if (!canAutoUpdate) return;
+  autoUpdater.setFeedURL({ provider: 'custom', updateProvider: ReleaseUpdater });
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
   const status = (phase, text, extra = {}) => { updateStatus = { scope: 'update', phase, text, ...extra }; sendAll('status', updateStatus); };
@@ -1040,7 +1045,12 @@ function setupUpdater() {
   autoUpdater.on('update-not-available', () => status('latest', 'Установлена последняя версия'));
   autoUpdater.on('download-progress', p => status('downloading', `Обновление: ${Math.round(p.percent)}%`));
   autoUpdater.on('update-downloaded', () => status('downloaded', 'Обновление готово. Перезапустить?'));
-  autoUpdater.on('error', e => status('error', 'Не удалось проверить обновления. Попробуйте позже.', { detail: e.message.slice(0, 200) }));
+  autoUpdater.on('error', error => {
+    console.warn('Ошибка обновления:', error);
+    status('error', updateStatus.phase === 'checking'
+      ? 'Не удалось проверить обновления. Попробуйте позже.'
+      : 'Не удалось скачать или установить обновление. Попробуйте позже.');
+  });
   if (app.isPackaged && !TEST) {
     setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 10000).unref();
     setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 4 * 60 * 60 * 1000).unref();
