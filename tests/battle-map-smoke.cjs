@@ -1,6 +1,7 @@
 const { _electron, expect } = require('playwright/test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { version } = require('../package.json');
 
 (async () => {
   const env = { ...process.env, DM_SCREEN_TEST: '1', DM_SCREEN_DATA: path.resolve('test-results', 'battle-map-' + Date.now()) };
@@ -9,7 +10,7 @@ const path = require('node:path');
   const app = await _electron.launch({ executablePath: executablePath || require('electron'), args: executablePath ? [] : [path.resolve('.')], env });
   try {
     const master = await app.firstWindow();
-    await expect(master.locator('#version')).toHaveText('v5.0.0');
+    await expect(master.locator('#version')).toHaveText(`v${version}`);
     const dispatch = (type, payload) => master.evaluate(async ({ type, payload }) => {
       const response = await dm.dispatch(type, payload);
       if (!response.ok) throw new Error(response.error);
@@ -23,16 +24,18 @@ const path = require('node:path');
     await master.fill('#combatant-form [name="name"]', 'Каменный страж');
     await master.selectOption('#combatant-form [name="tokenSize"]', '3');
     await master.click('#token-frame-picker summary');
-    await expect(master.locator('#token-frame-options button')).toHaveCount(20);
-    await master.click('[data-frame="ruby"]');
+    await expect(master.locator('#token-frame-options button')).toHaveCount(40);
+    await expect(master.locator('[data-frame="ruby"]')).toBeVisible();
+    await master.click('[data-frame="phoenix"]');
     await master.click('#editor-submit');
     const guard = (await inspect(master)).combatants[0];
-    assert.equal(guard.tokenFrame, 'ruby');
+    assert.equal(guard.tokenFrame, 'phoenix');
     assert.equal(guard.tokenSize, 3);
     await dispatch('token:add', { id: guard.id, col: 3, row: 2 });
     await master.click('#fit-map');
     const token = master.locator('#map-tokens [data-token]');
     await expect(token).toHaveAttribute('data-size', '3');
+    await expect(token.locator('.pixel-token-frame')).toHaveAttribute('data-shape', 'wings');
     const size = await token.evaluate(node => ({
       token: node.offsetWidth,
       grid: parseFloat(getComputedStyle(node).getPropertyValue('--grid-size')),
@@ -42,6 +45,7 @@ const path = require('node:path');
     await master.click('[data-detach="map"]');
     const player = await opened;
     await expect(player.locator('#map-tokens [data-token]')).toHaveCount(1);
+    await expect(player.locator('#map-tokens .pixel-token-frame')).toHaveAttribute('data-shape', 'wings');
     await token.click({ button: 'right' });
     await master.click('#token-toggle-visibility');
     await expect(token.locator('.token-secret')).toBeVisible();
@@ -67,20 +71,41 @@ const path = require('node:path');
       await expect(master.locator('#map-measure-label')).toHaveText('15 фут.' + suffix);
       await master.keyboard.press('Escape');
     }
-    await master.click('[data-map-tool="grid"]');
     const original = (await inspect(master)).map;
-    await master.mouse.move(x, y);
+    const gridDialog = master.locator('#grid-dialog');
+    const gridHint = master.locator('#map-tool-hint');
+    await expect(master.locator('#map-quick-tools')).not.toContainText('Сетка мышью');
+    await master.click('#map-settings');
+    await gridDialog.locator('[name="grid"]').fill('104');
+    await gridDialog.getByRole('button', { name: 'Сетка мышью' }).click();
+    await expect(gridDialog).toBeHidden();
+    await expect(gridHint).toContainText('104 px');
+    await master.keyboard.press('Escape');
+    await expect(gridHint).toBeHidden();
+    assert.deepEqual((await inspect(master)).map, original);
+
+    await master.click('#map-settings');
+    await gridDialog.locator('[name="grid"]').fill('104');
+    await gridDialog.locator('[name="offsetX"]').fill('35');
+    await gridDialog.locator('[name="diagonals"]').selectOption('alternating');
+    await gridDialog.getByRole('button', { name: 'Сетка мышью' }).click();
+    await expect(gridHint).toContainText('104 px · X 35');
+    const gridBounds = await viewport.boundingBox();
+    const gx = gridBounds.x + gridBounds.width / 2, gy = gridBounds.y + gridBounds.height / 2;
+    await master.mouse.move(gx, gy);
     await master.mouse.down();
-    await master.mouse.move(x + 26, y + 12);
+    await master.mouse.move(gx + 26, gy + 12);
     await master.mouse.up();
     await master.mouse.wheel(0, -120);
-    const beforeNudge = await master.locator('#map-tool-hint').textContent();
+    await expect(gridHint).toContainText('105 px');
+    const beforeNudge = await gridHint.textContent();
     await viewport.dispatchEvent('wheel', { deltaY: -120, altKey: true });
-    await expect(master.locator('#map-tool-hint')).not.toHaveText(beforeNudge);
+    await expect(gridHint).not.toHaveText(beforeNudge);
     await master.click('#map-tool-apply');
     const updated = (await inspect(master)).map;
-    assert.equal(updated.grid, original.grid + 1);
-    assert.notEqual(updated.offsetX, original.offsetX);
+    assert.equal(updated.grid, 105);
+    assert.notEqual(updated.offsetX, 35);
+    assert.equal(updated.diagonals, 'alternating');
     const saved = (await inspect(master)).tokens[0];
     assert.deepEqual([saved.col, saved.row], [3, 2]);
 
@@ -95,6 +120,6 @@ const path = require('node:path');
     const closed = app.waitForEvent('close');
     await master.click('#quit-adventuricon');
     await closed;
-    console.log('PASS: 20 frames, 3×3, private tokens, area resizing, grid alignment, free text and quit.');
+    console.log('PASS: 40 frames in the picker, new frame on both maps, 3×3, private tokens, area resizing, grid settings and mouse adjustment, free text and quit.');
   } finally { await app.close().catch(() => {}); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

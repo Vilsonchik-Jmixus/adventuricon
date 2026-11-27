@@ -85,6 +85,12 @@
 .pixel-token-frame[data-shape="diamond"] { --outline: polygon(50% 0,100% 50%,50% 100%,0 50%); mask: radial-gradient(circle closest-side, transparent 63%, #000 65%); }
 .pixel-token-frame[data-shape="shield"] { --outline: polygon(10% 4%,90% 4%,100% 22%,85% 77%,50% 100%,15% 77%,0 22%); }
 .pixel-token-frame[data-shape="star"] { --outline: polygon(50% 0,66% 12%,86% 5%,92% 28%,100% 50%,92% 72%,86% 95%,66% 88%,50% 100%,34% 88%,14% 95%,8% 72%,0 50%,8% 28%,14% 5%,34% 12%); }
+.pixel-token-frame[data-shape="laurel"] { --outline: polygon(23% 12%,36% 12%,36% 4%,64% 4%,64% 12%,77% 12%,77% 20%,92% 14%,92% 33%,100% 29%,100% 60%,92% 60%,92% 78%,80% 78%,80% 90%,66% 90%,66% 100%,34% 100%,34% 90%,20% 90%,20% 78%,8% 78%,8% 60%,0 60%,0 29%,8% 33%,8% 14%,23% 20%); }
+.pixel-token-frame[data-shape="flame"] { --outline: polygon(46% 0,60% 0,60% 16%,69% 16%,69% 30%,78% 30%,78% 19%,91% 19%,91% 38%,100% 38%,100% 74%,90% 74%,90% 88%,77% 88%,77% 100%,23% 100%,23% 88%,10% 88%,10% 74%,0 74%,0 47%,12% 47%,12% 32%,25% 32%,25% 22%,36% 22%,36% 11%,46% 11%); }
+.pixel-token-frame[data-shape="crown"] { --outline: polygon(0 8%,13% 8%,13% 22%,31% 22%,31% 11%,42% 11%,42% 0,58% 0,58% 11%,69% 11%,69% 22%,87% 22%,87% 8%,100% 8%,94% 71%,80% 71%,80% 88%,66% 88%,66% 99%,34% 99%,34% 88%,20% 88%,20% 71%,6% 71%); }
+.pixel-token-frame[data-shape="wings"] { --outline: polygon(0 8%,14% 8%,14% 16%,28% 16%,28% 24%,36% 24%,36% 10%,64% 10%,64% 24%,72% 24%,72% 16%,86% 16%,86% 8%,100% 8%,100% 38%,92% 38%,92% 54%,84% 54%,84% 72%,73% 72%,73% 84%,61% 84%,61% 100%,39% 100%,39% 84%,27% 84%,27% 72%,16% 72%,16% 54%,8% 54%,8% 38%,0 38%); }
+.pixel-token-frame[data-shape="gear"] { --outline: polygon(39% 0,61% 0,61% 10%,75% 10%,75% 18%,88% 18%,88% 31%,100% 31%,100% 58%,90% 58%,90% 75%,82% 75%,82% 88%,68% 88%,68% 100%,41% 100%,41% 90%,25% 90%,25% 82%,12% 82%,12% 68%,0 68%,0 41%,10% 41%,10% 25%,18% 25%,18% 12%,39% 12%); }
+.pixel-token-frame[data-shape="petals"] { --outline: polygon(38% 0,62% 0,62% 12%,85% 12%,85% 29%,100% 29%,100% 58%,90% 58%,90% 82%,72% 82%,72% 94%,59% 94%,59% 100%,41% 100%,41% 94%,28% 94%,28% 82%,10% 82%,10% 58%,0 58%,0 29%,15% 29%,15% 12%,38% 12%); }
 .pixel-token-frame::after {
   content: '';
   position: absolute;
@@ -96,6 +102,27 @@
 }
 .pixel-token-frame[data-decoration="gems"]::after { transform: rotate(45deg); }
 .pixel-token-frame[data-decoration="runes"]::after { transform: rotate(22.5deg); }
+.pixel-token-frame[data-decoration="inlay"]::after {
+  inset: 7%;
+  background: conic-gradient(from 45deg, var(--frame-light) 0 6%, transparent 6% 20%, var(--frame-light) 20% 30%, transparent 30% 45%, var(--frame-light) 45% 55%, transparent 55% 70%, var(--frame-light) 70% 80%, transparent 80% 94%, var(--frame-light) 94%);
+  mask: radial-gradient(circle closest-side, transparent 92%, #000 94%);
+}
+.pixel-token-frame[data-decoration="sparks"]::after {
+  background: linear-gradient(#fff8db 0 0) 50% 9% / 8% 9% no-repeat,
+    linear-gradient(var(--frame-light) 0 0) 21% 20% / 8% 8% no-repeat,
+    linear-gradient(var(--frame-light) 0 0) 79% 20% / 8% 8% no-repeat,
+    linear-gradient(var(--frame-light) 0 0) 50% 90% / 9% 10% no-repeat;
+}
+.pixel-token-frame[data-decoration="pearls"]::after {
+  background: radial-gradient(circle closest-side, #fff8db 45%, var(--frame-light) 52% 96%, transparent) 50% 2% / 17% 16% no-repeat,
+    radial-gradient(circle closest-side, #fff8db 45%, var(--frame-light) 52% 96%, transparent) 18% 30% / 15% 15% no-repeat,
+    radial-gradient(circle closest-side, #fff8db 45%, var(--frame-light) 52% 96%, transparent) 82% 30% / 15% 15% no-repeat,
+    radial-gradient(circle closest-side, #fff8db 45%, var(--frame-light) 52% 96%, transparent) 50% 98% / 17% 16% no-repeat;
+}
+.pixel-token-frame[data-decoration="stripes"]::after {
+  background: repeating-linear-gradient(135deg, transparent 0 8%, var(--frame-light) 8% 11%, transparent 11% 15%);
+  opacity: .65;
+}
 .token:has(.token-secret) .pixel-token-frame { opacity: .55; }
 #token-frame-picker summary { cursor: pointer; color: var(--text); }
 #token-frame-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(44px, 1fr)); gap: 5px; margin-top: 8px; }

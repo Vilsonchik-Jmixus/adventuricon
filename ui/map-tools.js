@@ -1,8 +1,7 @@
 function createMapTools({ viewport, getState, getLayout, pointAt, dispatch, context }) {
   const bar = document.createElement('div');
   bar.id = 'map-quick-tools';
-  bar.innerHTML = `<button type="button" data-map-tool="grid" data-pixel-icon="grid">Сетка мышью</button>
-    <div class="map-measure-group" role="group" aria-label="Измерение на карте">
+  bar.innerHTML = `<div class="map-measure-group" role="group" aria-label="Измерение на карте">
       <button type="button" data-map-tool="line" title="Измерить расстояние">Линейка</button>
       <button type="button" data-map-tool="circle" title="Радиус круга">Круг</button>
       <button type="button" data-map-tool="square" title="Сторона квадрата">Квадрат</button>
@@ -41,8 +40,9 @@ function createMapTools({ viewport, getState, getLayout, pointAt, dispatch, cont
       world.style.setProperty('--grid-size', grid * zoom + 'px');
       world.style.setProperty('--grid-x', offsetX * zoom + 'px');
       world.style.setProperty('--grid-y', offsetY * zoom + 'px');
-      world.style.setProperty('--grid-opacity', Math.max(.4, getState().map.opacity));
-      hint.value = `Тяни сетку · Колесо меняет клетку · Alt + колесо сдвигает сетку · ${grid} px · X ${offsetX}, Y ${offsetY}`;
+      world.style.setProperty('--grid-color', draft.color);
+      world.style.setProperty('--grid-opacity', Math.max(.4, draft.opacity));
+      hint.value = `Тяни сетку · Колесо меняет клетку · Alt + колесо сдвигает сетку · Esc отменяет · ${grid} px · X ${offsetX}, Y ${offsetY}`;
     }
     if (!measure) return;
     const { grid } = getState().map;
@@ -78,21 +78,19 @@ function createMapTools({ viewport, getState, getLayout, pointAt, dispatch, cont
       world.style.setProperty('--grid-size', map.grid * zoom + 'px');
       world.style.setProperty('--grid-x', map.offsetX * zoom + 'px');
       world.style.setProperty('--grid-y', map.offsetY * zoom + 'px');
+      world.style.setProperty('--grid-color', map.color);
       world.style.setProperty('--grid-opacity', map.visible ? map.opacity : 0);
     }
     render();
     return true;
   }
-  function select(next) {
+  function select(next, gridSettings) {
     const wasActive = mode === next;
     close();
     if (wasActive || !getLayout()) return;
     mode = next;
     selectedContext = context();
-    if (mode === 'grid') {
-      const { grid, offsetX, offsetY } = getState().map;
-      draft = { grid, offsetX, offsetY };
-    }
+    draft = gridSettings;
     controls.hidden = false;
     apply.hidden = !draft;
     hint.value = 'Поставь или протяни область · Колесо меняет размер · Esc закрывает';
@@ -105,9 +103,11 @@ function createMapTools({ viewport, getState, getLayout, pointAt, dispatch, cont
   }
   bar.querySelector('#map-tool-close').onclick = close;
   apply.onclick = async () => {
-    const settings = { ...draft, visible: true };
+    if (!draft) return;
+    const settings = draft;
+    const target = selectedContext;
     close();
-    await dispatch('map:settings', settings, selectedContext);
+    await dispatch('map:settings', settings, target);
   };
   for (const button of bar.querySelectorAll('[data-map-tool]')) button.setAttribute('aria-pressed', 'false');
   function pointerDown(event) {

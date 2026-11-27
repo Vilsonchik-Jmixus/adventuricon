@@ -1263,17 +1263,21 @@ $('import-map').onclick = () => loadMap(api.importFile('image'));
 $('paste-map').onclick = () => loadMap(api.pasteImage());
 $('map-image').onload = () => { if (state) renderMap(); };
 $('map-settings').onclick = () => {
+  mapTools?.close();
   gridContext = currentContext();
   const form = $('grid-form');
   for (const key of ['grid', 'offsetX', 'offsetY', 'opacity', 'color']) form.elements[key].value = state.map[key];
   form.elements.diagonals.value = state.map.diagonals ?? 'equal';
   form.elements.visible.checked = state.map.visible; openDialog('grid-dialog');
 };
+function readGridSettings(form) {
+  const { grid, offsetX, offsetY, opacity, color, visible, diagonals } = form.elements;
+  return { grid: Number(grid.value), offsetX: Number(offsetX.value), offsetY: Number(offsetY.value),
+    opacity: Number(opacity.value), color: color.value, visible: visible.checked, diagonals: diagonals.value };
+}
 $('grid-form').onsubmit = async e => {
-  e.preventDefault(); const f = e.target;
-  const response = await dispatch('map:settings', { grid: Number(f.elements.grid.value), offsetX: Number(f.elements.offsetX.value),
-    offsetY: Number(f.elements.offsetY.value), opacity: Number(f.elements.opacity.value), color: f.elements.color.value,
-    visible: f.elements.visible.checked, diagonals: f.elements.diagonals.value }, gridContext);
+  e.preventDefault();
+  const response = await dispatch('map:settings', readGridSettings(e.target), gridContext);
   if (response?.ok) closeDialog($('grid-dialog'));
 };
 const viewport = $('map-viewport');
@@ -1282,14 +1286,25 @@ const mapTools = !detachedPanel ? createMapTools({
   dispatch, context: currentContext,
 }) : null;
 if (mapTools) {
-  mapTools.bar.onclick = event => {
-    const button = event.target.closest('[data-map-tool]');
-    if (!button || !state) return;
+  const activateMapTool = (tool, settings) => {
     if (cancelEventCells) cancelEventCells();
     cancelTokenDrag?.();
     setPlacement(null);
     mapScene.hideEditor();
-    mapTools.select(button.dataset.mapTool);
+    mapTools.select(tool, settings);
+  };
+  mapTools.bar.onclick = event => {
+    const button = event.target.closest('[data-map-tool]');
+    if (button && state) activateMapTool(button.dataset.mapTool);
+  };
+  const adjustGrid = $('adjust-grid-with-mouse');
+  adjustGrid.hidden = false;
+  adjustGrid.onclick = () => {
+    const form = $('grid-form');
+    if (!form.reportValidity()) return;
+    const settings = readGridSettings(form);
+    closeDialog($('grid-dialog'));
+    activateMapTool('grid', settings);
   };
   const reveal = document.createElement('button');
   reveal.type = 'button';
@@ -2184,7 +2199,7 @@ function readWindowState(value) {
   if (switched && $('player-dialog').open) closeDialog($('player-dialog'));
   if (switched) {
     mapTools?.close();
-    for (const id of ['map-portal-editor', 'map-portal-travel', 'token-actions-dialog']) if ($(id).open) closeDialog($(id));
+    for (const id of ['grid-dialog', 'map-portal-editor', 'map-portal-travel', 'token-actions-dialog']) if ($(id).open) closeDialog($(id));
   }
   if (switched || state?.activeBattleId !== value.state.activeBattleId) setPlacement(null);
   if (switched) selectedToken = null;
