@@ -136,18 +136,21 @@ const MapGeometry = (() => {
       return { x: origin.x + rayX * length, y: origin.y + rayY * length };
     });
   }
-  function visibleCells(map, origins, walls, range = 12) {
+  function visibleCells(map, origins, walls) {
     const visible = new Set();
     for (const token of origins) {
+      const range = token.range ?? 6;
       const shift = (Math.max(1, token.size ?? 1) - 1) / 2;
       const x = token.col + shift, y = token.row + shift;
       const origin = tokenCenter(map, token);
       const nearby = nearbySightWalls(origin, map.grid * range, walls, map.grid);
+      const rangeSquared = range * range;
       for (let row = Math.max(0, Math.ceil(y - range)); row <= y + range; row++) {
+        const rowDistance = (row - y) ** 2;
         for (let col = Math.max(0, Math.ceil(x - range)); col <= x + range; col++) {
-          if ((row - y) ** 2 + (col - x) ** 2 > range ** 2) continue;
+          if (rowDistance + (col - x) ** 2 > rangeSquared) continue;
           const cell = `${col},${row}`;
-          if (!visible.has(cell) && !blocked(nearby, origin, cellCenter(map, col, row))) visible.add(cell);
+          if (!visible.has(cell) && (!nearby.length || !blocked(nearby, origin, cellCenter(map, col, row)))) visible.add(cell);
         }
       }
     }

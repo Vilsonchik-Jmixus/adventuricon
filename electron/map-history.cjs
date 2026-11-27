@@ -1,11 +1,13 @@
 const fields = {
-  'token:add': 'tokens', 'token:move': 'tokens', 'token:remove': 'tokens', 'token:visibility': 'tokens', 'library:deploy': 'tokens',
+  'token:add': 'tokens', 'token:move': 'tokens', 'token:remove': 'tokens', 'token:visibility': 'tokens', 'token:settings': 'tokens', 'library:deploy': 'tokens',
+  'template:add': 'templates', 'template:remove': 'templates',
   'terrain:add': 'terrain', 'terrain:edit-item': 'terrain', 'terrain:edit-portal': 'terrain', 'terrain:door': 'terrain', 'terrain:remove': 'terrain',
   'map:pin': 'notePins', 'map:unpin': 'notePins', 'fog:enabled': 'fog', 'fog:reset': 'fog',
 };
 const mapKeys = ['image', 'grid', 'offsetX', 'offsetY', 'opacity', 'color', 'visible', 'rotation', 'diagonals'];
 const sameCell = (a, b) => a === b || a?.col === b?.col && a?.row === b?.row;
-const sameToken = (a, b) => sameCell(a, b) && Boolean(a?.hidden) === Boolean(b?.hidden);
+const sameToken = (a, b) => sameCell(a, b) && Boolean(a?.hidden) === Boolean(b?.hidden) &&
+  (a?.elevation ?? 0) === (b?.elevation ?? 0) && a?.visionFeet === b?.visionFeet;
 const tokensById = tokens => new Map(tokens.map(token => [token.combatantId, token]));
 
 function tokenChanges(before, after) {

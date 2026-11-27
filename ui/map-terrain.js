@@ -8,7 +8,8 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
   let editing = false, tool = 'select', selected = null, draft = null, acceptedMap, acceptedCampaign;
   let fogKey, exploredKey = '', exploredCells, visible = new Set(), cancelDrawing;
   let lastDrawings, lastTerrain, lastLightGrid, lastLightWalls, lastLights = [], inkViewBox;
-  let wallTerrain, walls, itemsKey = [], doorsKey = [], lastActors, actorSizes;
+  let wallTerrain, walls, itemsKey = [], doorsKey = [], lastActors, visionActors;
+  let sightCache = new Map(), sightCacheWalls, sightCacheMap;
   const terrainColors = { wall: '#e99c75', window: '#8ed0ea' };
   const labels = {
     select: 'Выбери объект щелчком',
@@ -150,29 +151,45 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
     const visionIds = new Set(state.visionOrigins);
     if (lastActors !== state.mapCombatants) {
       lastActors = state.mapCombatants;
-      actorSizes = new Map(lastActors.map(actor => [actor.id, TokenStyle.size(actor.tokenSize)]));
+      visionActors = new Map(lastActors.map(actor => [actor.id, actor]));
     }
-    const origins = state.tokens.filter(token => visionIds.has(token.combatantId)).map(token => ({
-      ...(token.combatantId === preview?.id ? preview : token), size: actorSizes.get(token.combatantId)
-    }));
-    const { grid } = state.map;
+    const origins = state.tokens.filter(token => visionIds.has(token.combatantId)).map(token => {
+      const id = token.combatantId, actor = visionActors.get(id);
+      const { col, row } = id === preview?.id ? preview : token;
+      return { id, col, row, size: TokenStyle.size(actor?.tokenSize), range: TokenStyle.vision(token.visionFeet ?? actor?.visionFeet) / 5 };
+    });
+    const { grid, offsetX, offsetY } = state.map;
+    const geometry = `${state.activeMapId}:${grid}:${offsetX}:${offsetY}`;
+    if (sightCacheWalls !== walls || sightCacheMap !== geometry) {
+      sightCache = new Map();
+      sightCacheWalls = walls;
+      sightCacheMap = geometry;
+    }
     renderExploredFog(state, width, height);
-    if (fogKey?.walls === walls && fogKey.origins.length === origins.length &&
-        fogKey.origins.every((origin, index) => origin.col === origins[index].col && origin.row === origins[index].row &&
-          origin.size === origins[index].size)) return;
-    fogKey = { walls, origins };
-    visible = MapGeometry.visibleCells(state.map, origins, walls);
+    const sameOrigin = (a, b) => a?.id === b.id && a.col === b.col && a.row === b.row && a.size === b.size && a.range === b.range;
+    if (fogKey?.walls === walls && fogKey.geometry === geometry && fogKey.origins.length === origins.length &&
+        fogKey.origins.every((origin, index) => sameOrigin(origin, origins[index]))) return;
+    fogKey = { walls, origins, geometry };
+    const updatedSight = new Map();
+    visible = new Set();
     const ctx = prepareCanvas(fogLayer, width, height);
     ctx.drawImage(exploredLayer, 0, 0, width, height);
     ctx.globalCompositeOperation = 'destination-out';
     ctx.fillStyle = '#fff';
     for (const token of origins) {
-      const outline = MapGeometry.lightPolygon(MapGeometry.tokenCenter(state.map, token), grid * 12, walls, grid);
+      const cached = sightCache.get(token.id);
+      const sight = sameOrigin(cached?.token, token) ? cached : {
+        token, cells: MapGeometry.visibleCells(state.map, [token], walls),
+        outline: MapGeometry.lightPolygon(MapGeometry.tokenCenter(state.map, token), grid * token.range, walls, grid)
+      };
+      updatedSight.set(token.id, sight);
+      for (const cell of sight.cells) visible.add(cell);
       ctx.beginPath();
-      for (const { x, y } of outline) ctx.lineTo(x, y);
+      for (const { x, y } of sight.outline) ctx.lineTo(x, y);
       ctx.closePath();
       ctx.fill();
     }
+    sightCache = updatedSight;
     ctx.globalCompositeOperation = 'source-over';
   }
 

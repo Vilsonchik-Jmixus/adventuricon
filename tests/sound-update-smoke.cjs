@@ -2,6 +2,8 @@ const { _electron, expect } = require('playwright/test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs/promises');
+const { execFileSync } = require('node:child_process');
+const { mediaTools } = require('../electron/music-import.cjs');
 
 const env = { ...process.env, DM_SCREEN_TEST: '1', DM_SCREEN_DATA: path.resolve('test-results', 'sound-update-' + Date.now()) };
 delete env.ELECTRON_RUN_AS_NODE;
@@ -164,6 +166,45 @@ async function main() {
     const audioSettings = await page.evaluate(async () => dm.init());
     assert.equal(audioSettings.state.music.volume, .24);
     assert.equal(audioSettings.soundPreferences.assignment.rain, 'Таверна');
+    await page.keyboard.press('Escape');
+    await page.click('#sound-pad-tab');
+    await page.click('#new-soundpad');
+    await expect(page.locator('#soundpad-settings')).toBeVisible();
+    await expect(page.locator('#soundpad-slot-form [name="sound"] option')).toHaveCount(105);
+    await page.fill('#soundpad-profile-form [name="name"]', 'Игра в городе');
+    await page.click('#soundpad-profile-form [type="submit"]');
+    await page.selectOption('#soundpad-slot-form [name="sound"]', 'chip-ambient-2');
+    await page.fill('#soundpad-slot-form [name="name"]', 'Ночной дозор');
+    await page.click('#soundpad-slot-form [type="submit"]');
+    await expect(page.locator('#soundpad-import-status')).toHaveText('Кнопка сохранена');
+    await page.locator('#soundpad-settings [data-close-dialog]').click();
+    await expect(page.locator('[data-sound-pad="fire"]')).toContainText('Ночной дозор');
+    await page.click('[data-sound-pad="fire"]');
+    await heard('chip-ambient-2');
+    await expect(page.locator('[data-sound-pad="fire"]')).toHaveAttribute('aria-pressed', 'true');
+    await page.click('#stop-ambient');
+
+    const demoMp3 = path.join(env.DM_SCREEN_DATA, 'demo.mp3');
+    const { ffmpeg } = mediaTools(path.resolve('.tools/media'));
+    execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.25', '-c:a', 'libmp3lame', demoMp3]);
+    await app.evaluate(({ dialog }, file) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
+    }, demoMp3);
+    await page.click('[data-sound-pad="ice"]');
+    await page.click('#soundpad-import-mp3');
+    await expect(page.locator('#soundpad-import-status')).toHaveText('demo');
+    await page.click('#soundpad-slot-form [type="submit"]');
+    await expect(page.locator('#soundpad-import-status')).toHaveText('Кнопка сохранена');
+    const imported = await page.evaluate(async () => {
+      const { soundPreferences } = await dm.init();
+      const { slots } = soundPreferences.profiles.find(item => item.id === soundPreferences.selectedProfile);
+      const mp3 = await fetch(`dm://app/soundpad/${slots.ice.asset}`);
+      return { ok: mp3.ok, bytes: (await mp3.arrayBuffer()).byteLength };
+    });
+    assert.ok(imported.ok && imported.bytes > 0);
+    await page.locator('#soundpad-settings [data-close-dialog]').click();
+    await page.selectOption('#soundpad-profile', 'standard');
+    await expect(page.locator('[data-sound-pad="fire"]')).toContainText('Огненная магия');
     console.log('PASS: both soundpad banks, ambient loops and categories, clipboard portraits, effects and footsteps, battle cues, and detached playback seeking.');
   } finally {
     await app.close();

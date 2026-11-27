@@ -14,6 +14,17 @@
 .sound-pad-grid button { display: flex; gap: 4px; align-items: center; padding: 4px; font-size: 11px; text-align: left; }
 .sound-pad-grid kbd { padding: 1px 3px; border: 1px solid var(--line); color: var(--muted); font: inherit; }
 .sound-category-bar, .music-timeline { display: flex; align-items: center; gap: 5px; }
+.sound-category-bar { flex-wrap: wrap; margin-bottom: 4px; }
+#soundpad-profile { flex-basis: 90px; }
+#soundpad-settings { max-height: 90vh; overflow: auto; }
+#soundpad-profile-form { display: flex; flex-flow: row wrap; align-items: end; gap: 6px; margin: 12px 0; }
+#soundpad-profile-form label { flex: 1 1 150px; }
+#soundpad-slot-form { padding-top: 12px; border-top: 1px solid var(--line); gap: 10px; }
+.soundpad-import { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.soundpad-import input { flex: 1 1 135px; }
+#soundpad-import-status { color: var(--muted); overflow-wrap: anywhere; }
+.sound-pad-grid .empty-pad { border-style: dashed; color: var(--muted); }
+.sound-pad-grid .pad-label { min-width: 0; overflow-wrap: anywhere; }
 .sound-category-bar select, .music-timeline input { flex: 1; min-width: 0; }
 .sound-category-bar :is(button, select) { padding: 4px 5px; font-size: 11px; }
 #sound-categories-dialog .sound-category-bar, #new-sound-category { margin-bottom: 8px; }

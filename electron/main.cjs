@@ -16,8 +16,9 @@ const { createCampaignStore, writeJSON, encodeCampaign, assetPattern } = require
 const { rememberMapAction, rememberTravel, undoMapAction } = require('./map-history.cjs');
 const { defaults: shortcutDefaults, validateShortcuts, restoreShortcuts, matchShortcut } = require('../ui/shortcuts.js');
 const { searchCampaign } = require('./campaign-search.cjs');
-const { pads, ambientIds, preferenceDefaults, padShortcut, moveSound } = require('../ui/sound-library.js');
+const { pads, preferenceDefaults, padShortcut, moveSound } = require('../ui/sound-library.js');
 const { audioResponse } = require('./audio-response.cjs');
+const { padAsset, sanitizeSlot, normalizeProfiles, editProfile } = require('./soundpad-profiles.cjs');
 const TEST = process.env.DM_SCREEN_TEST === '1';
 const mac = process.platform === 'darwin';
 const appImage = process.platform === 'linux' && !!process.env.APPIMAGE;
@@ -38,8 +39,8 @@ let zoomStore;
 let siteZoom = new Map();
 let shortcutStore;
 let shortcuts = shortcutDefaults;
-let soundStore, soundPreferences = preferenceDefaults;
-let activePads = [];
+let soundStore, soundpadMedia, soundpadImport, soundPreferences = preferenceDefaults;
+let activePads = [], soundpadPlaying = false;
 let musicPosition = null;
 const padIds = new Set(pads.map(([id]) => id));
 const soundToMaster = payload => mainWindow?.webContents.send('status', { scope: 'retro-sound', ...payload });
@@ -52,9 +53,14 @@ function normalizeSoundPreferences(value) {
     ...Object.fromEntries(Object.entries(preferenceDefaults).filter(([, fallback]) => typeof fallback === 'boolean')
       .map(([key, fallback]) => [key, typeof value?.[key] === 'boolean' ? value[key] : fallback])),
     volume: typeof value?.volume === 'number' && Number.isFinite(value.volume) ? Math.min(1, Math.max(0, value.volume)) : preferenceDefaults.volume,
-    categories: unique,
+    categories: unique, ...normalizeProfiles(value, unique),
     assignment: Object.fromEntries(pads.map(([id]) => [id, unique.includes(assignments[id]) ? assignments[id] : '']))
   };
+}
+function saveSoundPreferences(next) {
+  writeJSON(soundStore, next);
+  soundPreferences = next;
+  sendAll('status', { scope: 'sound-preferences', preferences: next });
 }
 const windows = new Map(), remotes = new Map(), windowSnapshots = new WeakMap();
 const publicActors = new WeakMap();
@@ -123,7 +129,7 @@ function windowState(owner, view = activeView(state)) {
       state: { activeMapId: view.activeMapId, map: view.map, tokens,
         mapCombatants: actors.get(hidden)[Number(shareHealth)],
         visionOrigins: view.visionOrigins,
-        terrain: playerTerrain(view.terrain), drawings: view.drawings, fog: view.fog, turn: hidden.has(view.turn) ? null : view.turn },
+        terrain: playerTerrain(view.terrain), drawings: view.drawings, templates: view.templates, fog: view.fog, turn: hidden.has(view.turn) ? null : view.turn },
       detached: ['map'], presentation, recentImages: [], mapCamera, campaignId: campaigns.index.active, playerBlackout, playerFrame: playerFrame()
     };
   }
@@ -644,21 +650,55 @@ function setupIPC() {
     return { ...snapshot, version: app.getVersion(), updateStatus, musicStatus,
       mainFullscreen: event.sender === mainWindow?.webContents && mainWindow.isFullScreen(),
       conditionDefinitions: CONDITIONS, combatRoles: ROLES, referenceLinks: REFERENCE_LINKS,
-      reference: referenceState(), shortcuts, soundPreferences, activePads, musicPosition, test: TEST, mac, theme: currentTheme, welcomeAtStart: !TEST || process.env.DM_SCREEN_WELCOME_TEST === '1' };
+      reference: referenceState(), shortcuts, soundPreferences, activePads, soundpadPlaying, musicPosition, test: TEST, mac, theme: currentTheme, welcomeAtStart: !TEST || process.env.DM_SCREEN_WELCOME_TEST === '1' };
   });
   handle('sound-preferences', (_, values) => {
-    const next = normalizeSoundPreferences({ ...soundPreferences, ...values });
-    writeJSON(soundStore, next);
-    soundPreferences = next;
-    sendAll('status', { scope: 'sound-preferences', preferences: next });
+    const { categories, enabled, volume, clicks, dice, effects, movement } = values;
+    saveSoundPreferences(normalizeSoundPreferences({ ...soundPreferences, categories: categories ?? soundPreferences.categories,
+      enabled: enabled ?? soundPreferences.enabled, volume: volume ?? soundPreferences.volume, clicks: clicks ?? soundPreferences.clicks,
+      dice: dice ?? soundPreferences.dice, effects: effects ?? soundPreferences.effects, movement: movement ?? soundPreferences.movement }));
     return { ok: true };
   });
   handle('sound-assign-category', (_, { id, category }) => {
     if (!padIds.has(id) || category !== '' && !soundPreferences.categories.includes(category)) throw new Error('Категория или звук не найдены');
-    const next = { ...soundPreferences, assignment: { ...soundPreferences.assignment, [id]: category } };
-    writeJSON(soundStore, next);
-    soundPreferences = next;
-    sendAll('status', { scope: 'sound-preferences', preferences: next });
+    const profile = soundPreferences.profiles.find(item => item.id === soundPreferences.selectedProfile);
+    if (profile.id === 'standard' && !profile.slots[id]) {
+      saveSoundPreferences({ ...soundPreferences, assignment: { ...soundPreferences.assignment, [id]: category } });
+    } else {
+      saveSoundPreferences(editProfile(soundPreferences, {
+        type: 'save', id: profile.id, slot: id, value: { ...profile.slots[id], category }
+      }));
+    }
+    return { ok: true };
+  });
+  handle('soundpad-edit', (_, action) => {
+    if (action.type === 'save' && action.value?.asset && !soundpadFileExists(action.value.asset)) throw new Error('MP3 не найден');
+    saveSoundPreferences(editProfile(soundPreferences, action));
+    return { ok: true, preferences: soundPreferences };
+  });
+  handle('soundpad-preview', (_, data) => {
+    const value = sanitizeSlot(data, soundPreferences.categories);
+    if (value.asset && !soundpadFileExists(value.asset)) throw new Error('MP3 не найден');
+    soundToMaster({ padPreview: value });
+    return { ok: true };
+  });
+  handle('soundpad-import', async (event, url) => {
+    if (typeof url === 'string') return importSoundpadYoutube(event.sender, url);
+    const chosen = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
+      properties: ['openFile'], filters: [{ name: 'MP3', extensions: ['mp3'] }]
+    });
+    const file = !chosen.canceled && chosen.filePaths[0];
+    if (!file) return { canceled: true };
+    const info = await fs.promises.stat(file);
+    if (path.extname(file).toLowerCase() !== '.mp3' || !info.isFile()) throw new Error('Выбери файл MP3');
+    if (!info.size || info.size > 1024 ** 3) throw new Error('Размер MP3 должен быть от 1 байта до 1 ГБ');
+    const asset = randomUUID() + '.mp3';
+    await fs.promises.mkdir(soundpadMedia, { recursive: true });
+    await fs.promises.copyFile(file, path.join(soundpadMedia, asset), fs.constants.COPYFILE_EXCL);
+    return { ok: true, asset, title: path.basename(file, path.extname(file)) };
+  });
+  handle('soundpad-cancel', () => {
+    soundpadImport?.stop();
     return { ok: true };
   });
   handle('sound-pad', (_, id) => {
@@ -666,12 +706,14 @@ function setupIPC() {
     soundToMaster({ id, pad: true });
     return { ok: true };
   });
-  handle('sound-pad-state', (event, ids) => {
-    if (event.sender !== mainWindow.webContents || !Array.isArray(ids) || ids.length > ambientIds.length || ids.some(id => !ambientIds.includes(id))) {
+  handle('sound-pad-state', (event, { ids, playing }) => {
+    if (event.sender !== mainWindow.webContents || typeof playing !== 'boolean' ||
+        !Array.isArray(ids) || ids.length > padIds.size || ids.some(id => !padIds.has(id))) {
       throw new Error('Недопустимое состояние звуков');
     }
     activePads = ids;
-    windows.get('music')?.webContents.send('status', { scope: 'sound-pad-state', ids });
+    soundpadPlaying = playing;
+    windows.get('music')?.webContents.send('status', { scope: 'sound-pad-state', ids, playing });
     return { ok: true };
   });
   handle('sound-click', () => { soundToMaster({ id: 'click', category: 'clicks' }); return { ok: true }; });
@@ -1034,6 +1076,30 @@ async function downloadMusic({ url, folder }) {
   try { return await job.done; }
   finally { downloadProcess = null; }
 }
+function soundpadFileExists(asset) {
+  return typeof asset === 'string' && padAsset.test(asset) &&
+    fs.statSync(path.join(soundpadMedia, asset), { throwIfNoEntry: false })?.isFile();
+}
+async function importSoundpadYoutube(owner, url) {
+  const id = youtubeVideoId(url);
+  if (!id) throw new Error('Вставь ссылку на отдельное видео YouTube');
+  if (soundpadImport) throw new Error('Дождись завершения предыдущей загрузки');
+  const media = app.isPackaged ? path.join(process.resourcesPath, 'media') : path.join(__dirname, '..', '.tools', 'media');
+  const { downloader, ffmpeg } = mediaTools(media);
+  if (!downloader || !ffmpeg) throw new Error('Для загрузки с YouTube нужны yt-dlp и FFmpeg. Можно добавить MP3 с компьютера.');
+  fs.mkdirSync(soundpadMedia, { recursive: true });
+  let imported;
+  const report = (phase, text) => {
+    if (!owner.isDestroyed()) owner.send('status', { scope: 'soundpad-import', phase, text });
+  };
+  const job = beginMusicImport({ assets: soundpadMedia, downloader, ffmpeg,
+    source: `https://www.youtube.com/watch?v=${id}`, nodePath: process.execPath, report, save: file => { imported = file; } });
+  soundpadImport = job;
+  try {
+    const result = await job.done;
+    return result.ok ? { ok: true, asset: imported.asset, title: imported.title } : result;
+  } finally { soundpadImport = null; }
+}
 function setupUpdater() {
   if (!canAutoUpdate) return;
   autoUpdater.setFeedURL({ provider: 'custom', updateProvider: ReleaseUpdater });
@@ -1071,6 +1137,8 @@ app.whenReady().then(async () => {
   zoomStore = path.join(app.getPath('userData'), 'site-zoom.json');
   shortcutStore = path.join(app.getPath('userData'), 'shortcuts.json');
   soundStore = path.join(app.getPath('userData'), 'retro-audio.json');
+  soundpadMedia = path.join(app.getPath('userData'), 'soundpad-media');
+  soundPreferences = normalizeSoundPreferences(preferenceDefaults);
   if (fs.existsSync(soundStore)) {
     try { soundPreferences = normalizeSoundPreferences(JSON.parse(fs.readFileSync(soundStore, 'utf8'))); }
     catch (error) { console.warn('Не удалось прочитать настройки звука:', error.message); }
@@ -1105,6 +1173,11 @@ app.whenReady().then(async () => {
         const campaign = u.searchParams.get('campaign');
         if (campaign && campaign !== campaigns.index.active) return new Response('Not found', { status: 404 });
         file = path.join(assets, assetName(decodeURIComponent(u.pathname.slice(8))));
+      }
+      else if (u.pathname.startsWith('/soundpad/')) {
+        const name = decodeURIComponent(u.pathname.slice('/soundpad/'.length));
+        if (!padAsset.test(name)) return new Response('Not found', { status: 404 });
+        file = path.join(soundpadMedia, name);
       }
       else {
         const allowed = ['index.html', 'app.js', 'map-geometry.js', 'map-terrain.js', 'styles.css', 'tavern.css', 'themes.js', 'themes.css',
@@ -1145,5 +1218,5 @@ app.whenReady().then(async () => {
   mainWindow.on('close', () => { quitting = true; for (const w of windows.values()) w.close(); });
   await mainWindow.loadURL('dm://app/index.html');
 });
-app.on('before-quit', () => { quitting = true; downloadProcess?.stop('Загрузка отменена'); });
+app.on('before-quit', () => { quitting = true; downloadProcess?.stop('Загрузка отменена'); soundpadImport?.stop(); });
 app.on('window-all-closed', () => app.quit());

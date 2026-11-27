@@ -55,6 +55,19 @@ const { version } = require('../package.json');
     await master.click('#reveal-hidden-enemies');
     await expect(player.locator('#map-tokens [data-token]')).toHaveCount(1);
 
+    await token.click({ button: 'right' });
+    await expect(master.locator('#token-vision-label')).toHaveText('30 фут.');
+    await master.click('#token-raise');
+    await master.fill('#token-map-settings [name="elevation"]', '-10');
+    await master.locator('#token-map-settings [name="visionFeet"]').evaluate(input => {
+      input.value = '65';
+      input.dispatchEvent(new Event('input'));
+    });
+    await master.click('#token-map-settings [type="submit"]');
+    await expect(token.locator('.token-elevation')).toHaveText('−10 фут.');
+    await expect(player.locator('.token-elevation')).toHaveText('−10 фут.');
+    assert.equal((await inspect(master)).tokens[0].visionFeet, 65);
+
     const viewport = master.locator('#map-viewport');
     const bounds = await viewport.boundingBox();
     const x = bounds.x + bounds.width / 2, y = bounds.y + bounds.height / 2;
@@ -71,6 +84,19 @@ const { version } = require('../package.json');
       await expect(master.locator('#map-measure-label')).toHaveText('15 фут.' + suffix);
       await master.keyboard.press('Escape');
     }
+    await master.click('[data-map-tool="circle"]');
+    await master.mouse.click(x, y);
+    await expect(master.locator('#map-tool-apply')).toHaveText('Оставить на карте');
+    await master.click('#map-tool-apply');
+    const marker = master.locator('[data-template-handle]');
+    const playerTemplate = player.locator('#map-templates [data-map-template]');
+    await expect(marker).toHaveCount(1);
+    await expect(playerTemplate).toHaveCount(1);
+    await marker.click();
+    await expect(master.locator('#map-templates .selected')).toHaveCount(1);
+    await marker.click({ button: 'right' });
+    await master.click('#map-template-remove');
+    await expect(playerTemplate).toHaveCount(0);
     const original = (await inspect(master)).map;
     const gridDialog = master.locator('#grid-dialog');
     const gridHint = master.locator('#map-tool-hint');
@@ -120,6 +146,6 @@ const { version } = require('../package.json');
     const closed = app.waitForEvent('close');
     await master.click('#quit-adventuricon');
     await closed;
-    console.log('PASS: 40 frames in the picker, new frame on both maps, 3×3, private tokens, area resizing, grid settings and mouse adjustment, free text and quit.');
+    console.log('PASS: frames, private tokens, elevation, vision settings, saved templates, grid adjustment, free text and quit.');
   } finally { await app.close().catch(() => {}); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

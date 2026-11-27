@@ -115,6 +115,11 @@
         </div>
         <div id="sound-pad" hidden>
           <div class="sound-category-bar">
+            <select id="soundpad-profile" aria-label="Активный саундпад"></select>
+            <button id="configure-soundpad" type="button" data-pixel-icon="gear">Настроить</button>
+            <button id="new-soundpad" type="button" data-pixel-icon="plus" title="Создать свой саундпад">Создать саундпад</button>
+          </div>
+          <div class="sound-category-bar">
             <select id="sound-category" aria-label="Категория саундпада"></select>
             <button id="edit-sound-categories" type="button" data-pixel-icon="folder" title="Настроить категории">Категории</button>
           </div>
@@ -284,6 +289,7 @@
         <option value="0.5">½ клетки</option><option value="1" selected>1 × 1 клетка</option>
         <option value="2">2 × 2 клетки</option><option value="3">3 × 3 клетки</option>
       </select></label>
+      <label>Обзор в тумане <output id="actor-vision-label">30 фут.</output><input name="visionFeet" type="range" min="5" max="120" step="5" value="30"></label>
       <details id="token-frame-picker"><summary>Рамка токена · <strong id="token-frame-label"></strong></summary>
         <input type="hidden" name="tokenFrame" value="gold">
         <div id="token-frame-options" role="group" aria-label="Пиксельные рамки"></div>
@@ -386,7 +392,21 @@
   </dialog>
   <dialog id="token-actions-dialog" aria-labelledby="token-actions-title">
     <div class="dialog-heading"><h2 id="token-actions-title"></h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
-    <div class="session-actions"><button id="token-toggle-visibility" type="button" data-pixel-icon="eye"></button><button id="token-open-conditions" type="button" data-pixel-icon="spark">Состояния</button></div>
+    <div class="session-actions"><button id="token-toggle-visibility" type="button" data-pixel-icon="eye"></button><button id="token-open-conditions" type="button" data-pixel-icon="spark">Состояния</button><button id="token-remove-map" type="button" data-pixel-icon="trash">Убрать с карты</button></div>
+    <form id="token-map-settings">
+      <div class="token-elevation-control">
+        <label>Высота, фут.<input name="elevation" type="number" min="-9999" max="9999" step="1" required></label>
+        <button type="button" id="token-lower" aria-label="Опустить на 5 футов">−5</button>
+        <button type="button" id="token-raise" aria-label="Поднять на 5 футов">+5</button>
+      </div>
+      <label>Обзор в тумане <output id="token-vision-label">30 фут.</output><input name="visionFeet" type="range" min="5" max="120" step="5" value="30"></label>
+      <button type="button" id="token-default-vision">Обзор персонажа</button>
+      <button class="primary-button" type="submit" data-pixel-icon="check">Применить</button>
+    </form>
+  </dialog>
+  <dialog id="map-template-dialog" aria-labelledby="map-template-title">
+    <div class="dialog-heading"><h2 id="map-template-title">Шаблон области</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
+    <div class="session-actions"><button id="map-template-remove" type="button" data-pixel-icon="trash">Удалить шаблон</button></div>
   </dialog>
   <dialog id="remove-token-dialog" aria-labelledby="remove-token-title">
     <div class="dialog-heading"><h2 id="remove-token-title">Убрать персонажа с карты?</h2></div>
@@ -564,6 +584,35 @@
     </form>
   </dialog>
   <audio id="audio" preload="metadata"></audio>
+  <dialog id="soundpad-settings" class="session-dialog" aria-labelledby="soundpad-settings-title">
+    <div class="dialog-heading"><h2 id="soundpad-settings-title">Настройка саундпада</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
+    <form id="soundpad-profile-form">
+      <label>Название саундпада<input name="name" maxlength="52" required></label>
+      <button type="submit" data-pixel-icon="check">Сохранить название</button>
+      <button id="delete-soundpad" type="button" data-pixel-icon="trash">Удалить саундпад</button>
+    </form>
+    <form id="soundpad-slot-form">
+      <div class="form-row">
+        <label>Кнопка<select name="slot"></select></label>
+        <label>Название звука<input name="name" maxlength="52" placeholder="Название на кнопке"></label>
+      </div>
+      <label>Категория<select name="category"></select></label>
+      <label>Звук из 8-битной библиотеки<select name="sound"></select></label>
+      <div class="soundpad-import">
+        <button id="soundpad-import-mp3" type="button" data-pixel-icon="music">Добавить MP3</button>
+        <input id="soundpad-youtube-url" type="text" inputmode="url" aria-label="Ссылка YouTube" placeholder="Ссылка YouTube">
+        <button id="soundpad-import-youtube" type="button" data-pixel-icon="link">Загрузить</button>
+        <button id="soundpad-cancel-import" type="button" hidden>Отменить</button>
+      </div>
+      <output id="soundpad-import-status" aria-live="polite" hidden></output>
+      <label class="checkbox-label"><input name="loop" type="checkbox">Повторять по кругу</label>
+      <div class="session-actions">
+        <button id="preview-soundpad" type="button" data-pixel-icon="play">Прослушать</button>
+        <button id="clear-soundpad-slot" type="button" data-pixel-icon="trash">Очистить</button>
+        <button type="submit" class="primary-button" data-pixel-icon="check">Сохранить кнопку</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="sound-categories-dialog" class="session-dialog" aria-labelledby="sound-categories-title">
     <div class="dialog-heading"><h2 id="sound-categories-title">Категории саундпада</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
     <form id="new-sound-category">

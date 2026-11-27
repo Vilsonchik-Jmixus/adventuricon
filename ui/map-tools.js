@@ -1,3 +1,78 @@
+const measurementSvg = 'http://www.w3.org/2000/svg';
+const measurementNames = { line: 'Линия', circle: 'Круг', square: 'Квадрат', cone: 'Конус' };
+function measurementPath(kind, { x, y, angle, feet, end }, grid) {
+  const range = grid * feet / 5;
+  const point = direction => [x + Math.cos(direction) * range, y + Math.sin(direction) * range].join(' ');
+  if (kind === 'circle') return `M ${x - range} ${y} a ${range} ${range} 0 1 0 ${range * 2} 0 a ${range} ${range} 0 1 0 ${-range * 2} 0 Z`;
+  if (kind === 'square') {
+    const dx = Math.cos(angle) < 0 ? -range : range, dy = Math.sin(angle) < 0 ? -range : range;
+    return `M ${x} ${y} h ${dx} v ${dy} h ${-dx} Z`;
+  }
+  if (kind === 'cone') return `M ${x} ${y} L ${point(angle - Math.PI / 4)} A ${range} ${range} 0 0 1 ${point(angle + Math.PI / 4)} Z`;
+  return `M ${x} ${y} L ${end ? `${end.x} ${end.y}` : point(angle)}`;
+}
+
+function createMapTemplates({ readOnly, openMenu }) {
+  const layer = document.createElementNS(measurementSvg, 'svg');
+  layer.id = 'map-templates';
+  if (readOnly) layer.setAttribute('aria-hidden', 'true');
+  document.getElementById('map-world').append(layer);
+  let entries, grid, viewBox, selected;
+  function select(id) {
+    selected = id;
+    for (const group of layer.children) group.classList.toggle('selected', group.dataset.mapTemplate === id);
+  }
+  if (!readOnly) {
+    layer.onpointerdown = event => { if (event.target.closest('[data-template-handle]')) event.stopPropagation(); };
+    layer.onclick = event => {
+      if (event.target.closest('[data-template-handle]')) select(event.target.closest('[data-map-template]').dataset.mapTemplate);
+    };
+    const open = event => {
+      const marker = event.target.closest('[data-template-handle]');
+      if (!marker) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const id = marker.closest('[data-map-template]').dataset.mapTemplate;
+      select(id);
+      openMenu(entries.find(entry => entry.id === id));
+    };
+    layer.oncontextmenu = open;
+    layer.onkeydown = event => { if (event.key === 'Enter' || event.key === 'Delete') open(event); };
+  }
+  function render(templates, nextGrid, { width, height, zoom }) {
+    const bounds = `0 0 ${width / zoom} ${height / zoom}`;
+    if (viewBox !== bounds) { viewBox = bounds; layer.setAttribute('viewBox', bounds); }
+    if (entries === templates && grid === nextGrid) return;
+    entries = templates;
+    grid = nextGrid;
+    layer.replaceChildren(...templates.map(template => {
+      const group = document.createElementNS(measurementSvg, 'g');
+      const shape = document.createElementNS(measurementSvg, 'path');
+      group.dataset.mapTemplate = template.id;
+      group.dataset.shape = template.kind;
+      group.classList.toggle('selected', template.id === selected);
+      shape.setAttribute('d', measurementPath(template.kind, template, grid));
+      group.append(shape);
+      if (!readOnly) {
+        const marker = document.createElementNS(measurementSvg, 'circle');
+        marker.setAttribute('data-template-handle', '');
+        marker.setAttribute('cx', template.x);
+        marker.setAttribute('cy', template.y);
+        marker.setAttribute('r', Math.max(7, Math.min(25, grid / 5)));
+        marker.setAttribute('tabindex', '0');
+        marker.setAttribute('role', 'button');
+        marker.setAttribute('aria-label', `${measurementNames[template.kind]} · ${template.feet} фут. · Действия шаблона`);
+        const title = document.createElementNS(measurementSvg, 'title');
+        title.textContent = marker.getAttribute('aria-label');
+        marker.append(title);
+        group.append(marker);
+      }
+      return group;
+    }));
+  }
+  return { render, select };
+}
+
 function createMapTools({ viewport, getState, getLayout, pointAt, dispatch, context }) {
   const bar = document.createElement('div');
   bar.id = 'map-quick-tools';
@@ -12,7 +87,7 @@ function createMapTools({ viewport, getState, getLayout, pointAt, dispatch, cont
       <button type="button" id="map-tool-close" data-pixel-icon="close" aria-label="Выйти из инструмента"></button></div>`;
   viewport.before(bar);
   const world = document.getElementById('map-world');
-  const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  const overlay = document.createElementNS(measurementSvg, 'svg');
   overlay.id = 'map-measure-overlay';
   overlay.setAttribute('aria-hidden', 'true');
   const path = document.createElementNS(overlay.namespaceURI, 'path');
@@ -35,6 +110,8 @@ function createMapTools({ viewport, getState, getLayout, pointAt, dispatch, cont
     if (!getLayout()) return;
     const { zoom, width, height } = getLayout();
     overlay.hidden = label.hidden = !measure;
+    apply.hidden = !draft && !measure;
+    apply.textContent = draft ? 'Применить' : 'Оставить на карте';
     if (draft) {
       const { grid, offsetX, offsetY } = draft;
       world.style.setProperty('--grid-size', grid * zoom + 'px');
@@ -46,19 +123,10 @@ function createMapTools({ viewport, getState, getLayout, pointAt, dispatch, cont
     }
     if (!measure) return;
     const { grid } = getState().map;
-    const { x, y, angle, feet } = measure;
-    const range = grid * feet / 5;
-    const end = (direction) => [x + Math.cos(direction) * range, y + Math.sin(direction) * range].join(' ');
+    const { x, y, feet } = measure;
     overlay.setAttribute('viewBox', `0 0 ${width / zoom} ${height / zoom}`);
     overlay.dataset.measure = mode;
-    let shape = `M ${x} ${y} L ${measure.end ? `${measure.end.x} ${measure.end.y}` : end(angle)}`;
-    if (mode === 'circle') shape = `M ${x - range} ${y} a ${range} ${range} 0 1 0 ${range * 2} 0 a ${range} ${range} 0 1 0 ${-range * 2} 0 Z`;
-    if (mode === 'square') {
-      const dx = Math.cos(angle) < 0 ? -range : range, dy = Math.sin(angle) < 0 ? -range : range;
-      shape = `M ${x} ${y} h ${dx} v ${dy} h ${-dx} Z`;
-    }
-    if (mode === 'cone') shape = `M ${x} ${y} L ${end(angle - Math.PI / 4)} A ${range} ${range} 0 0 1 ${end(angle + Math.PI / 4)} Z`;
-    path.setAttribute('d', shape);
+    path.setAttribute('d', measurementPath(mode, measure, grid));
     label.value = `${measure.ruleFeet ?? feet} фут.${mode === 'circle' ? ' · радиус' : mode === 'square' ? ' · сторона' : ''}`;
     label.style.left = x * zoom + 'px';
     label.style.top = y * zoom + 'px';
@@ -92,7 +160,6 @@ function createMapTools({ viewport, getState, getLayout, pointAt, dispatch, cont
     selectedContext = context();
     draft = gridSettings;
     controls.hidden = false;
-    apply.hidden = !draft;
     hint.value = 'Поставь или протяни область · Колесо меняет размер · Esc закрывает';
     viewport.classList.add('using-map-tool');
     for (const button of bar.querySelectorAll('[data-map-tool]')) {
@@ -103,11 +170,15 @@ function createMapTools({ viewport, getState, getLayout, pointAt, dispatch, cont
   }
   bar.querySelector('#map-tool-close').onclick = close;
   apply.onclick = async () => {
-    if (!draft) return;
-    const settings = draft;
+    if (!draft && !measure) return;
+    const type = draft ? 'map:settings' : 'template:add';
+    const settings = draft ?? { ...measure, kind: mode, feet: measure.ruleFeet ?? measure.feet };
     const target = selectedContext;
-    close();
-    await dispatch('map:settings', settings, target);
+    apply.disabled = true;
+    try {
+      const response = await dispatch(type, settings, target);
+      if (response?.ok && selectedContext === target) close();
+    } finally { apply.disabled = false; }
   };
   for (const button of bar.querySelectorAll('[data-map-tool]')) button.setAttribute('aria-pressed', 'false');
   function pointerDown(event) {

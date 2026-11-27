@@ -44,7 +44,10 @@ const TokenStyle = (() => {
   const catalogue = new Map(frames.map(frame => [frame[0], frame]));
   const size = value => [.5, 1, 2, 3].includes(Number(value)) ? Number(value) : 1;
   const frame = value => catalogue.get(value) ?? frames[0];
-  return { frames, size, frame };
+  const feet = (value, fallback, min, max) => Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : fallback;
+  const elevation = value => feet(value, 0, -9999, 9999);
+  const vision = value => feet(value, 30, 5, 120);
+  return { frames, size, frame, elevation, vision };
 })();
 
 if (typeof module !== 'undefined') module.exports = TokenStyle;

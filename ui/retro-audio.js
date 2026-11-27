@@ -1,6 +1,6 @@
 function createRetroAudio() {
-  const { ambientIds, conditions } = SoundLibrary;
-  const loops = new Set(ambientIds);
+  const { catalogue, conditions, catalogSound } = SoundLibrary;
+  const loops = new Set(catalogue.filter(sound => sound.loop).map(sound => sound.id));
   const playing = new Map(), fading = new Map(), buffers = new Map();
   const voices = new Set();
   let context, gain, ambientGain, ambientVolume = 1, preferences = SoundLibrary.preferenceDefaults;
@@ -43,6 +43,35 @@ function createRetroAudio() {
     const wave = ['triangle', 'pulse', 'square'][i % 3];
     recipes[id] = [...arpeggio(gestures[i], .082, wave, .32), p(0,.12,'noise',730 + i * 87,200,.18)];
   });
+  function bankRecipe({ pitch, style, group }) {
+    const t = .045 + style * .008;
+    switch (group) {
+      case 'spell': return [
+        ...arpeggio([1, style % 3 === 0 ? .75 : 1.25, 1.5, style % 2 ? 2 : .5].map(ratio => pitch * ratio), t, 'pulse', .28),
+        p(t, t * 3, 'triangle', pitch, pitch * .52, .26), p(0, t * 2, 'noise', 2600, 550, .15)
+      ];
+      case 'combat': return [
+        p(0, t * 1.8, 'noise', pitch * 3, pitch / 2, .52), p(t * .3, t * 3, style % 2 ? 'triangle' : 'pulse', pitch, pitch * .28, .39),
+        p(t * 2.2, t * 2, 'noise', pitch, pitch / 5, .19)
+      ];
+      case 'beast': return [
+        p(0, t * 5, style % 2 ? 'saw' : 'triangle', pitch, pitch * (style % 3 ? .47 : 1.8), .38, t * .8),
+        p(t, t * 4.5, 'noise', pitch * 6, pitch * .9, .34, t * 1.4)
+      ];
+      case 'tavern': return [
+        ...arpeggio([pitch, pitch * (style % 2 ? 1.5 : 2.02), pitch * (style % 3 ? 1.24 : .66)], t, 'triangle', .39),
+        p(0, t * 2, 'noise', pitch * 2.8, pitch * .76, .23)
+      ];
+      case 'trail': return [
+        ...Array.from({ length: 2 + style % 4 }, (_, i) => p(i * t * 1.7, t * 2, 'noise', pitch * (5 + i), pitch * 1.2, .35)),
+        p(t * .3, t * 4, 'triangle', pitch, pitch * .64, .24)
+      ];
+      default: return [
+        p(0, t * 2.6, 'noise', pitch * 6, pitch * 1.1, .33, t),
+        ...Array.from({ length: 3 }, (_, i) => p(i * t * 2, t * 3.2, 'pulse', pitch * (1 + i * .12), pitch * .35, .37 - i * .085))
+      ];
+    }
+  }
 
   function wave(type, phase) {
     const fraction = phase % 1;
@@ -51,7 +80,8 @@ function createRetroAudio() {
     return fraction < (type === 'pulse' ? .26 : .5) ? 1 : -1;
   }
   function synthesize(id) {
-    const parts = recipes[id] || [];
+    const patch = catalogSound(id);
+    const parts = recipes[id] ?? (patch?.pitch && !patch.loop ? bankRecipe(patch) : []);
     const length = loops.has(id) ? 4 : Math.max(...parts.map(part => part.start + part.length), .1) + .02;
     const buffer = context.createBuffer(1, Math.ceil(length * rate), rate);
     const samples = buffer.getChannelData(0);
@@ -81,7 +111,13 @@ function createRetroAudio() {
         campfire: () => grain * .1 + noise() * crackle,
         wind: (time, angle) => grain * (.14 + .11 * Math.sin(angle)) + wave('triangle', time * 46) * .04,
         dungeon: (time, angle) => wave('triangle', time * 55) * .09 + grain * (.055 + .05 * Math.sin(angle * 2))
-      }[id];
+      }[id] ?? ((time, angle) => {
+        const rate = patch.style % 4 + 1;
+        const sway = .65 + .35 * Math.sin(angle * rate);
+        const pulse = Math.max(0, Math.sin(angle * (patch.style + 1))) ** (2 + patch.style % 5);
+        return (grain * (.16 + .06 * rate) + noise() * crackle * (patch.style % 3) * .52) * sway +
+          wave('triangle', time * patch.pitch / 4) * (.03 + .1 * pulse);
+      });
       for (let n = 0; n < samples.length; n++) {
         const time = n / rate, angle = 2 * Math.PI * time / length;
         if (n % 9 === 0) grain = noise();
@@ -117,12 +153,12 @@ function createRetroAudio() {
       fading.clear();
     }
   }
-  function play(id, category, toggle = false, fade = 0) {
-    if (toggle && playing.has(id)) { stop(id); return false; }
-    if (playing.has(id)) return true;
+  function play(id, category, toggle = false, fade = 0, key = id, forceLoop = loops.has(id)) {
+    if (toggle && playing.has(key)) { stop(key); return false; }
+    if (playing.has(key)) return true;
     if (!preferences.enabled || category && !preferences[category] ||
-        !Object.hasOwn(recipes, id) && !loops.has(id)) return false;
-    fading.get(id)?.source.stop();
+        !Object.hasOwn(recipes, id) && !catalogSound(id)) return false;
+    fading.get(key)?.source.stop();
     if (!context) {
       context = new AudioContext();
       gain = context.createGain();
@@ -140,7 +176,7 @@ function createRetroAudio() {
     }
     const source = context.createBufferSource();
     source.buffer = buffers.get(id);
-    source.loop = loops.has(id);
+    source.loop = forceLoop;
     let level;
     if (source.loop) {
       level = context.createGain();
@@ -148,11 +184,11 @@ function createRetroAudio() {
       if (fade) level.gain.setTargetAtTime(1, context.currentTime, fade / 4);
       source.connect(level);
       level.connect(ambientGain);
-      playing.set(id, { source, level });
+      playing.set(key, { source, level });
     } else source.connect(gain);
     voices.add(source);
     source.onended = () => {
-      if (fading.get(id)?.source === source) fading.delete(id);
+      if (fading.get(key)?.source === source) fading.delete(key);
       voices.delete(source);
       source.disconnect();
       level?.disconnect();

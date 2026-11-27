@@ -75,7 +75,7 @@ test('all chip sounds synthesize non-empty, distinct waveforms; only ambient pad
   const script = fs.readFileSync(path.join(__dirname, '../ui/retro-audio.js'), 'utf8');
   const audio = vm.runInNewContext(script + '\ncreateRetroAudio()', { AudioContext, SoundLibrary });
   const sounds = [
-    ...pads, ...SoundLibrary.moves.filter(([id]) => id !== 'none'),
+    ...SoundLibrary.catalogue.map(({ id, label, loop }) => [id, label, loop]), ...SoundLibrary.moves.filter(([id]) => id !== 'none'),
     ...SoundLibrary.conditions.map(id => [id]), ['dice'], ['click']
   ];
   for (const [id, , loop] of sounds) {
@@ -88,6 +88,25 @@ test('all chip sounds synthesize non-empty, distinct waveforms; only ambient pad
     return createHash('sha256').update(Buffer.from(sample.buffer)).digest('hex');
   });
   assert.equal(new Set(hashes).size, sounds.length);
+});
+
+test('custom soundpad profiles and slot assignments survive reload and keep the original shortcuts', () => {
+  const { normalizeProfiles, editProfile } = require('../electron/soundpad-profiles.cjs');
+  const preferences = SoundLibrary.preferenceDefaults;
+  const fill = value => ({ ...value, ...normalizeProfiles(value, value.categories) });
+  let value = fill(preferences);
+  assert.equal(SoundLibrary.padSlot(value, 'fire').sound, 'fire');
+  value = editProfile(value, { type: 'create', name: 'Город' });
+  const id = value.selectedProfile;
+  assert.equal(SoundLibrary.padSlot(value, 'fire').sound, null);
+  const sound = SoundLibrary.catalogue.find(item => item.group === 'ambient');
+  value = fill(JSON.parse(JSON.stringify(editProfile(value, { type: 'save', id, slot: 'fire',
+    value: { name: 'Город ночью', sound: sound.id, category: 'Атмосфера', loop: true } }))));
+  assert.deepEqual(SoundLibrary.padSlot(value, 'fire'), {
+    name: 'Город ночью', sound: sound.id, asset: null, sourceName: '', category: 'Атмосфера', loop: true,
+  });
+  value = editProfile(value, { type: 'select', id: 'standard' });
+  assert.equal(SoundLibrary.padSlot(value, 'fire').sound, 'fire');
 });
 
 test('round actions have an explicit trigger, can be delayed and commit together or leave the map untouched', () => {

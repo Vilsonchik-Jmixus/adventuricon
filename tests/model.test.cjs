@@ -125,8 +125,8 @@ test('Closed doors block path and sight; fog is optional, remembered and reset p
   act('terrain:add', { kind: 'wall', a: { x: 128, y: 192 }, b: { x: 128, y: 1700 } });
   act('terrain:add', { kind: 'light', a: { x: 96, y: 96 }, radius: 128 });
   const closed = act('token:add', { id: hero, col: 1, row: 1 });
-  assert.ok(closed.fog.explored.includes('1,13'));
-  assert.ok(!closed.fog.explored.includes('1,14'));
+  assert.ok(closed.fog.explored.includes('1,7'));
+  assert.ok(!closed.fog.explored.includes('1,8'));
   assert.ok(!closed.fog.explored.includes('2,1'));
   assert.throws(() => act('token:move', { id: hero, col: 3, row: 1 }), /Проход перекрыт/);
   const nearby = MapGeometry.blockingWalls(closed.terrain);
@@ -142,6 +142,38 @@ test('Closed doors block path and sight; fog is optional, remembered and reset p
   assert.ok(act('map:select', { id: mapId }).fog.explored.includes('3,1'));
   assert.equal(act('fog:enabled', { enabled: false }).fog.enabled, false);
   assert.ok(act('fog:enabled', { enabled: true }).fog.explored.includes('3,1'));
+});
+test('placed tokens remember elevation and override the sight of their prototype for one map', () => {
+  let state = initialState();
+  const act = (type, payload) => { state = reducer(state, { type, payload }); return activeView(state); };
+  const mapId = act('fog:enabled', { enabled: true }).activeMapId;
+  const id = act('combatant:add', { name: 'Лучник', role: 'player', visionFeet: 40 }).combatants[0].id;
+  assert.ok(act('token:add', { id, col: 4, row: 4 }).fog.explored.includes('12,4'));
+  act('token:settings', { id, elevation: -15, visionFeet: 10 });
+  assert.ok(!act('fog:reset').fog.explored.includes('7,4'));
+  state = migrateState(JSON.parse(encodeCampaign(state)));
+  assert.equal(activeView(state).tokens[0].elevation, -15);
+  const fog = activeView(state).fog;
+  assert.equal(act('token:settings', { id, elevation: 55 }).fog, fog);
+  act('map:create', { title: 'Двор', fog: true });
+  assert.ok(act('token:add', { id, col: 4, row: 4 }).fog.explored.includes('12,4'));
+  assert.equal(act('map:select', { id: mapId }).tokens[0].visionFeet, 10);
+  assert.ok(act('token:settings', { id, visionFeet: null }).fog.explored.includes('12,4'));
+});
+
+test('measurement templates are saved separately for each map and can be removed without changing tokens', () => {
+  let state = initialState();
+  const act = (type, payload) => { state = reducer(state, { type, payload }); return activeView(state); };
+  const firstMap = state.activeMapId;
+  const [circle] = act('template:add', { kind: 'circle', x: 96, y: 128, feet: 35 }).templates;
+  assert.equal(act('map:create', { title: 'Двор' }).templates.length, 0);
+  assert.throws(() => act('template:remove', { id: circle.id, expectedMapId: firstMap }), /Карта переключилась/);
+  state = migrateState(JSON.parse(encodeCampaign(state)));
+  const restored = act('map:select', { id: firstMap });
+  assert.deepEqual(restored.templates, [circle]);
+  const cleared = act('template:remove', { id: circle.id });
+  assert.equal(cleared.templates.length, 0);
+  assert.equal(cleared.tokens, restored.tokens);
 });
 test('Window walls stop tokens and allow sight and light from nearby origins', () => {
   let s = initialState();

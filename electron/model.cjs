@@ -22,7 +22,7 @@ function newBattle(title = 'Первый бой') {
 }
 function newBoard(title = 'Первая карта', demo = false) {
   return {
-    id: randomUUID(), title, tokens: [], terrain: [], drawings: [], notePins: [], fog: newFog(),
+    id: randomUUID(), title, tokens: [], terrain: [], drawings: [], templates: [], notePins: [], fog: newFog(),
     map: { image: null, demo, grid: 64, offsetX: 0, offsetY: 0, opacity: 0.3, color: '#d8e6e0', visible: true, zoom: 1 }
   };
 }
@@ -48,7 +48,8 @@ function migrateState(saved) {
       story: { ...newStory(), ...saved.story },
       journal: Array.isArray(saved.journal?.sessions) ? saved.journal : newJournal(),
       scenes: Array.isArray(saved.scenes) ? saved.scenes : [],
-      boards: saved.boards.map(board => ({ terrain: [], drawings: [], notePins: [], fog: newFog(), ...board })) };
+      boards: saved.boards.map(board => ({ terrain: [], drawings: [], notePins: [], fog: newFog(), ...board,
+        templates: Array.isArray(board.templates) ? board.templates : [] })) };
   }
   if (saved.schema !== 1 || !Array.isArray(saved.combatants) || !Array.isArray(saved.tokens) || !saved.map) {
     throw new Error('Неверный формат сохранения');
@@ -108,7 +109,8 @@ function activeView(state) {
     const actors = state.battles.flatMap(entry => entry.combatants.filter(c => placed.has(c.id)).map(describe));
     if (!sameEntries(mapCombatants, actors)) mapCombatants = actors;
   }
-  if (mapActorsChanged || previousBoard?.tokens !== board.tokens) {
+  if (mapActorsChanged || previousBoard?.tokens !== board.tokens &&
+      !sameEntries(previousBoard?.tokens.map(token => !!token.hidden), board.tokens.map(token => !!token.hidden))) {
     const hidden = new Set(board.tokens.filter(token => token.hidden).map(token => token.combatantId));
     const origins = mapCombatants.filter(actor => !hidden.has(actor.id) && revealsFog(actor)).map(actor => actor.id);
     if (!sameEntries(visionOrigins, origins)) visionOrigins = origins;
@@ -123,7 +125,7 @@ function activeView(state) {
     order: sameEntries(lastView?.order, nextOrder) ? lastView.order : nextOrder,
     manualOrder: !!battle.manualOrder,
     round: battle.round, turn: battle.turn, acted: battle.acted, history: battle.history, roundEvents: battle.events, journal: state.journal,
-    map: board.map, tokens: board.tokens, terrain: board.terrain, drawings: board.drawings, fog: board.fog,
+    map: board.map, tokens: board.tokens, terrain: board.terrain, drawings: board.drawings, templates: board.templates, fog: board.fog,
     mapCombatants, visionOrigins
   };
   lastViewState = state;
@@ -167,7 +169,7 @@ function characterFields(p) {
   return { name: text(p.name) || 'Безымянный', image: text(p.image, 100) || null,
     maxHp: clamp(Math.round(finite(p.maxHp, 10)), 1, 999999), role: roleOf(p.role),
     initiativeBonus: initiativeBonus(p.initiativeBonus), movementSound: moveSound(p.movementSound),
-    tokenSize: TokenStyle.size(p.tokenSize), tokenFrame: TokenStyle.frame(p.tokenFrame)[0] };
+    tokenSize: TokenStyle.size(p.tokenSize), tokenFrame: TokenStyle.frame(p.tokenFrame)[0], visionFeet: TokenStyle.vision(p.visionFeet) };
 }
 function newCombatant(fields, hp = fields.maxHp) {
   return { ...fields, id: randomUUID(), hp, initiative: null, conditions: [], exhaustion: 0 };
@@ -246,16 +248,22 @@ function canMoveToken(board, token, col, row, waypoints = [], size = 1) {
 }
 function updateExploration(state, board) {
   if (!board.fog.enabled) return;
-  const players = new Map(state.battles.flatMap(battle => battle.combatants
-    .filter(revealsFog).map(actor => [actor.id, TokenStyle.size(actor.tokenSize)])));
+  const placed = new Set(board.tokens.filter(token => !token.hidden).map(token => token.combatantId));
+  const players = new Map();
+  for (const { combatants } of state.battles) {
+    for (const actor of combatants) if (placed.has(actor.id) && revealsFog(actor)) players.set(actor.id, actor);
+  }
   const origins = board.tokens.filter(token => !token.hidden && players.has(token.combatantId))
-    .map(token => ({ ...token, size: players.get(token.combatantId) }));
+    .map(token => {
+      const actor = players.get(token.combatantId);
+      return { ...token, size: TokenStyle.size(actor.tokenSize), range: TokenStyle.vision(token.visionFeet ?? actor.visionFeet) / 5 };
+    });
   const seen = visibleCells(board.map, origins, blockingWalls(board.terrain));
   if (!seen.size) return;
   const explored = new Set(board.fog.explored);
-  if ([...seen].every(cell => explored.has(cell))) return;
+  const previousSize = explored.size;
   for (const cell of seen) explored.add(cell);
-  board.fog.explored = [...explored].slice(-32000);
+  if (explored.size !== previousSize) board.fog.explored = [...explored].slice(-32000);
 }
 const terrainPoint = point => {
   if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) throw new Error('Укажи точку на карте');
@@ -291,10 +299,10 @@ function copyForAction(state, type, p) {
       ? replaceActive(state.scenes, p.id, scene => ({ ...scene })) : [...state.scenes];
     return s;
   }
-  if (/^(token:|terrain:|fog:|map:(draw|erase|pin|unpin|settings|image|save)$)/.test(type)) {
+  if (/^(token:|template:|terrain:|fog:|map:(draw|erase|pin|unpin|settings|image|save)$)/.test(type)) {
     s.boards = replaceActive(state.boards, state.activeMapId, board => {
       const copy = { ...board };
-      if (type === 'token:move') copy.tokens = board.tokens.map(token => token.combatantId === p.id ? { ...token } : token);
+      if (type === 'token:move' || type === 'token:settings') copy.tokens = board.tokens.map(token => token.combatantId === p.id ? { ...token } : token);
       if (type === 'token:add') copy.tokens = [...board.tokens];
       if (type === 'map:draw') copy.drawings = [...board.drawings];
       if (type === 'map:pin') copy.notePins = [...board.notePins];
@@ -338,7 +346,7 @@ function reducer(state, action) {
     throw new Error('Бой переключился. Открой действие заново.');
   }
   if (p.expectedMapId && p.expectedMapId !== board.id &&
-      /^(token:|terrain:|fog:|map:(draw|erase|image|settings|save|duplicate|pin|unpin)|library:deploy)/.test(action.type)) {
+      /^(token:|template:|terrain:|fog:|map:(draw|erase|image|settings|save|duplicate|pin|unpin)|library:deploy)/.test(action.type)) {
     throw new Error('Карта переключилась. Открой действие заново.');
   }
   switch (action.type) {
@@ -399,7 +407,7 @@ function reducer(state, action) {
       break;
     case 'map:duplicate': {
       const next = { ...newBoard(text(p.title) || (board.title + ' · копия')), map: { ...board.map },
-        terrain: structuredClone(board.terrain), drawings: structuredClone(board.drawings),
+        terrain: structuredClone(board.terrain), drawings: structuredClone(board.drawings), templates: structuredClone(board.templates),
         notePins: structuredClone(board.notePins), fog: newFog(board.fog.enabled) };
       s.boards.push(next);
       s.activeMapId = next.id;
@@ -504,6 +512,7 @@ function reducer(state, action) {
         movementSound: moveSound(p.movementSound, moveSound(c.movementSound)),
         tokenSize: TokenStyle.size(p.tokenSize ?? c.tokenSize),
         tokenFrame: TokenStyle.frame(p.tokenFrame ?? c.tokenFrame)[0],
+        visionFeet: TokenStyle.vision(p.visionFeet ?? c.visionFeet),
         initiativeBonus: bonus, role: 'role' in p ? roleOf(p.role) : roleOf(c.role),
         hp, maxHp
       });
@@ -708,6 +717,27 @@ function reducer(state, action) {
       break;
     }
     case 'token:remove': board.tokens = board.tokens.filter(t => t.combatantId !== p.id); break;
+    case 'token:settings': {
+      const token = board.tokens.find(token => token.combatantId === p.id);
+      if (!token) throw new Error('Токен уже снят с карты');
+      if ('elevation' in p) token.elevation = TokenStyle.elevation(p.elevation);
+      if (p.visionFeet === null) delete token.visionFeet;
+      else if ('visionFeet' in p) token.visionFeet = TokenStyle.vision(p.visionFeet);
+      break;
+    }
+    case 'template:add': {
+      if (!['line', 'circle', 'square', 'cone'].includes(p.kind)) throw new Error('Выбери форму шаблона');
+      if (board.templates.length >= 100) throw new Error('На карте уже 100 шаблонов');
+      const point = terrainPoint(p);
+      const angle = finite(p.angle, 0) % (2 * Math.PI);
+      const feet = clamp(Math.round(finite(p.feet, 15)), 5, 500);
+      const end = p.kind === 'line' && p.end ? terrainPoint(p.end) : null;
+      board.templates = [...board.templates, { id: randomUUID(), ...point, kind: p.kind, angle, feet, end }];
+      break;
+    }
+    case 'template:remove':
+      board.templates = board.templates.filter(template => template.id !== p.id);
+      break;
     case 'terrain:add': {
       if (!['wall', 'door', 'window', 'light', 'item', 'portal'].includes(p.kind)) throw new Error('Выбери инструмент карты');
       const light = p.kind === 'light';
@@ -959,14 +989,15 @@ function reducer(state, action) {
       const previous = beforeBattle.combatants.find(c => c.id === id);
       const next = battle.combatants.find(c => c.id === id);
       visionChanged = !!previous && !!next && (revealsFog(previous) !== revealsFog(next) ||
-        revealsFog(next) && TokenStyle.size(previous.tokenSize) !== TokenStyle.size(next.tokenSize));
+        revealsFog(next) && (TokenStyle.size(previous.tokenSize) !== TokenStyle.size(next.tokenSize) ||
+          TokenStyle.vision(previous.visionFeet) !== TokenStyle.vision(next.visionFeet)));
     }
   }
   const terrainChanged = action.type === 'terrain:door' ||
     action.type === 'terrain:add' && ['wall', 'door', 'window'].includes(p.kind) ||
     action.type === 'terrain:remove' && beforeBoard.terrain.some(item => item.id === p.id && ['wall', 'door', 'window'].includes(item.kind));
-  if (visionChanged || gridChanged || terrainChanged ||
-      /^(token:|terrain:travel$|fog:|map:(image|select)$|battle:select$|scene:open$|library:deploy$|combat:event-run$)/.test(action.type)) {
+  if (visionChanged || gridChanged || terrainChanged || action.type === 'token:settings' && 'visionFeet' in p ||
+      /^(token:(add|move|visibility)$|terrain:travel$|fog:|map:(image|select)$|battle:select$|scene:open$|library:deploy$|combat:event-run$)/.test(action.type)) {
     s.boards = replaceActive(s.boards, s.activeMapId, current => {
       if (!current.fog.enabled) return current;
       const updated = { ...current, fog: { ...current.fog } };
