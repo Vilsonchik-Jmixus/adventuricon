@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="campaign-tools.css">
   <link rel="stylesheet" href="sound-tools.css">
   <link rel="stylesheet" href="dice.css">
+  <link rel="stylesheet" href="map-tools.css">
 </head>
 <body>
   <header class="appbar">
@@ -217,6 +218,7 @@
           <div class="story-modes" role="group" aria-label="Инструменты сюжетной доски">
             <button type="button" data-story-tool="move" aria-pressed="true" title="Двигать и связывать карточки" data-pixel-icon="scroll">Карточки</button>
             <button type="button" data-story-tool="pen" aria-pressed="false" data-pixel-icon="pen">Карандаш</button>
+            <button type="button" data-story-tool="text" aria-pressed="false" data-pixel-icon="scroll">Текст</button>
             <button type="button" data-story-tool="eraser" aria-pressed="false" data-pixel-icon="erase">Ластик</button>
           </div>
           <div id="story-pen-options" hidden>
@@ -278,6 +280,14 @@
         <label>Звук движения<select name="movementSound"></select></label>
         <button id="sound-preview-step" type="button" data-pixel-icon="play">Прослушать</button>
       </div>
+      <label>Размер токена<select name="tokenSize">
+        <option value="0.5">½ клетки</option><option value="1" selected>1 × 1 клетка</option>
+        <option value="2">2 × 2 клетки</option><option value="3">3 × 3 клетки</option>
+      </select></label>
+      <details id="token-frame-picker"><summary>Рамка токена · <strong id="token-frame-label"></strong></summary>
+        <input type="hidden" name="tokenFrame" value="gold">
+        <div id="token-frame-options" role="group" aria-label="Пиксельные рамки"></div>
+      </details>
       <div class="scene-confirm editor-actions"><button id="editor-submit" type="submit" class="primary-button" data-pixel-icon="check">Добавить в трекер</button><button id="save-template-copy" type="button" class="quiet" hidden data-pixel-icon="folder">В заготовки</button></div>
     </form>
   </dialog>
@@ -339,7 +349,7 @@
     </form>
   </dialog>
   <dialog id="text-dialog"><form id="text-form"><div class="dialog-heading"><h2 id="text-dialog-title"></h2><button type="button" data-close-dialog class="icon-button" data-pixel-icon="close" aria-label="Закрыть"></button></div><label id="text-dialog-label" for="text-dialog-input">Название</label><input id="text-dialog-input" required maxlength="500"><p id="text-dialog-hint" class="dialog-hint"></p><label id="new-map-fog" class="checkbox-label" hidden><input type="checkbox" id="new-map-fog-enabled"> Включить туман войны</label><button id="text-dialog-submit" type="submit" class="primary-button" data-pixel-icon="check">Добавить</button></form></dialog>
-  <dialog id="help-dialog"><div class="dialog-heading"><h2>Всё под рукой</h2><button data-close-dialog class="icon-button" data-pixel-icon="close" aria-label="Закрыть"></button></div><div class="help-content"><p><b>Справочник.</b> Разделы dnd.su открываются кнопками над страницей. Поиск с вкладки dnd.su ищет по сайту, а «Веб» ищет по всему интернету или открывает HTTPS-адрес. Кнопка со звездой открывает закладки, где можно сохранить текущую страницу. Gemini открывается в обычном браузере, а текст из поля поиска копируется.</p><p><b>Заготовки.</b> Добавь бой или карту кнопкой «＋» рядом со списком. Переключайся между ними в выпадающем списке. Через настройки рядом со списком можно переименовать заготовку или привязать карту к бою.</p><p><b>Бойцы → карта.</b> Добавьте участника и нажмите «На карту». Щёлкните по нужной клетке или перетащите карточку на карту. Backspace убирает выбранный жетон. Кнопка «На карте» позволяет убрать его после подтверждения.</p><p><b>Инициатива и состояния.</b> После добавления бойца нажми «Инициатива», чтобы вписать число. d20 бросает за противников с их бонусами. Стрелки меняют очередь вручную. Кнопка сортировки возвращает порядок по инициативе. Через «Состояния» или правый щелчок по жетону можно назначить метки D&D 5e.</p><p><b>Здоровье.</b> Введите −7, +5 или =20 в карточке и нажмите Enter. Нажмите на число ХП или карандаш, чтобы изменить текущие и максимальные ХП. Сердце рядом с инициативой отменяет последнее изменение ХП.</p><p><b>Карта.</b> Загрузите файл, перетащите картинку или вставьте через <span data-paste-shortcut>Ctrl+V</span>. Золотые стрелки поворачивают карту мастера на 90°. В настройках экрана игроков есть отдельная ориентация. Колёсико с Ctrl меняет масштаб. Потяните свободный участок для перемещения или нажмите кнопку в золотой рамке, чтобы вписать карту целиком.</p><p><b>Иллюстрации.</b> В правой панели открой галерею и добавь изображения. Нажми на портрет бойца для предпросмотра. «Показать игрокам» выведет выбранное изображение на второй экран, а «Карта игрокам» вернёт карту.</p><p><b>Окна.</b> ↗ выносит панель в отдельное окно. Перетащите окно на другой монитор. Карта остаётся у мастера, а второе окно показывает её игрокам. Shift + щелчок по карте подсвечивает точку на обоих экранах. ⛶ разворачивает панель; Escape возвращает её обратно.</p><p><b>Размеры.</b> Тяните разделители или уголок панели. Если дотянуть уголок до нижнего правого края рабочей области, панель развернётся. Отдельное окно меняет размер за обычные границы окна, а F11 включает полный экран.</p><p><b>Музыка.</b> Импортируйте файл или вставьте ссылку YouTube, чтобы добавить MP3. Треки хранятся на компьютере. Папка каждого трека меняется в его строке.</p><p><b>Сохранения.</b> Кампания и медиа находятся в папке данных приложения и сохраняются при обновлении. Пароли вводятся только на сайтах.</p></div></dialog>
+  <dialog id="help-dialog"><div class="dialog-heading"><h2>Всё под рукой</h2><button data-close-dialog class="icon-button" data-pixel-icon="close" aria-label="Закрыть"></button></div><div class="help-content"><p><b>Справочник.</b> Разделы dnd.su открываются кнопками над страницей. Поиск с вкладки dnd.su ищет по сайту, а «Веб» ищет по всему интернету или открывает HTTPS-адрес. Кнопка со звездой открывает закладки, где можно сохранить текущую страницу. Gemini открывается в обычном браузере, а текст из поля поиска копируется.</p><p><b>Заготовки.</b> Добавь бой или карту кнопкой «＋» рядом со списком. Переключайся между ними в выпадающем списке. Через настройки рядом со списком можно переименовать заготовку или привязать карту к бою.</p><p><b>Бойцы → карта.</b> Добавьте участника и нажмите «На карту». Щёлкните по нужной клетке или перетащите карточку на карту. Backspace убирает выбранный жетон. Кнопка «На карте» позволяет убрать его после подтверждения.</p><p><b>Инициатива и состояния.</b> После добавления бойца нажми «Инициатива», чтобы вписать число. d20 бросает за противников с их бонусами. Стрелки меняют очередь вручную. Кнопка сортировки возвращает порядок по инициативе. Правый щелчок по жетону открывает меню со состояниями и видимостью для игроков.</p><p><b>Здоровье.</b> Введите −7, +5 или =20 в карточке и нажмите Enter. Нажмите на число ХП или карандаш, чтобы изменить текущие и максимальные ХП. Сердце рядом с инициативой отменяет последнее изменение ХП.</p><p><b>Карта.</b> Загрузите файл, перетащите картинку или вставьте через <span data-paste-shortcut>Ctrl+V</span>. Золотые стрелки поворачивают карту мастера на 90°. В настройках экрана игроков есть отдельная ориентация. Колёсико с Ctrl меняет масштаб. В режиме «Сетка мышью» потяните линии и меняйте размер клетки колёсиком. Линейка, круг, квадрат и конус показывают расстояние в футах. Потяните свободный участок для перемещения или нажмите кнопку в золотой рамке, чтобы вписать карту целиком.</p><p><b>Иллюстрации.</b> В правой панели открой галерею и добавь изображения. Нажми на портрет бойца для предпросмотра. «Показать игрокам» выведет выбранное изображение на второй экран, а «Карта игрокам» вернёт карту.</p><p><b>Окна.</b> ↗ выносит панель в отдельное окно. Перетащите окно на другой монитор. Карта остаётся у мастера, а второе окно показывает её игрокам. Shift + щелчок по карте подсвечивает точку на обоих экранах. Кнопка ⛶ меняет размер панели. Esc открывает настройки.</p><p><b>Размеры.</b> Тяните разделители или уголок панели. Если дотянуть уголок до нижнего правого края рабочей области, панель развернётся. Отдельное окно меняет размер за обычные границы окна, а F11 включает полный экран.</p><p><b>Музыка.</b> Импортируйте файл или вставьте ссылку YouTube, чтобы добавить MP3. Треки хранятся на компьютере. Папка каждого трека меняется в его строке.</p><p><b>Сохранения.</b> Кампания и медиа находятся в папке данных приложения и сохраняются при обновлении. Пароли вводятся только на сайтах.</p></div></dialog>
   <dialog id="map-item-dialog" aria-labelledby="item-title">
     <form id="map-item-form">
       <div class="dialog-heading"><h2 id="item-title">Предмет на карте</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
@@ -355,6 +365,10 @@
     <button id="library-paste-lss" type="button" class="quiet" data-pixel-icon="clipboard">Вставить JSON</button>
     <p id="library-empty" class="dialog-hint">Добавь персонажа или перетащи сюда JSON-экспорт Long Story Short.</p>
     <div id="library-list"></div>
+  </dialog>
+  <dialog id="token-actions-dialog" aria-labelledby="token-actions-title">
+    <div class="dialog-heading"><h2 id="token-actions-title"></h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
+    <div class="session-actions"><button id="token-toggle-visibility" type="button" data-pixel-icon="eye"></button><button id="token-open-conditions" type="button" data-pixel-icon="spark">Состояния</button></div>
   </dialog>
   <dialog id="remove-token-dialog" aria-labelledby="remove-token-title">
     <div class="dialog-heading"><h2 id="remove-token-title">Убрать персонажа с карты?</h2></div>
@@ -375,7 +389,7 @@
     </div>
   </dialog>
   <dialog id="screen-settings-dialog" aria-labelledby="screen-settings-title">
-    <div class="dialog-heading"><h2 id="screen-settings-title" data-pixel-icon="gear">Оформление и звук</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
+    <div class="dialog-heading"><h2 id="screen-settings-title" data-pixel-icon="gear">Настройки</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
     <button id="open-shortcuts" class="quiet" type="button" data-pixel-icon="gear">Горячие клавиши</button>
     <fieldset class="screen-theme-picker">
       <legend>Цветовая тема</legend>
@@ -396,6 +410,7 @@
       <label class="checkbox-label"><input type="checkbox" data-sound-option="effects" checked> Состояния на токенах</label>
       <label class="checkbox-label"><input type="checkbox" data-sound-option="movement" checked> Движение токенов с Ctrl</label>
     </fieldset>
+    <div class="settings-quit"><button id="quit-adventuricon" type="button" data-pixel-icon="close">Закрыть Адвентурикон</button></div>
   </dialog>
   <audio id="welcome-jingle" preload="none"></audio>
   <dialog id="campaign-dialog" class="session-dialog">
@@ -561,6 +576,8 @@
   <script src="sound-tools.js"></script>
   <script src="dice.js"></script>
   <script src="portal-tools.js"></script>
+  <script src="token-style.js"></script>
+  <script src="map-tools.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

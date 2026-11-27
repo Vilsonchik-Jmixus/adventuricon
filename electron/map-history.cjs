@@ -1,10 +1,11 @@
 const fields = {
-  'token:add': 'tokens', 'token:move': 'tokens', 'token:remove': 'tokens', 'library:deploy': 'tokens',
+  'token:add': 'tokens', 'token:move': 'tokens', 'token:remove': 'tokens', 'token:visibility': 'tokens', 'library:deploy': 'tokens',
   'terrain:add': 'terrain', 'terrain:edit-item': 'terrain', 'terrain:edit-portal': 'terrain', 'terrain:door': 'terrain', 'terrain:remove': 'terrain',
   'map:pin': 'notePins', 'map:unpin': 'notePins', 'fog:enabled': 'fog', 'fog:reset': 'fog',
 };
 const mapKeys = ['image', 'grid', 'offsetX', 'offsetY', 'opacity', 'color', 'visible', 'rotation', 'diagonals'];
 const sameCell = (a, b) => a === b || a?.col === b?.col && a?.row === b?.row;
+const sameToken = (a, b) => sameCell(a, b) && Boolean(a?.hidden) === Boolean(b?.hidden);
 const tokensById = tokens => new Map(tokens.map(token => [token.combatantId, token]));
 
 function tokenChanges(before, after) {
@@ -12,7 +13,7 @@ function tokenChanges(before, after) {
   const oldTokens = tokensById(before), newTokens = tokensById(after);
   return [...new Set([...oldTokens.keys(), ...newTokens.keys()])].flatMap(id => {
     const previous = oldTokens.get(id), current = newTokens.get(id);
-    return sameCell(previous, current) ? [] : [{ id, previous, current }];
+    return sameToken(previous, current) ? [] : [{ id, previous, current }];
   });
 }
 
@@ -48,7 +49,7 @@ function restoreTokens(tokens, changes, existing, strict = false) {
   const current = tokensById(tokens);
   const eligible = changes.filter(change => {
     if (!existing.has(change.id)) return false;
-    if (sameCell(current.get(change.id), change.current)) return true;
+    if (sameToken(current.get(change.id), change.current)) return true;
     if (strict) throw new Error('Жетоны уже переместились. Сначала отмени последующие перемещения.');
     return false;
   });

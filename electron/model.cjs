@@ -1,7 +1,8 @@
 const { randomUUID, randomInt } = require('node:crypto');
 const { roleOf, effectsFor, MANUAL_IDS, revealsFog } = require('./combat-rules.cjs');
-const { blockingWalls, validCell, routeBlocked, distanceToSegment, visibleCells } = require('../ui/map-geometry.js');
+const { blockingWalls, validCell, routeBlocked, distanceToSegment, visibleCells, footprintsOverlap } = require('../ui/map-geometry.js');
 const { moveSound, ambientIds } = require('../ui/sound-library.js');
+const TokenStyle = require('../ui/token-style.js');
 const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
 const finite = (n, fallback) => Number.isFinite(Number(n)) ? Number(n) : fallback;
 const text = (v, max = 120) => String(v ?? '').trim().slice(0, max);
@@ -105,11 +106,12 @@ function activeView(state) {
   if (mapActorsChanged) {
     const placed = new Set(board.tokens.map(token => token.combatantId));
     const actors = state.battles.flatMap(entry => entry.combatants.filter(c => placed.has(c.id)).map(describe));
-    if (!sameEntries(mapCombatants, actors)) {
-      mapCombatants = actors;
-      const origins = actors.filter(revealsFog).map(actor => actor.id);
-      if (!sameEntries(visionOrigins, origins)) visionOrigins = origins;
-    }
+    if (!sameEntries(mapCombatants, actors)) mapCombatants = actors;
+  }
+  if (mapActorsChanged || previousBoard?.tokens !== board.tokens) {
+    const hidden = new Set(board.tokens.filter(token => token.hidden).map(token => token.combatantId));
+    const origins = mapCombatants.filter(actor => !hidden.has(actor.id) && revealsFog(actor)).map(actor => actor.id);
+    if (!sameEntries(visionOrigins, origins)) visionOrigins = origins;
   }
   const nextOrder = rosterChanged || previousBattle?.manualOrder !== battle.manualOrder ? battleOrder(battle).map(c => c.id) : lastView.order;
   lastView = {
@@ -164,43 +166,63 @@ function advanceConditions(actor) {
 function characterFields(p) {
   return { name: text(p.name) || 'Безымянный', image: text(p.image, 100) || null,
     maxHp: clamp(Math.round(finite(p.maxHp, 10)), 1, 999999), role: roleOf(p.role),
-    initiativeBonus: initiativeBonus(p.initiativeBonus), movementSound: moveSound(p.movementSound) };
+    initiativeBonus: initiativeBonus(p.initiativeBonus), movementSound: moveSound(p.movementSound),
+    tokenSize: TokenStyle.size(p.tokenSize), tokenFrame: TokenStyle.frame(p.tokenFrame)[0] };
 }
 function newCombatant(fields, hp = fields.maxHp) {
   return { ...fields, id: randomUUID(), hp, initiative: null, conditions: [], exhaustion: 0 };
 }
 const cellIndex = n => clamp(Math.round(finite(n, 0)), 0, 2000);
-function placeToken(board, id, { col, row }) {
+function tokenSizes(state) {
+  return new Map(state.battles.flatMap(battle => battle.combatants.map(actor => [actor.id, TokenStyle.size(actor.tokenSize)])));
+}
+function tokenSizeFor(state, id) {
+  for (const battle of state.battles) {
+    const actor = battle.combatants.find(actor => actor.id === id);
+    if (actor) return TokenStyle.size(actor.tokenSize);
+  }
+  return 1;
+}
+function placeToken(board, id, { col, row }, sizes, size) {
   if (board.tokens.some(t => t.combatantId === id)) return;
+  const occupied = board.tokens.map(token => ({ ...token, size: sizes.get(token.combatantId) ?? 1 }));
+  const fits = (col, row) => !occupied.some(token => footprintsOverlap({ col, row, size }, token));
   if (Number.isFinite(col) && Number.isFinite(row)) {
     col = cellIndex(col);
     row = cellIndex(row);
-    if (board.tokens.some(t => t.col === col && t.row === row)) throw new Error('Эта клетка занята');
+    if (!fits(col, row)) throw new Error('Эта клетка занята');
   } else {
-    const occupied = new Set(board.tokens.map(t => `${t.col},${t.row}`));
     let index = 0;
-    while (occupied.has(`${index % 8},${Math.floor(index / 8)}`)) index++;
+    while (!fits(index % 8, Math.floor(index / 8))) index++;
     col = index % 8;
     row = Math.floor(index / 8);
   }
   board.tokens.push({ combatantId: id, col, row });
 }
-function portalCells(target, exit, ids) {
-  const moving = new Set(ids);
-  const occupied = new Set(target.tokens.filter(token => !moving.has(token.combatantId)).map(token => `${token.col},${token.row}`));
+function portalCells(target, exit, tokens, sizes) {
+  const moving = new Set(tokens.map(token => token.combatantId));
+  const occupied = target.tokens.filter(token => !moving.has(token.combatantId)).map(token => ({ ...token, size: sizes.get(token.combatantId) ?? 1 }));
   const walls = blockingWalls(target.terrain);
   const exits = [];
-  for (let radius = 0; radius <= 12 && exits.length < ids.length; radius++) {
-    for (let dy = -radius; dy <= radius && exits.length < ids.length; dy++) {
-      for (let dx = -radius; dx <= radius && exits.length < ids.length; dx++) {
+  const candidates = [];
+  for (let radius = 0; radius <= 12; radius++) {
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
         const cell = { col: exit.col + dx, row: exit.row + dy };
-        if (validCell(cell) && !occupied.has(`${cell.col},${cell.row}`) && !routeBlocked(target.map, walls, [exit, cell])) exits.push(cell);
+        if (validCell(cell)) candidates.push(cell);
       }
     }
   }
-  if (exits.length !== ids.length) throw new Error('Рядом с выходом не хватает свободных клеток');
-  return ids.map((combatantId, index) => ({ combatantId, ...exits[index] }));
+  for (const token of tokens) {
+    const size = sizes.get(token.combatantId) ?? 1;
+    const cell = candidates.find(cell => !occupied.some(other => footprintsOverlap({ ...cell, size }, other)) &&
+      !routeBlocked(target.map, walls, [exit, cell], size));
+    if (!cell) throw new Error('Рядом с выходом не хватает свободных клеток');
+    occupied.push({ ...cell, size });
+    exits.push({ ...token, ...cell });
+  }
+  return exits;
 }
 function eventActions(payload, state) {
   const templateId = typeof payload.templateId === 'string' && payload.templateId || null;
@@ -218,15 +240,16 @@ function eventActions(payload, state) {
   if (!templateId && !doorId && !trackId) return null;
   return { mapId: templateId || doorId ? map.id : null, templateId, cells: templateId ? cells.map(({ col, row }) => ({ col, row })) : [], doorId, trackId };
 }
-function canMoveToken(board, token, col, row, waypoints = []) {
+function canMoveToken(board, token, col, row, waypoints = [], size = 1) {
   return Array.isArray(waypoints) && waypoints.length <= 32 && waypoints.every(validCell) &&
-    !routeBlocked(board.map, blockingWalls(board.terrain), [token, ...waypoints, { col, row }]);
+    !routeBlocked(board.map, blockingWalls(board.terrain), [token, ...waypoints, { col, row }], size);
 }
 function updateExploration(state, board) {
   if (!board.fog.enabled) return;
-  const players = new Set(state.battles.flatMap(battle => battle.combatants
-    .filter(revealsFog).map(actor => actor.id)));
-  const origins = board.tokens.filter(token => players.has(token.combatantId));
+  const players = new Map(state.battles.flatMap(battle => battle.combatants
+    .filter(revealsFog).map(actor => [actor.id, TokenStyle.size(actor.tokenSize)])));
+  const origins = board.tokens.filter(token => !token.hidden && players.has(token.combatantId))
+    .map(token => ({ ...token, size: players.get(token.combatantId) }));
   const seen = visibleCells(board.map, origins, blockingWalls(board.terrain));
   if (!seen.size) return;
   const explored = new Set(board.fog.explored);
@@ -460,7 +483,7 @@ function reducer(state, action) {
       const entry = s.library.find(item => item.id === p.id);
       if (!entry) throw new Error('Заготовка уже удалена');
       const actor = newCombatant(entry);
-      if (p.place === true) placeToken(board, actor.id, p);
+      if (p.place === true) placeToken(board, actor.id, p, tokenSizes(s), TokenStyle.size(actor.tokenSize));
       battle.combatants.push(actor);
       break;
     }
@@ -479,6 +502,8 @@ function reducer(state, action) {
         name: text(p.name) || c.name,
         image: 'image' in p ? text(p.image, 100) || null : c.image,
         movementSound: moveSound(p.movementSound, moveSound(c.movementSound)),
+        tokenSize: TokenStyle.size(p.tokenSize ?? c.tokenSize),
+        tokenFrame: TokenStyle.frame(p.tokenFrame ?? c.tokenFrame)[0],
         initiativeBonus: bonus, role: 'role' in p ? roleOf(p.role) : roleOf(c.role),
         hp, maxHp
       });
@@ -594,9 +619,12 @@ function reducer(state, action) {
         const target = { ...board, tokens: [...board.tokens] };
         if (actions.templateId) {
           const entry = s.library.find(item => item.id === actions.templateId);
+          const sizes = tokenSizes(s);
           for (const cell of actions.cells) {
             const actor = newCombatant(entry);
-            placeToken(target, actor.id, cell);
+            const size = TokenStyle.size(actor.tokenSize);
+            placeToken(target, actor.id, cell, sizes, size);
+            sizes.set(actor.id, size);
             battle.combatants.push(actor);
           }
         }
@@ -658,17 +686,25 @@ function reducer(state, action) {
       break;
     }
     case 'token:add': {
-      if (!battle.combatants.some(c => c.id === p.id)) throw new Error('Участник уже удалён');
-      placeToken(board, p.id, p);
+      const actor = battle.combatants.find(c => c.id === p.id);
+      if (!actor) throw new Error('Участник уже удалён');
+      placeToken(board, p.id, p, tokenSizes(s), TokenStyle.size(actor.tokenSize));
       break;
     }
     case 'token:move': {
       const t = board.tokens.find(t => t.combatantId === p.id);
       if (t) {
         const col = cellIndex(finite(p.col, t.col)), row = cellIndex(finite(p.row, t.row));
-        if (!canMoveToken(board, t, col, row, p.waypoints)) throw new Error('Проход перекрыт');
+        const size = tokenSizeFor(s, p.id);
+        if (!canMoveToken(board, t, col, row, p.waypoints, size)) throw new Error('Проход перекрыт');
         Object.assign(t, { col, row });
       }
+      break;
+    }
+    case 'token:visibility': {
+      const ids = new Set(Array.isArray(p.ids) ? p.ids : [p.id]);
+      board.tokens = board.tokens.map(token => ids.has(token.combatantId) && Boolean(token.hidden) !== p.hidden
+        ? { ...token, hidden: p.hidden === true } : token);
       break;
     }
     case 'token:remove': board.tokens = board.tokens.filter(t => t.combatantId !== p.id); break;
@@ -703,7 +739,7 @@ function reducer(state, action) {
       const ids = Array.isArray(p.ids) ? [...new Set(p.ids)] : [];
       if (ids.length > 100 || ids.some(id => !available.has(id))) throw new Error('Состав жетонов изменился');
       const moving = new Set(ids);
-      const arrivals = portalCells(target, portal.exit, ids);
+      const arrivals = portalCells(target, portal.exit, ids.map(id => board.tokens.find(token => token.combatantId === id)), tokenSizes(s));
       s.boards = s.boards.map(entry => {
         if (entry === board && ids.length) return { ...entry, tokens: entry.tokens.filter(token => !moving.has(token.combatantId)) };
         if (entry === target && ids.length) return { ...entry, tokens: [...entry.tokens.filter(token => !moving.has(token.combatantId)), ...arrivals] };
@@ -787,6 +823,12 @@ function reducer(state, action) {
       break;
     case 'story:save': {
       const fields = { title: text(p.title) || 'Без названия', body: String(p.body ?? '').slice(0, 20000) };
+      if (p.kind === 'text') {
+        fields.body = fields.body.trim();
+        if (!fields.body) throw new Error('Введите текст');
+        fields.kind = 'text';
+        fields.title = text(fields.body.split('\n')[0]);
+      }
       if ('images' in p) fields.images = [...new Set(p.images)].slice(0, 12);
       if (p.id) {
         const note = s.story.notes.find(item => item.id === p.id);
@@ -916,7 +958,8 @@ function reducer(state, action) {
     if (board.tokens.some(token => token.combatantId === id)) {
       const previous = beforeBattle.combatants.find(c => c.id === id);
       const next = battle.combatants.find(c => c.id === id);
-      visionChanged = !!previous && !!next && revealsFog(previous) !== revealsFog(next);
+      visionChanged = !!previous && !!next && (revealsFog(previous) !== revealsFog(next) ||
+        revealsFog(next) && TokenStyle.size(previous.tokenSize) !== TokenStyle.size(next.tokenSize));
     }
   }
   const terrainChanged = action.type === 'terrain:door' ||

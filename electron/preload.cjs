@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('dm', {
   eventMapDoors: context => ipcRenderer.invoke('event-map-doors', context),
   workspaceCommand: payload => ipcRenderer.invoke('workspace-command', payload),
   masterShortcut: command => ipcRenderer.invoke('master-shortcut', command),
+  quit: () => ipcRenderer.invoke('quit-app'),
+  openMasterSettings: () => ipcRenderer.invoke('open-master-settings'),
   undoMap: context => ipcRenderer.invoke('map-undo', context),
   dispatch: (type, payload) => ipcRenderer.invoke('dispatch', { type, payload }),
   importFile: kind => ipcRenderer.invoke('import-file', { kind }),

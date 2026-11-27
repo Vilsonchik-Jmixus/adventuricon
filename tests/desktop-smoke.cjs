@@ -39,7 +39,11 @@ let application;
   await page.click('#next-turn'); await expect(page.locator('.combat-card')).toHaveClass(/active-turn/);
   await page.click('[data-expand="map"]');
   await expect(page.locator('.panel.map')).toHaveClass(/expanded/);
-  await page.keyboard.press('Escape'); await expect(page.locator('.panel.map')).not.toHaveClass(/expanded/);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#screen-settings-dialog')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.click('[data-expand="map"]');
+  await expect(page.locator('.panel.map')).not.toHaveClass(/expanded/);
   // Verify a genuine native detached window, not an HTML imitation.
   const newWindow = application.waitForEvent('window'); await page.click('[data-detach="map"]');
   const mapPage = await newWindow; await mapPage.waitForFunction(() => document.body.classList.contains('detached'));

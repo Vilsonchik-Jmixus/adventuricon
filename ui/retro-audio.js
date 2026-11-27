@@ -31,7 +31,7 @@ function createRetroAudio() {
     armor: [p(0,.135,'noise',1580,510,.41), p(.025,.21,'pulse',895,487,.24), p(.07,.15,'triangle',1270,990,.24)],
     fly: [p(0,.29,'noise',1410,620,.31), p(0,.27,'triangle',104,69,.18,.12)],
     slither: [p(0,.28,'noise',2100,990,.31,.072), p(.05,.21,'triangle',95,65,.17)],
-    click: [p(0,.044,'pulse',870,410,.29)],
+    click: [p(0,.019,'noise',3500,1650,.20), p(.003,.027,'noise',950,380,.14)],
     dice: Array.from({ length: 7 }, (_, i) => p(i * .04 + i * i * .003,.08,'noise',2100 - 145 * i,670,.38 - .026 * i))
   };
   const gestures = [
@@ -55,6 +55,7 @@ function createRetroAudio() {
     const length = loops.has(id) ? 4 : Math.max(...parts.map(part => part.start + part.length), .1) + .02;
     const buffer = context.createBuffer(1, Math.ceil(length * rate), rate);
     const samples = buffer.getChannelData(0);
+    const attack = id === 'click' ? .0012 : .009;
     let seed = 17;
     const noise = () => {
       seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
@@ -65,7 +66,7 @@ function createRetroAudio() {
       const start = Math.round(part.start * rate), count = Math.round(part.length * rate);
       for (let n = 0; n < count; n++) {
         const time = n / rate, progress = n / count;
-        const envelope = Math.min(1, time / .009) * (1 - progress) ** 1.32;
+        const envelope = Math.min(1, time / attack) * (1 - progress) ** 1.32;
         const rhythm = part.interval ? .48 + .52 * Math.abs(Math.sin(Math.PI * time / part.interval)) : 1;
         const previous = phase;
         phase += (part.from * (part.to / part.from) ** progress) / rate;

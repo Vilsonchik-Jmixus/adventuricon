@@ -5,7 +5,7 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetUR
   const draftPath = get('story-draft'), message = get('story-instruction');
   const dialog = get('story-dialog');
   let tool = 'move', source = null, gesture, ignoreClick = false;
-  let editing, newPosition, lastRender;
+  let editing, newPosition, lastRender, editingText;
   const renderedNotes = new WeakMap();
   let cameraX = 0, cameraY = 0, zoom = 1;
   const zoomSteps = [0.25, 0.33, 0.5, 0.67, 0.8, 1, 1.25, 1.5, 2, 2.5, 3];
@@ -73,8 +73,9 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetUR
     document.querySelectorAll('[data-story-tool]').forEach(button => {
       button.setAttribute('aria-pressed', String(button.dataset.storyTool === tool));
     });
-    message.hidden = !source;
-    message.textContent = source ? 'Выбери вторую карточку. Esc отменяет связь.' : '';
+    message.hidden = !source && tool !== 'text';
+    message.textContent = source ? 'Выбери вторую карточку. Esc отменяет связь.' :
+      tool === 'text' ? 'Нажми на поле, чтобы поставить текст.' : '';
     for (const card of cards.children) card.classList.toggle('connecting', card.dataset.storyNote === source);
   }
   function fillLinks() {
@@ -108,6 +109,13 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetUR
     title.className = 'story-note-title';
     title.title = 'Щёлкни для редактирования, потяни для перемещения';
     title.textContent = note.title;
+    if (note.kind === 'text') {
+      card.classList.add('story-free-text');
+      title.textContent = note.body;
+      card.append(title);
+      renderedNotes.set(card, note);
+      return card;
+    }
     body.className = 'story-note-body';
     body.textContent = note.body;
     pin.type = 'button';
@@ -148,7 +156,7 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetUR
         const before = card && renderedNotes.get(card);
         existing.delete(note.id);
         if (!card) cards.append(createCard(note));
-        else if (before.title !== note.title || before.body !== note.body ||
+        else if (before.kind !== note.kind || before.title !== note.title || before.body !== note.body ||
           (before.images ?? []).join(',') !== (note.images ?? []).join(',')) card.replaceWith(createCard(note));
         else {
           placeCard(card, note);
@@ -191,15 +199,21 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetUR
       y < note.y + note.height + 8 && y + height + 8 > note.y));
     return { x, y };
   }
-  function edit(note, position) {
+  function edit(note, position, freeText = note?.kind === 'text') {
     editing = note?.id ?? null;
+    editingText = freeText;
     newPosition = position;
     get('story-title').value = note?.title ?? '';
     get('story-body').value = note?.body ?? '';
+    get('story-body').required = freeText;
+    get('story-dialog-title').textContent = freeText ? 'Текст на доске' : 'Сюжетная заметка';
+    get('story-title').parentElement.hidden = freeText;
+    get('story-image-tools').hidden = freeText;
     imageDraft.reset(note?.images);
     get('story-delete').hidden = !note;
     fillLinks();
     openDialog(dialog.id);
+    if (freeText) get('story-body').focus();
   }
   async function connect(from, to) {
     source = null;
@@ -220,13 +234,18 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetUR
   get('story-form').onsubmit = async event => {
     event.preventDefault();
     if (imageDraft.busy) return;
-    const fields = { title: get('story-title').value, body: get('story-body').value, images: imageDraft.assets };
+    const fields = editingText ? { kind: 'text', body: get('story-body').value } :
+      { title: get('story-title').value, body: get('story-body').value, images: imageDraft.assets };
     const position = editing ? null : newPosition ?? firstFreePosition(fields);
     const response = await dispatch('story:save', { id: editing, ...position, ...fields });
-    if (response?.ok) closeDialog(dialog);
+    if (response?.ok) {
+      if (editingText) { tool = 'move'; updateControls(); }
+      closeDialog(dialog);
+    }
   };
   get('story-delete').onclick = async () => {
-    if (confirm('Удалить заметку и её связи?') && (await dispatch('story:remove', { id: editing }))?.ok) closeDialog(dialog);
+    if (confirm(editingText ? 'Удалить текст?' : 'Удалить заметку и её связи?') &&
+        (await dispatch('story:remove', { id: editing }))?.ok) closeDialog(dialog);
   };
   get('story-links').onclick = event => {
     const id = event.target.closest('[data-story-unlink]')?.dataset.storyUnlink;
@@ -314,6 +333,10 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetUR
     if (gesture || (event.button !== 0 && event.button !== 1)) return;
     const card = event.target.closest('[data-story-note]');
     const note = card && getStory().notes.find(item => item.id === card.dataset.storyNote);
+    if (event.button === 0 && tool === 'text') {
+      if (!card) { event.preventDefault(); edit(null, pointAt(event), true); }
+      return;
+    }
     if (event.button === 0 && card && (tool !== 'move' || (!event.target.closest('.story-pin, .story-note-title')))) return;
     const point = pointAt(event);
     const capture = card ? event.target : viewport;
@@ -378,8 +401,9 @@ function createStoryBoard({ getStory, dispatch, openDialog, closeDialog, assetUR
       }
       return;
     }
-    const canceled = finish(null, false) || !!source;
+    const canceled = finish(null, false) || !!source || tool === 'text';
     if (canceled) {
+      if (tool === 'text') tool = 'move';
       source = null;
       event.stopPropagation();
       event.preventDefault();

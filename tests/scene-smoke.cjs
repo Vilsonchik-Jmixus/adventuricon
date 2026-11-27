@@ -209,7 +209,7 @@ async function main() {
   await app.evaluate(({ dialog }, file) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
   }, lssFile);
-  await master.keyboard.press('Escape');
+  if (await master.locator('.map.expanded').count()) await master.click('[data-expand="map"]');
   await master.click('#import-lss');
   await expect(master.locator('#import-portrait-hint')).toBeVisible();
   await master.click('#editor-submit');

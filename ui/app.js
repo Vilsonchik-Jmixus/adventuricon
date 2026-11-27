@@ -281,6 +281,18 @@ function renderCombat() {
   if (focused && document.activeElement !== focus) list.querySelector(`.hp-form[data-id="${CSS.escape(focused)}"] input`)?.focus();
   if ($('initiative-dialog').open) renderInitiative();
 }
+let lastTokenActors, mapActorLookup;
+function mapActors() {
+  if (lastTokenActors !== state.mapCombatants) {
+    lastTokenActors = state.mapCombatants;
+    mapActorLookup = new Map(lastTokenActors.map(actor => [actor.id, actor]));
+  }
+  return mapActorLookup;
+}
+function frameMarkup(id) {
+  const [, , light, shade, shape, decoration] = TokenStyle.frame(id);
+  return `<span class="pixel-token-frame" data-shape="${shape}" data-decoration="${decoration}" style="--frame-light:${light};--frame-shade:${shade}" aria-hidden="true"></span>`;
+}
 function renderMap() {
   const m = state.map;
   const img = $('map-image');
@@ -293,9 +305,17 @@ function renderMap() {
   const zoom = mapDrawingZoom();
   const width = (img.complete && img.naturalWidth) || 1600, height = (img.complete && img.naturalHeight) || 1100;
   const mode = mapMode();
+  let worldWidth = width, worldHeight = height;
+  if (mode === 'follow') {
+    const actors = mapActors();
+    for (const token of state.tokens) {
+      const span = Math.max(1, TokenStyle.size(actors.get(token.combatantId)?.tokenSize)) + 1;
+      worldWidth = Math.max(worldWidth, (token.col + span) * m.grid + m.offsetX);
+      worldHeight = Math.max(worldHeight, (token.row + span) * m.grid + m.offsetY);
+    }
+  }
   boardLayout = {
-    width: (mode === 'follow' ? Math.max(width, ...state.tokens.map(t => (t.col + 2) * m.grid + m.offsetX)) : width) * zoom,
-    height: (mode === 'follow' ? Math.max(height, ...state.tokens.map(t => (t.row + 2) * m.grid + m.offsetY)) : height) * zoom,
+    width: worldWidth * zoom, height: worldHeight * zoom,
     rotation: (isPlayerMap ? m.playerRotation : null) ?? m.rotation ?? 0, mode, zoom
   };
   img.style.width = `${width * zoom}px`; img.style.height = `${height * zoom}px`;
@@ -316,6 +336,13 @@ function renderMap() {
   portalTools?.render(zoom, mapScene.isEditing());
   if (!isPlayerMap) renderNotePins(zoom);
   renderMapTokens(zoom);
+  mapTools?.render();
+  if (mapTools) {
+    const count = hiddenEnemies().length;
+    const reveal = $('reveal-hidden-enemies');
+    reveal.hidden = count === 0;
+    if (count) reveal.textContent = `Раскрыть врагов (${count})`;
+  }
   if (restoreMapCamera && img.complete) {
     restoreMapCamera = false;
     if (mapCamera && mode === 'follow') centerMapCamera(mapCamera);
@@ -329,14 +356,15 @@ function renderMapTokens(zoom) {
   const m = state.map;
   if (selectedToken && !state.tokens.some(t => t.combatantId === selectedToken)) selectedToken = null;
   const focusedToken = document.activeElement?.dataset.token;
-  const actors = new Map(state.mapCombatants.map(actor => [actor.id, actor]));
+  const actors = mapActors();
   const tokens = state.tokens.flatMap(t => {
     const c = actors.get(t.combatantId); if (!c) return [];
-    if (isPlayerMap && !mapScene.tokenVisible(t.combatantId === previewToken?.id ? previewToken : t)) return [];
+    const size = TokenStyle.size(c.tokenSize);
+    if (isPlayerMap && !mapScene.tokenVisible(t.combatantId === previewToken?.id ? previewToken : t, size)) return [];
     const hp = Number.isFinite(c.hp) ? `${c.hp}/${c.maxHp}` : '';
     const details = [c.name, hp && `${hp} ХП`, ...c.effects.map(effect => effect.name)].filter(Boolean).join(' · ');
-    const html = `<button class="token ${c.hp === 0 ? 'dead' : ''} ${state.turn === c.id ? 'active-turn' : ''} ${selectedToken === c.id ? 'selected-token' : ''}" data-token="${c.id}" title="${escapeHTML(details)}" aria-label="${escapeHTML(c.name)}">
-      <span class="token-face">${avatar(c, 'token-body')}${hp ? `<span class="token-hp">${hp}</span>` : ''}
+    const html = `<button class="token ${c.hp === 0 ? 'dead' : ''} ${state.turn === c.id ? 'active-turn' : ''} ${selectedToken === c.id ? 'selected-token' : ''}" data-token="${c.id}" data-size="${size}" title="${escapeHTML(details + (t.hidden ? ' · Скрыт от игроков' : ''))}" aria-label="${escapeHTML(c.name)}">
+      <span class="token-face">${avatar(c, 'token-body')}${frameMarkup(c.tokenFrame)}${t.hidden ? '<span class="token-secret" data-pixel-icon="eye" aria-label="Скрыт от игроков"></span>' : ''}${hp ? `<span class="token-hp">${hp}</span>` : ''}
       ${c.effects.length ? `<span class="token-conditions">${conditionChips(c, true)}</span>` : ''}</span>
     </button>`;
     return [{ id: c.id, html, col: t.col, row: t.row }];
@@ -1036,9 +1064,24 @@ $('combat-list').addEventListener('dragstart', event => {
   event.dataTransfer.effectAllowed = 'copyMove';
 });
 
+function setTokenFrame(id) {
+  const [key, name] = TokenStyle.frame(id);
+  $('combatant-form').elements.tokenFrame.value = key;
+  $('token-frame-label').textContent = name;
+  for (const button of $('token-frame-options').children) button.setAttribute('aria-pressed', String(button.dataset.frame === key));
+}
+$('token-frame-options').innerHTML = TokenStyle.frames.map(([id, name]) =>
+  `<button type="button" data-frame="${id}" title="${name}" aria-label="${name}">${frameMarkup(id)}</button>`).join('');
+$('token-frame-options').onclick = event => {
+  const choice = event.target.closest('button[data-frame]');
+  if (choice) setTokenFrame(choice.dataset.frame);
+};
 function openCombatantEditor(combatant, template = false, imported = null) {
   const form = $('combatant-form');
   form.reset();
+  form.elements.tokenSize.value = TokenStyle.size(combatant?.tokenSize);
+  setTokenFrame(combatant?.tokenFrame);
+  $('token-frame-picker').open = false;
   importedCharacter = imported;
   editingCombatant = template ? null : combatant?.id ?? null;
   editingTemplate = template ? combatant?.id ?? '' : null;
@@ -1082,7 +1125,8 @@ async function saveCombatant(copyTemplate) {
   const payload = {
     name: f.get('name'), maxHp: Number(f.get('maxHp')),
     initiativeBonus: Number(form.elements.initiativeBonus.value),
-    role: f.get('role'), image: portraitDraft.assets[0] ?? null, movementSound: f.get('movementSound')
+    role: f.get('role'), image: portraitDraft.assets[0] ?? null, movementSound: f.get('movementSound'),
+    tokenSize: Number(f.get('tokenSize')), tokenFrame: f.get('tokenFrame')
   };
   const template = editingTemplate !== null || copyTemplate;
   if (template && editingTemplate) payload.id = editingTemplate;
@@ -1191,12 +1235,29 @@ $('condition-form').onsubmit = async event => {
   }, conditionEdit.context);
   if (response?.ok) closeDialog($('condition-dialog'));
 };
+let tokenMenu;
 $('map-tokens').addEventListener('contextmenu', event => {
   const token = event.target.closest('[data-token]');
   if (isPlayerMap || !token) return;
   event.preventDefault();
-  openConditions(token.dataset.token);
+  const entry = state.tokens.find(item => item.combatantId === token.dataset.token);
+  if (!entry) return;
+  pickToken(entry.combatantId);
+  tokenMenu = { id: entry.combatantId, hidden: Boolean(entry.hidden), context: currentContext() };
+  $('token-actions-title').textContent = mapActors().get(entry.combatantId)?.name ?? 'Токен';
+  $('token-toggle-visibility').textContent = entry.hidden ? 'Показать игрокам' : 'Скрыть от игроков';
+  openDialog('token-actions-dialog');
 });
+$('token-toggle-visibility').onclick = async () => {
+  const { id, hidden, context } = tokenMenu;
+  if ((await dispatch('token:visibility', { id, hidden: !hidden }, context))?.ok && $('token-actions-dialog').open) {
+    closeDialog($('token-actions-dialog'));
+  }
+};
+$('token-open-conditions').onclick = () => {
+  closeDialog($('token-actions-dialog'));
+  openConditions(tokenMenu.id);
+};
 $('undo-hp').onclick = () => dispatch('combatant:undo');
 $('import-map').onclick = () => loadMap(api.importFile('image'));
 $('paste-map').onclick = () => loadMap(api.pasteImage());
@@ -1216,6 +1277,36 @@ $('grid-form').onsubmit = async e => {
   if (response?.ok) closeDialog($('grid-dialog'));
 };
 const viewport = $('map-viewport');
+const mapTools = !detachedPanel ? createMapTools({
+  viewport, getState: () => state, getLayout: () => boardLayout, pointAt: mapPointAt,
+  dispatch, context: currentContext,
+}) : null;
+if (mapTools) {
+  mapTools.bar.onclick = event => {
+    const button = event.target.closest('[data-map-tool]');
+    if (!button || !state) return;
+    if (cancelEventCells) cancelEventCells();
+    cancelTokenDrag?.();
+    setPlacement(null);
+    mapScene.hideEditor();
+    mapTools.select(button.dataset.mapTool);
+  };
+  const reveal = document.createElement('button');
+  reveal.type = 'button';
+  reveal.id = 'reveal-hidden-enemies';
+  reveal.dataset.pixelIcon = 'eye';
+  reveal.hidden = true;
+  reveal.onclick = () => {
+    const ids = hiddenEnemies();
+    if (ids.length) dispatch('token:visibility', { ids, hidden: false });
+  };
+  mapTools.bar.querySelector('.map-measure-group').after(reveal);
+  $('edit-terrain').addEventListener('click', () => mapTools.close(), { capture: true });
+}
+function hiddenEnemies() {
+  const actors = mapActors();
+  return state.tokens.filter(token => token.hidden && actors.get(token.combatantId)?.role === 'enemy').map(token => token.combatantId);
+}
 const mapScene = createMapTerrain({
   getState: () => state,
   getLayout: () => boardLayout,
@@ -1298,6 +1389,7 @@ function pickToken(id) {
   for (const token of $('map-tokens').children) token.classList.toggle('selected-token', token.dataset.token === id);
 }
 function setPlacement(value) {
+  if (value) mapTools?.close();
   placement = value;
   const hint = $('placement-hint');
   hint.hidden = !placement;
@@ -1325,6 +1417,7 @@ function placementCell(event) {
   return { col, row };
 }
 async function pickEventCells(initial, done) {
+  mapTools?.close();
   setPlacement(null);
   mapScene.hideEditor();
   if (expanded && expanded !== 'map') await expandPanel(expanded);
@@ -1503,8 +1596,11 @@ function mapPointAt(x, y) {
   return MapGeometry.inverse(boardProjection.matrix, x - frame.left, y - frame.top);
 }
 function positionToken(token, map, col, row, zoom = map.zoom) {
-  token.style.left = `${(map.offsetX + col * map.grid) * zoom}px`;
-  token.style.top = `${(map.offsetY + row * map.grid) * zoom}px`;
+  const size = TokenStyle.size(token.dataset.size);
+  const unit = map.grid * zoom, inset = Math.max(0, (1 - size) / 2);
+  token.style.left = `${map.offsetX * zoom + (col + inset) * unit}px`;
+  token.style.top = `${map.offsetY * zoom + (row + inset) * unit}px`;
+  token.style.setProperty('--token-span', `${unit * size}px`);
 }
 viewport.addEventListener('scroll', queueMapCamera, { passive: true });
 new ResizeObserver(() => {
@@ -1549,13 +1645,16 @@ $('rotate-player-left').onclick = () => rotatePlayerMap(-90);
 $('rotate-player-right').onclick = () => rotatePlayerMap(90);
 viewport.addEventListener('wheel', e => {
   if (isPlayerMap) { e.preventDefault(); return; }
+  if (mapTools?.wheel(e)) return;
   if (!e.ctrlKey) return;
   e.preventDefault();
   const rect = viewport.getBoundingClientRect();
   changeZoom(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - rect.left, e.clientY - rect.top);
 }, { passive: false });
 viewport.addEventListener('pointerdown', e => {
-  if (isPlayerMap || e.button !== 0 || e.target.closest('[data-door-id], [data-note-pin], button[data-portal-id]') || !boardProjection) return;
+  if (isPlayerMap || e.button !== 0 || !boardProjection) return;
+  if (mapTools?.pointerDown(e)) return;
+  if (e.target.closest('[data-door-id], [data-note-pin], button[data-portal-id]')) return;
   if (placement) {
     e.preventDefault();
     placeAt(e, placement);
@@ -1748,9 +1847,14 @@ document.addEventListener('keydown', e => {
     if ($('dice-menu').matches(':popover-open')) return;
     if (cancelEventCells) { e.preventDefault(); cancelEventCells(); return; }
     if (cancelTokenDrag) { e.preventDefault(); cancelTokenDrag(); return; }
+    if (mapTools?.close()) { e.preventDefault(); return; }
     if (placement) { e.preventDefault(); setPlacement(null); return; }
     if (mapScene.hideEditor()) { e.preventDefault(); return; }
-    if (expanded) { e.preventDefault(); expandPanel(expanded); }
+    if (!isPlayerMap && state && !e.repeat) {
+      e.preventDefault();
+      if (detachedPanel) result(api.openMasterSettings());
+      else $('screen-settings').click();
+    }
     else if (isPlayerMap && document.body.classList.contains('player-fullscreen')) result(api.fullscreen());
   }
   if (e.key === 'F11') { e.preventDefault(); result(api.fullscreen()); }
@@ -1793,7 +1897,7 @@ function drawMovementRuler(map, cells, blocked) {
   label.style.top = Math.max(0, Math.min(end.y - 32, viewport.clientHeight - label.offsetHeight - 2)) + 'px';
 }
 $('map-tokens').addEventListener('pointerdown', e => {
-  const token = e.target.closest('[data-token]'); if (!token || isPlayerMap || placement || mapScene.isEditing() || e.button !== 0 || !boardProjection) return;
+  const token = e.target.closest('[data-token]'); if (!token || isPlayerMap || placement || mapTools?.active() || mapScene.isEditing() || e.button !== 0 || !boardProjection) return;
   const id = token.dataset.token, m = { ...state.map }, z = mapDrawingZoom();
   const original = state.tokens.find(t => t.combatantId === id);
   if (!original) return;
@@ -1806,13 +1910,17 @@ $('map-tokens').addEventListener('pointerdown', e => {
   const listeners = new AbortController();
   const options = { signal: listeners.signal };
   const waypoints = [];
-  const movementSound = SoundLibrary.moveSound(state.mapCombatants.find(actor => actor.id === id)?.movementSound);
+  const actor = mapActors().get(id), size = TokenStyle.size(actor?.tokenSize);
+  const movementSound = SoundLibrary.moveSound(actor?.movementSound);
+  const grab = mapPointAt(e.clientX, e.clientY);
+  const grabCol = Math.floor((grab.x / z - m.offsetX) / m.grid) - original.col;
+  const grabRow = Math.floor((grab.y / z - m.offsetY) / m.grid) - original.row;
   let lastStep = -Infinity;
   let position = original, cursor = original, moved = false, blocked = false, previewFrame = 0;
   const mirrors = () => detached.some(panel => panel === 'map' || panel === 'preview');
   const sameCell = (a, b) => a.col === b.col && a.row === b.row;
   const refresh = () => {
-    blocked = MapGeometry.routeBlocked(m, MapGeometry.blockingWalls(state.terrain), [original, ...waypoints, cursor]);
+    blocked = MapGeometry.routeBlocked(m, MapGeometry.blockingWalls(state.terrain), [original, ...waypoints, cursor], size);
     if (!blocked && !sameCell(position, cursor)) {
       moved = true;
       position = cursor;
@@ -1824,14 +1932,14 @@ $('map-tokens').addEventListener('pointerdown', e => {
         previewFrame = 0;
         const preview = { id, ...position, waypoints };
         if (previewsFog) mapScene.previewFog(state, boardLayout, preview);
-        if (mirrors()) mirrorMap({ token: preview }, context.expectedMapId);
+        if (mirrors() && !original.hidden) mirrorMap({ token: preview }, context.expectedMapId);
       });
     }
   };
   const move = event => {
     const point = mapPointAt(event.clientX, event.clientY);
-    const target = { col: Math.max(0, Math.min(2000, Math.floor((point.x / z - m.offsetX) / m.grid))),
-      row: Math.max(0, Math.min(2000, Math.floor((point.y / z - m.offsetY) / m.grid))) };
+    const target = { col: Math.max(0, Math.min(2000, Math.floor((point.x / z - m.offsetX) / m.grid) - grabCol)),
+      row: Math.max(0, Math.min(2000, Math.floor((point.y / z - m.offsetY) / m.grid) - grabRow)) };
     if (sameCell(target, cursor)) return;
     cursor = target;
     const previous = position;
@@ -1909,6 +2017,7 @@ $('volume').onchange = e => dispatch('music:settings', { volume: Number(e.target
 $('audio').onended = () => { if (!state.music.loop) dispatch('music:settings', { playing: false }); };
 $('audio').onerror = () => { if (state?.music.playing) { toast('Аудиофайл недоступен или имеет неподдерживаемый формат'); dispatch('music:settings', { playing: false }); } };
 $('help').onclick = () => openDialog('help-dialog');
+$('quit-adventuricon').onclick = () => result(api.quit());
 $('screen-fullscreen').onclick = () => result(api.fullscreen());
 function renderMainFullscreen(active) {
   if (detachedPanel) return;
@@ -1980,6 +2089,7 @@ api.onStatus(status => {
   else if (status.scope === 'music-position') { musicPosition = status; renderMusicPosition(); }
   else if (status.scope === 'music-seek' && !detachedPanel) seekTrack(status);
   else if (status.scope === 'shortcut') runShortcut(status.command);
+  else if (status.scope === 'open-settings' && !document.querySelector('dialog[open]')) $('screen-settings').click();
   else if (status.scope === 'workspace-command') {
     if (status.command === 'note') openStoryNote(status.id);
     else if (status.command === 'actor') focusCombatant(status.id);
@@ -2070,7 +2180,8 @@ function readWindowState(value) {
   const rotated = !switched && !isPlayerMap && (state?.map.rotation ?? 0) !== (value.state.map.rotation ?? 0);
   if (switched && $('player-dialog').open) closeDialog($('player-dialog'));
   if (switched) {
-    for (const id of ['map-portal-editor', 'map-portal-travel']) if ($(id).open) closeDialog($(id));
+    mapTools?.close();
+    for (const id of ['map-portal-editor', 'map-portal-travel', 'token-actions-dialog']) if ($(id).open) closeDialog($(id));
   }
   if (switched || state?.activeBattleId !== value.state.activeBattleId) setPlacement(null);
   if (switched) selectedToken = null;

@@ -44,6 +44,14 @@ const MapGeometry = (() => {
     x: map.offsetX + (col + 0.5) * map.grid, y: map.offsetY + (row + 0.5) * map.grid,
   });
   const validCell = cell => !!cell && [cell.col, cell.row].every(n => Number.isInteger(n) && n >= 0 && n <= 2000);
+  function footprintsOverlap(a, b) {
+    const as = Math.max(1, a.size ?? 1), bs = Math.max(1, b.size ?? 1);
+    return a.col < b.col + bs && b.col < a.col + as && a.row < b.row + bs && b.row < a.row + as;
+  }
+  function tokenCenter(map, { col, row, size = 1 }) {
+    const shift = (Math.max(1, size) - 1) / 2;
+    return cellCenter(map, col + shift, row + shift);
+  }
   function routeDistance(cells, alternating = false) {
     let straight = 0, diagonal = 0;
     for (let i = 1; i < cells.length; i++) {
@@ -53,10 +61,25 @@ const MapGeometry = (() => {
     }
     return 5 * (straight + diagonal + (alternating ? Math.floor(diagonal / 2) : 0));
   }
-  function routeBlocked(map, walls, cells) {
+  function routeBlocked(map, walls, cells, size = 1) {
     if (walls.length === 0) return false;
-    const points = cells.map(({ col, row }) => cellCenter(map, col, row));
-    return points.slice(1).some((point, i) => blocked(walls, points[i], point));
+    const points = cells.map(cell => tokenCenter(map, { ...cell, size }));
+    if (size <= 1) return points.slice(1).some((point, i) => blocked(walls, points[i], point));
+    const half = map.grid * size / 2 - 0.01;
+    return points.slice(1).some((to, i) => {
+      const from = points[i];
+      return walls.some(({ a, b }) => {
+        // Separating axes for the wall segment and the square swept along this leg.
+        const axes = [[1, 0], [0, 1], [from.y - to.y, to.x - from.x], [a.y - b.y, b.x - a.x]];
+        return axes.every(([x, y]) => {
+          const start = from.x * x + from.y * y, end = to.x * x + to.y * y;
+          const first = a.x * x + a.y * y, last = b.x * x + b.y * y;
+          const padding = half * (Math.abs(x) + Math.abs(y));
+          return Math.min(first, last) <= Math.max(start, end) + padding &&
+            Math.max(first, last) >= Math.min(start, end) - padding;
+        });
+      });
+    });
   }
   function hit(originX, originY, rayX, rayY, { a, b }) {
     const edgeX = b.x - a.x, edgeY = b.y - a.y;
@@ -115,11 +138,13 @@ const MapGeometry = (() => {
   }
   function visibleCells(map, origins, walls, range = 12) {
     const visible = new Set();
-    for (const { col: x, row: y } of origins) {
-      const origin = cellCenter(map, x, y);
+    for (const token of origins) {
+      const shift = (Math.max(1, token.size ?? 1) - 1) / 2;
+      const x = token.col + shift, y = token.row + shift;
+      const origin = tokenCenter(map, token);
       const nearby = nearbySightWalls(origin, map.grid * range, walls, map.grid);
-      for (let row = Math.max(0, y - range); row <= y + range; row++) {
-        for (let col = Math.max(0, x - range); col <= x + range; col++) {
+      for (let row = Math.max(0, Math.ceil(y - range)); row <= y + range; row++) {
+        for (let col = Math.max(0, Math.ceil(x - range)); col <= x + range; col++) {
           if ((row - y) ** 2 + (col - x) ** 2 > range ** 2) continue;
           const cell = `${col},${row}`;
           if (!visible.has(cell) && !blocked(nearby, origin, cellCenter(map, col, row))) visible.add(cell);
@@ -129,6 +154,6 @@ const MapGeometry = (() => {
     return visible;
   }
   return { orientedSize, project, inverse, transform, cellCenter, validCell, routeDistance, routeBlocked,
-    blockingWalls, sameWalls, blocked, lightPolygon, distanceToSegment, visibleCells };
+    blockingWalls, sameWalls, blocked, lightPolygon, distanceToSegment, visibleCells, footprintsOverlap, tokenCenter };
 })();
 if (typeof module !== 'undefined') module.exports = MapGeometry;

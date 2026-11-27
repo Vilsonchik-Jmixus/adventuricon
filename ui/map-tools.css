@@ -1,0 +1,121 @@
+#map-quick-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+}
+#map-quick-tools button { min-height: 25px; padding: 3px 7px; }
+#map-quick-tools button[aria-pressed="true"] { color: var(--text); background: var(--wood-light); border-color: var(--mint); }
+#map-quick-tools [data-map-tool]::before { margin-right: .3em; color: var(--mint); }
+#map-quick-tools [data-map-tool="line"]::before { content: '↔'; }
+#map-quick-tools [data-map-tool="circle"]::before { content: '○'; }
+#map-quick-tools [data-map-tool="square"]::before { content: '□'; }
+#map-quick-tools [data-map-tool="cone"]::before { content: '◁'; }
+.map-measure-group { display: flex; flex-wrap: wrap; gap: 3px; }
+#map-tool-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; flex-basis: 100%; }
+#map-tool-hint { flex: 1; min-width: min(160px, 100%); color: var(--muted); }
+#map-tool-apply { border-color: var(--mint); }
+.using-map-tool, .using-map-tool .token { cursor: crosshair; touch-action: none; }
+.using-map-tool :is(.token, [data-door-id], [data-note-pin], [data-portal-id]) { pointer-events: none !important; }
+#map-measure-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 7;
+  pointer-events: none;
+  overflow: hidden;
+}
+#map-measure-overlay path { fill: #69d9d850; stroke: #b6fffb; stroke-width: 2; vector-effect: non-scaling-stroke; }
+#map-measure-overlay[data-measure="line"] path { fill: none; stroke-width: 3; }
+#map-measure-label {
+  position: absolute;
+  z-index: 8;
+  pointer-events: none;
+  transform: translate(5px, -120%) rotate(var(--token-orientation, 0deg));
+  padding: 3px 7px;
+  border: 1px solid #b6fffb;
+  border-radius: 4px;
+  color: #ebffff;
+  background: #172e33;
+  font: 600 12px system-ui, sans-serif;
+  white-space: nowrap;
+}
+#map-quick-tools [hidden], #map-measure-overlay[hidden], #map-measure-label[hidden] { display: none; }
+.token {
+  width: var(--token-span, var(--grid-size));
+  height: var(--token-span, var(--grid-size));
+  padding: min(3px, calc(var(--token-span, var(--grid-size)) * .055));
+}
+.token .token-body {
+  border: 0;
+  width: 78%;
+  height: 78%;
+  font-size: clamp(5px, calc(var(--token-span, var(--grid-size)) * .35), 42px);
+}
+.token-face:has(.token-secret) .token-body { opacity: .44; }
+.token-secret {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  right: 0;
+  top: 0;
+  background: #1e2534;
+  border: 1px dashed #e0c5ff;
+  border-radius: 4px;
+}
+.pixel-token-frame {
+  --outline: polygon(23% 0,77% 0,77% 8%,90% 8%,90% 22%,100% 22%,100% 78%,90% 78%,90% 92%,77% 92%,77% 100%,23% 100%,23% 92%,10% 92%,10% 78%,0 78%,0 22%,10% 22%,10% 8%,23% 8%);
+  position: absolute;
+  inset: 0;
+  display: block;
+  background: linear-gradient(145deg, var(--frame-light), var(--frame-shade) 57%, var(--frame-light));
+  clip-path: var(--outline);
+  /* The transparent hole preserves the portrait at every token size. */
+  mask: radial-gradient(circle closest-side, transparent 75%, #000 77%);
+  pointer-events: none;
+}
+.pixel-token-frame[data-shape="octagon"] { --outline: polygon(25% 0,75% 0,100% 25%,100% 75%,75% 100%,25% 100%,0 75%,0 25%); }
+.pixel-token-frame[data-shape="square"] { --outline: polygon(10% 0,90% 0,90% 10%,100% 10%,100% 90%,90% 90%,90% 100%,10% 100%,10% 90%,0 90%,0 10%,10% 10%); }
+.pixel-token-frame[data-shape="diamond"] { --outline: polygon(50% 0,100% 50%,50% 100%,0 50%); mask: radial-gradient(circle closest-side, transparent 63%, #000 65%); }
+.pixel-token-frame[data-shape="shield"] { --outline: polygon(10% 4%,90% 4%,100% 22%,85% 77%,50% 100%,15% 77%,0 22%); }
+.pixel-token-frame[data-shape="star"] { --outline: polygon(50% 0,66% 12%,86% 5%,92% 28%,100% 50%,92% 72%,86% 95%,66% 88%,50% 100%,34% 88%,14% 95%,8% 72%,0 50%,8% 28%,14% 5%,34% 12%); }
+.pixel-token-frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(var(--frame-light) 0 0) 50% 0 / 12% 10% no-repeat,
+    linear-gradient(var(--frame-light) 0 0) 50% 100% / 12% 10% no-repeat,
+    linear-gradient(var(--frame-light) 0 0) 0 50% / 10% 12% no-repeat,
+    linear-gradient(var(--frame-light) 0 0) 100% 50% / 10% 12% no-repeat;
+}
+.pixel-token-frame[data-decoration="gems"]::after { transform: rotate(45deg); }
+.pixel-token-frame[data-decoration="runes"]::after { transform: rotate(22.5deg); }
+.token:has(.token-secret) .pixel-token-frame { opacity: .55; }
+#token-frame-picker summary { cursor: pointer; color: var(--text); }
+#token-frame-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(44px, 1fr)); gap: 5px; margin-top: 8px; }
+#token-frame-options button { position: relative; min-height: 44px; }
+#token-frame-options .pixel-token-frame { width: 31px; height: 31px; margin: auto; }
+#token-frame-options button[aria-pressed="true"] { border-color: var(--mint); outline: 1px solid var(--mint); }
+#editor { max-height: 90vh; overflow: auto; }
+#story-cards .story-free-text { width: max-content; max-width: 490px; padding: 0; background: transparent; border: 0; box-shadow: none; }
+#story-cards .story-free-text .story-note-title {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 4px 7px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text);
+  font: 600 17px/1.35 system-ui, sans-serif;
+  text-align: left;
+}
+#story-cards .story-free-text .story-note-title:hover { border-color: var(--line); }
+.settings-quit { display: flex; justify-content: end; border-top: 1px solid var(--line); margin-top: 14px; padding-top: 10px; }

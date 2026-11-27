@@ -119,7 +119,7 @@ let app;
   await master.mouse.move(after.x, after.y, { steps: 8 }); await master.mouse.up();
   await expect.poll(() => master.evaluate(async () => (await window.dm.init()).state.tokens.map(({ row, col }) => [row, col]))).toEqual([[6, 4]]);
   await expect.poll(() => player.evaluate(async () => (await dm.init()).state.tokens.map(({ row, col }) => [row, col]))).toEqual([[6, 4]]);
-  await master.keyboard.press('Escape');
+  await master.click('[data-expand="map"]');
   await master.click('#player-settings');
   await master.selectOption('#player-fit', 'follow');
   await master.locator('#player-dialog [data-close-dialog]').click();

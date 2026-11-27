@@ -8,7 +8,7 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
   let editing = false, tool = 'select', selected = null, draft = null, acceptedMap, acceptedCampaign;
   let fogKey, exploredKey = '', exploredCells, visible = new Set(), cancelDrawing;
   let lastDrawings, lastTerrain, lastLightGrid, lastLightWalls, lastLights = [], inkViewBox;
-  let wallTerrain, walls, itemsKey = [], doorsKey = [];
+  let wallTerrain, walls, itemsKey = [], doorsKey = [], lastActors, actorSizes;
   const terrainColors = { wall: '#e99c75', window: '#8ed0ea' };
   const labels = {
     select: 'Выбери объект щелчком',
@@ -148,20 +148,26 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
     fogLayer.hidden = !state.fog.enabled;
     if (fogLayer.hidden) { fogKey = null; visible.clear(); return; }
     const visionIds = new Set(state.visionOrigins);
-    const origins = state.tokens.filter(token => visionIds.has(token.combatantId)).map(token =>
-      token.combatantId === preview?.id ? preview : token);
+    if (lastActors !== state.mapCombatants) {
+      lastActors = state.mapCombatants;
+      actorSizes = new Map(lastActors.map(actor => [actor.id, TokenStyle.size(actor.tokenSize)]));
+    }
+    const origins = state.tokens.filter(token => visionIds.has(token.combatantId)).map(token => ({
+      ...(token.combatantId === preview?.id ? preview : token), size: actorSizes.get(token.combatantId)
+    }));
     const { grid } = state.map;
     renderExploredFog(state, width, height);
     if (fogKey?.walls === walls && fogKey.origins.length === origins.length &&
-        fogKey.origins.every((origin, index) => origin.col === origins[index].col && origin.row === origins[index].row)) return;
+        fogKey.origins.every((origin, index) => origin.col === origins[index].col && origin.row === origins[index].row &&
+          origin.size === origins[index].size)) return;
     fogKey = { walls, origins };
     visible = MapGeometry.visibleCells(state.map, origins, walls);
     const ctx = prepareCanvas(fogLayer, width, height);
     ctx.drawImage(exploredLayer, 0, 0, width, height);
     ctx.globalCompositeOperation = 'destination-out';
     ctx.fillStyle = '#fff';
-    for (const { col, row } of origins) {
-      const outline = MapGeometry.lightPolygon(MapGeometry.cellCenter(state.map, col, row), grid * 12, walls, grid);
+    for (const token of origins) {
+      const outline = MapGeometry.lightPolygon(MapGeometry.tokenCenter(state.map, token), grid * 12, walls, grid);
       ctx.beginPath();
       for (const { x, y } of outline) ctx.lineTo(x, y);
       ctx.closePath();
@@ -445,6 +451,13 @@ function createMapTerrain({ getState, getLayout, getPoint, dispatch, redraw, exp
     if (readOnly) renderItems(state, layout);
   }
 
-  return { render, pointerDown, toggleFog, previewFog, hideEditor: () => editing && (setEditing(false), true),
-    isEditing: () => editing, tokenVisible: token => fogLayer.hidden || visible.has(`${token.col},${token.row}`) };
+  function tokenVisible(token, size) {
+    if (fogLayer.hidden) return true;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) if (visible.has(`${token.col + x},${token.row + y}`)) return true;
+    }
+    return false;
+  }
+  return { render, pointerDown, toggleFog, previewFog, tokenVisible,
+    hideEditor: () => editing && (setEditing(false), true), isEditing: () => editing };
 }

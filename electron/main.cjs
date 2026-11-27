@@ -112,14 +112,18 @@ function windowState(owner, view = activeView(state)) {
   const mapCamera = mapCameras.get(view.activeMapId) ?? null;
   if (playerSurface(owner)) {
     const shareHealth = view.map.playerHealth !== false;
+    const { tokens, hidden } = playerTokens(view.tokens);
     let actors = publicActors.get(view.mapCombatants);
-    if (!actors) { actors = new Map(); publicActors.set(view.mapCombatants, actors); }
-    if (!actors.has(shareHealth)) actors.set(shareHealth, playerMapActors(view.mapCombatants, shareHealth));
+    if (!actors) { actors = new WeakMap(); publicActors.set(view.mapCombatants, actors); }
+    if (!actors.has(hidden)) {
+      const visible = view.mapCombatants.filter(actor => !hidden.has(actor.id));
+      actors.set(hidden, [playerMapActors(visible, false), playerMapActors(visible, true)]);
+    }
     return {
-      state: { activeMapId: view.activeMapId, map: view.map, tokens: view.tokens,
-        mapCombatants: actors.get(shareHealth),
+      state: { activeMapId: view.activeMapId, map: view.map, tokens,
+        mapCombatants: actors.get(hidden)[Number(shareHealth)],
         visionOrigins: view.visionOrigins,
-        terrain: playerTerrain(view.terrain), drawings: view.drawings, fog: view.fog, turn: view.turn },
+        terrain: playerTerrain(view.terrain), drawings: view.drawings, fog: view.fog, turn: hidden.has(view.turn) ? null : view.turn },
       detached: ['map'], presentation, recentImages: [], mapCamera, campaignId: campaigns.index.active, playerBlackout, playerFrame: playerFrame()
     };
   }
@@ -128,6 +132,19 @@ function windowState(owner, view = activeView(state)) {
     campaigns: campaigns.index.profiles, canUndoMap: !!mapHistory.get(state.activeMapId)?.length,
     recentImages: recentImages.map(resolveImage).filter(Boolean), mapCamera
   };
+}
+let lastTokenProjection = { hidden: new Set(), tokens: [] };
+function playerTokens(tokens) {
+  if (lastTokenProjection.source === tokens) return lastTokenProjection;
+  const hidden = new Set(tokens.filter(token => token.hidden).map(token => token.combatantId));
+  const visible = hidden.size ? tokens.filter(token => !token.hidden) : tokens;
+  const previous = lastTokenProjection;
+  lastTokenProjection = {
+    source: tokens,
+    hidden: hidden.size === previous.hidden.size && [...hidden].every(id => previous.hidden.has(id)) ? previous.hidden : hidden,
+    tokens: visible.length === previous.tokens.length && visible.every((token, i) => token === previous.tokens[i]) ? previous.tokens : visible,
+  };
+  return lastTokenProjection;
 }
 const visibleTerrain = new WeakMap();
 function playerTerrain(terrain) {
@@ -321,6 +338,11 @@ function attachRemote(id, owner) {
         return;
       }
       if (input.type === 'keyDown' && !input.isAutoRepeat) {
+        if (input.key === 'Escape' && !input.control && !input.meta && !input.alt && !input.shift) {
+          event.preventDefault();
+          openMasterSettings();
+          return;
+        }
         const command = matchShortcut(input, shortcuts);
         if (command) {
           const target = command === 'fullscreen' || command.startsWith('reference-') && remotePanelFor(id) === 'info' ? record.owner : mainWindow;
@@ -567,7 +589,19 @@ function switchCampaign(id) {
   broadcast();
   soundToMaster({ ambience: { loops: [], ambientVolume: 1 } });
 }
+function openMasterSettings() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!TEST) { mainWindow.show(); mainWindow.focus(); }
+  mainWindow.webContents.focus();
+  mainWindow.webContents.send('status', { scope: 'open-settings' });
+}
 function setupIPC() {
+  handle('open-master-settings', () => { openMasterSettings(); return { ok: true }; });
+  handle('quit-app', event => {
+    if (event.sender !== mainWindow.webContents) throw new Error('Команда доступна в главном окне');
+    setImmediate(() => app.quit());
+    return { ok: true };
+  });
   handle('portal-map-preview', (_, { mapId, expectedCampaignId }) => {
     checkCampaign(expectedCampaignId);
     const board = state.boards.find(entry => entry.id === mapId);
@@ -878,8 +912,9 @@ function setupIPC() {
     const token = preview.token;
     const board = state.boards.find(item => item.id === state.activeMapId);
     const original = token && board.tokens.find(item => item.combatantId === token.id);
-    const valid = original && [token.col, token.row].every(n => Number.isInteger(n) && n >= 0 && n <= 2000) &&
-      canMoveToken(board, original, token.col, token.row, token.waypoints);
+    const movingActor = original && !original.hidden && activeView(state).mapCombatants.find(actor => actor.id === token.id);
+    const valid = movingActor && [token.col, token.row].every(n => Number.isInteger(n) && n >= 0 && n <= 2000) &&
+      canMoveToken(board, original, token.col, token.row, token.waypoints, movingActor.tokenSize);
     const message = {
       scope: 'map-preview', mapId: state.activeMapId, camera: mapCameras.get(state.activeMapId) ?? null,
       blackout: playerBlackout,
@@ -1065,7 +1100,7 @@ app.whenReady().then(async () => {
         const allowed = ['index.html', 'app.js', 'map-geometry.js', 'map-terrain.js', 'styles.css', 'tavern.css', 'themes.js', 'themes.css',
           'ambience.css', 'ambience.js', 'scene.css', 'story.js', 'story.css', 'session.js', 'session.css', 'workspace.css', 'icons.css',
           'shortcuts.js', 'campaign-tools.js', 'campaign-tools.css', 'sound-library.js', 'retro-audio.js', 'sound-tools.js', 'sound-tools.css',
-          'dice.js', 'dice.css', 'portal-tools.js',
+          'dice.js', 'dice.css', 'portal-tools.js', 'token-style.js', 'map-tools.js', 'map-tools.css',
           ...bundledAssets.map(asset => asset.slice(1))];
         const relative = u.pathname.slice(1) || 'index.html';
         if (!allowed.includes(relative)) return new Response('Not found', { status: 404 });
