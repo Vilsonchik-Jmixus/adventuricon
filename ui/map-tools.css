@@ -96,19 +96,52 @@
 }
 body.player-map .map-gold-frame { display: none; }
 #map-turn-order {
-  display: flex; gap: 8px; align-items: center; flex: none; overflow: hidden;
-  padding: 6px 9px; background: var(--panel); border-bottom: 1px solid var(--line); font-size: 13px;
+  display: flex; gap: 10px; align-items: center; flex: none; overflow: hidden;
+  justify-content: safe center; padding: 6px 9px;
+  background: var(--panel); border-bottom: 1px solid var(--line); font-size: 13px;
 }
 #map-turn-order strong { flex: none; color: var(--text); }
-#map-turn-order > div { display: flex; gap: 5px; overflow-x: auto; scrollbar-width: thin; }
-.turn-chip { flex: none; padding: 3px 7px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); }
-.turn-chip.current { border-color: #ffd580; color: var(--text); }
-.turn-chip.next { border-color: #a5a8af; color: var(--text); }
-.token:is(.active-turn, .next-turn) .token-face::after {
-  content: ''; position: absolute; inset: -3px; border-radius: 50%; pointer-events: none;
-  border: 2px solid #b7b9bf;
+#map-turn-order ol { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: thin; margin: 0; padding: 0; }
+.turn-chip {
+  display: flex; position: relative; align-items: center; gap: 6px; flex: none; max-width: 165px;
+  padding: 4px 7px 4px 4px; border: 1px solid var(--line); border-radius: 4px;
+  color: var(--text); background: var(--inset);
 }
-.token.active-turn .token-face::after { border-color: #ffdc8b; box-shadow: 0 0 7px #ffaa46; }
+.turn-portrait { display: grid; place-items: center; flex: none; width: 32px; height: 32px; overflow: hidden; background: var(--raised); }
+.turn-portrait img { width: 100%; height: 100%; object-fit: cover; }
+.turn-initiative {
+  position: absolute; top: 2px; left: 2px; padding: 0 3px; border-radius: 3px;
+  color: #fff; background: #1a1513; font-size: 10px; font-variant-numeric: tabular-nums;
+}
+.turn-caption { display: grid; min-width: 0; }
+.turn-caption small { color: var(--muted); }
+.turn-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.turn-chip.current { border-color: #ff6e71; }
+.turn-chip.next { border-color: #58baff; }
+.token:is(.active-turn, .next-turn) .token-face {
+  --rune-gap: clamp(5px, calc(var(--token-span) * .1), 13px);
+  --rune-unit: clamp(2px, calc(var(--token-span) * .048), 6px);
+}
+.token:is(.active-turn, .next-turn) .token-face::before,
+.token:is(.active-turn, .next-turn) .token-face::after {
+  content: ''; position: absolute; border-radius: 50%; pointer-events: none;
+}
+.token:is(.active-turn, .next-turn) .token-face::before {
+  inset: calc(-1 * var(--rune-gap));
+  background: repeating-conic-gradient(from -4deg, var(--turn-ring) 0 5deg, transparent 5deg 10deg,
+    var(--turn-ring) 10deg 13deg, transparent 13deg 30deg);
+  mask: radial-gradient(circle closest-side, transparent calc(100% - 2 * var(--rune-unit) - 2px),
+    #000 calc(100% - 2 * var(--rune-unit) - 2px) calc(100% - var(--rune-unit) - 2px),
+    transparent calc(100% - var(--rune-unit) - 2px));
+}
+.token:is(.active-turn, .next-turn) .token-face::after {
+  inset: calc(-1 * var(--rune-gap));
+  border: 2px solid var(--turn-ring);
+  box-shadow: 0 0 0 1px #151719, 0 0 7px var(--turn-ring), inset 0 0 0 var(--rune-unit) #15171975;
+}
+.token.active-turn { --turn-ring: #ff5058; }
+.token.next-turn { --turn-ring: #33a9ff; }
+.token.active-turn .token-body { box-shadow: none; }
 #end-combat { font-size: 11px; padding: 4px 6px; }
 .token {
   width: var(--token-span, var(--grid-size));

@@ -245,7 +245,7 @@ body.player-map .workspace { margin: 0; height: 100vh; }
 body.player-map .map { border: 0; }
 body.player-map .map .resize-grip { z-index: 12; }
 .player-map #player-art, .player-map #player-blackout { position: absolute; inset: var(--panel-heading) 0 0; }
-.player-map #player-art { z-index: 8; background: #130d0a; }
+.player-map #player-art { inset: 0; z-index: 8; background: #130d0a; }
 #presented-image { display: block; width: 100%; height: 100%; object-fit: contain; }
 .player-map #player-blackout { background: #100c09; }
 body.player-map.player-fullscreen { --panel-heading: 0px; }

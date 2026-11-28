@@ -38,8 +38,8 @@ function effectsFor(actor) {
   }));
 }
 function playerMapActors(actors, shareHealth) {
-  return actors.map(({ id, name, image, role, effects, hp, maxHp, tokenSize, tokenFrame, visionFeet }) => ({
-    id, name, image, role, effects, tokenSize, tokenFrame, visionFeet,
+  return actors.map(({ id, name, image, role, effects, hp, maxHp, tokenSize, tokenFrame, visionFeet, initiative }) => ({
+    id, name, image, role, effects, tokenSize, tokenFrame, visionFeet, initiative,
     ...(shareHealth && mayShareHp({ role }) ? { hp, maxHp } : {})
   }));
 }

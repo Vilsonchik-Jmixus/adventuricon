@@ -423,11 +423,17 @@ function renderPlayerTurnOrder(visibleIds) {
   const index = Math.max(0, order.indexOf(state.turn));
   const names = mapActors();
   const chips = [...order.slice(index), ...order.slice(0, index)].filter(id => visibleIds.has(id)).map(id => {
+    const actor = names.get(id);
+    if (!actor) return '';
     const kind = id === state.turn ? 'current' : id === state.nextTurn ? 'next' : '';
-    const label = kind === 'current' ? 'Сейчас · ' : kind === 'next' ? 'Следующий · ' : '';
-    return `<span class="turn-chip ${kind}">${label}${escapeHTML(names.get(id)?.name)}</span>`;
+    const label = kind === 'current' ? 'Сейчас' : kind === 'next' ? 'Следующий' : '';
+    const initiative = Number.isFinite(actor.initiative) ? `<span class="turn-initiative" title="Инициатива">${actor.initiative}</span>` : '';
+    return `<li class="turn-chip ${kind}"${kind === 'current' ? ' aria-current="step"' : ''}>
+      ${initiative}${avatar(actor, 'turn-portrait')}<span class="turn-caption">${label ? `<small>${label}</small>` : ''}
+      <span class="turn-name" title="${escapeHTML(actor.name)}">${escapeHTML(actor.name)}</span></span>
+    </li>`;
   }).join('');
-  const content = `<strong>Раунд ${state.round}</strong><div>${chips}</div>`;
+  const content = `<strong>Раунд ${state.round}</strong><ol aria-label="Участники">${chips}</ol>`;
   if (bar.innerHTML !== content) bar.innerHTML = content;
 }
 let renderedMusic = {};
