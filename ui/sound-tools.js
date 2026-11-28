@@ -1,7 +1,6 @@
 function createSoundTools({ retro, api, result, openDialog, toast }) {
   const get = id => document.getElementById(id);
   const pad = get('sound-pad'), tracks = get('music-tracks');
-  const quickPad = get('quick-soundpad');
   const { pads, moves, preferenceDefaults, padShortcut, padSlot, stockProfile } = SoundLibrary;
   let preferences = preferenceDefaults, active = new Set(), playing = false;
   const manualLoops = new Map(), sceneLoops = new Set(), media = new Map();
@@ -69,6 +68,7 @@ function createSoundTools({ retro, api, result, openDialog, toast }) {
       if (!slot.sound && !slot.asset) return editor.open(id);
       trigger(id);
     };
+    button.oncontextmenu = event => { event.preventDefault(); editor.open(id); };
     buttons.set(id, { button, label });
     get(index < 10 ? 'sound-pad-a' : 'sound-pad-b').append(button);
   }
@@ -94,7 +94,6 @@ function createSoundTools({ retro, api, result, openDialog, toast }) {
   function select(showPad) {
     tracks.hidden = showPad;
     pad.hidden = !showPad;
-    quickPad.hidden = showPad;
     get('music-tracks-tab').setAttribute('aria-pressed', String(!showPad));
     get('sound-pad-tab').setAttribute('aria-pressed', String(showPad));
   }
@@ -103,9 +102,6 @@ function createSoundTools({ retro, api, result, openDialog, toast }) {
     playing = running;
     for (const button of pad.querySelectorAll('[aria-pressed][data-sound-pad]')) {
       button.setAttribute('aria-pressed', String(active.has(button.dataset.soundPad)));
-    }
-    for (const button of quickPad.querySelectorAll('[aria-pressed]')) {
-      button.setAttribute('aria-pressed', String(active.has(button.dataset.quickPad)));
     }
     get('stop-ambient').disabled = !playing;
   }
@@ -207,19 +203,6 @@ function createSoundTools({ retro, api, result, openDialog, toast }) {
       }
       editor.render();
       renderCategories();
-      const defined = entries();
-      const quick = [...defined.filter(sound => !sound.loop).slice(0, 2), ...defined.filter(sound => sound.loop).slice(0, 2)];
-      for (const sound of defined) if (quick.length < 4 && !quick.includes(sound)) quick.push(sound);
-      quickPad.replaceChildren(...quick.map(sound => {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.textContent = sound.title;
-        button.title = sound.title;
-        button.dataset.quickPad = sound.id;
-        if (sound.loop) button.setAttribute('aria-pressed', String(active.has(sound.id)));
-        button.onclick = () => trigger(sound.id);
-        return button;
-      }));
     }
     if (retro && (changed || !next.enabled)) reportActive();
   }
@@ -250,7 +233,7 @@ function createSoundTools({ retro, api, result, openDialog, toast }) {
   }
   document.addEventListener('click', event => {
     const button = event.target.closest('button');
-    if (!button || button.disabled || button.closest('#sound-pad, #quick-soundpad, #sound-options') || button.id === 'sound-preview-step' ||
+    if (!button || button.disabled || button.closest('#sound-pad, #sound-options') || button.id === 'sound-preview-step' ||
         button.matches('#dice-form [type=submit]') ||
         button.matches('[data-roll-actor], [data-roll-role]') || !preferences.enabled || !preferences.clicks) return;
     if (retro) retro.play('click', 'clicks');
@@ -301,7 +284,7 @@ function createSoundpadEditor({ api, result, openDialog, getPreferences }) {
     profileId = active.id;
     profileForm.elements.name.value = active.name;
     get('delete-soundpad').hidden = active.id === stockProfile.id;
-    fields.slot.replaceChildren(...pads.map(([key], i) => new Option(labelFor(i), key)));
+    fields.slot.replaceChildren(...pads.map(([key], i) => new Option(labelFor(i) + (padSlot(getPreferences(), key).name ? " · " + padSlot(getPreferences(), key).name : ""), key)));
     fields.category.replaceChildren(new Option('Без категории', ''), ...getPreferences().categories.map(name => new Option(name, name)));
     fields.slot.value = id ?? pads[0][0];
     loadSlot();

@@ -161,23 +161,6 @@ body:not(.detached) .workspace {
 }
 #map-player-status[data-live="true"] { color: var(--text); }
 #map-player-status[data-live="true"]::before { content: '• '; color: var(--mint); }
-#quick-soundpad {
-  display: flex;
-  gap: 4px;
-  padding: 4px 6px;
-}
-#quick-soundpad button {
-  flex: 1 1 0;
-  min-width: 0;
-  padding: 3px 7px;
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  border-color: var(--line);
-}
-#quick-soundpad button[aria-pressed="true"] { border-color: var(--mint); background: var(--raised); }
-#quick-soundpad:empty, body.detached #quick-soundpad, [data-mode="preparation"] #quick-soundpad { display: none; }
 #open-campaign-search { gap: 4px; }
 #campaign-query { min-height: 38px; }
 html[data-reduced-motion] *, html[data-reduced-motion] *::before, html[data-reduced-motion] *::after {

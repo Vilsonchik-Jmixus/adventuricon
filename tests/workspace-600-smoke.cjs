@@ -26,11 +26,10 @@ async function main() {
       await page.fill('#campaign-query', query);
       await page.locator('#campaign-search-results').getByRole('button', { name: title }).click();
     };
-    await expect(page.locator('#quick-soundpad button')).toHaveCount(4);
+    await expect(page.locator('#quick-soundpad')).toHaveCount(0);
     await page.keyboard.press('Control+Alt+g');
     await expect(page.locator('#workspace')).toHaveAttribute('data-mode', 'preparation');
     await expect(page.locator('#story')).toBeVisible();
-    await expect(page.locator('#quick-soundpad')).toBeHidden();
     await command('layout:settings', { left: 26, middle: 45, top: 55 });
     await search('ведение', /Ведение/);
     await expect(page.locator('#workspace')).toHaveAttribute('data-mode', 'game');

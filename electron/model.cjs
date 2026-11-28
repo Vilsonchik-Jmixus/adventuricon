@@ -125,6 +125,7 @@ function activeView(state) {
     order: sameEntries(lastView?.order, nextOrder) ? lastView.order : nextOrder,
     manualOrder: !!battle.manualOrder,
     round: battle.round, turn: battle.turn, acted: battle.acted, history: battle.history, roundEvents: battle.events, journal: state.journal,
+    nextTurn: battle.turn ? nextOrder.find(id => id !== battle.turn && !battle.acted.includes(id)) ?? nextOrder[0] : null,
     map: board.map, tokens: board.tokens, terrain: board.terrain, drawings: board.drawings, templates: board.templates, fog: board.fog,
     mapCombatants, visionOrigins
   };
@@ -644,6 +645,11 @@ function reducer(state, action) {
       battle.events = replaceActive(battle.events, event.id, item => ({ ...item, executed: true }));
       break;
     }
+    case 'combat:end':
+      battle.turn = null;
+      battle.round = 1;
+      battle.acted = [];
+      break;
     case 'combat:next': {
       const order = battleOrder(battle).map(c => c.id);
       if (!order.length) break;

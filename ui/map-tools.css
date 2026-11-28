@@ -95,6 +95,21 @@
   box-shadow: 2px 0 #fadc8d, 4px 0 #fff1b7, 0 2px #fadc8d, 0 4px #fff1b7;
 }
 body.player-map .map-gold-frame { display: none; }
+#map-turn-order {
+  display: flex; gap: 8px; align-items: center; flex: none; overflow: hidden;
+  padding: 6px 9px; background: var(--panel); border-bottom: 1px solid var(--line); font-size: 13px;
+}
+#map-turn-order strong { flex: none; color: var(--text); }
+#map-turn-order > div { display: flex; gap: 5px; overflow-x: auto; scrollbar-width: thin; }
+.turn-chip { flex: none; padding: 3px 7px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); }
+.turn-chip.current { border-color: #ffd580; color: var(--text); }
+.turn-chip.next { border-color: #a5a8af; color: var(--text); }
+.token:is(.active-turn, .next-turn) .token-face::after {
+  content: ''; position: absolute; inset: -3px; border-radius: 50%; pointer-events: none;
+  border: 2px solid #b7b9bf;
+}
+.token.active-turn .token-face::after { border-color: #ffdc8b; box-shadow: 0 0 7px #ffaa46; }
+#end-combat { font-size: 11px; padding: 4px 6px; }
 .token {
   width: var(--token-span, var(--grid-size));
   height: var(--token-span, var(--grid-size));

@@ -210,7 +210,11 @@ jobs:
           fi
           gh release upload "$tag" "${installers[@]}" "${updates[@]}" SHA256SUMS
           if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --silent; then
-            gh release edit "$tag" --draft=false --latest
+            if [[ "$version" == *-* ]]; then
+              gh release edit "$tag" --draft=false --prerelease --latest=false
+            else
+              gh release edit "$tag" --draft=false --latest
+            fi
           else
             echo "Draft assets uploaded. Publish $tag from a GitHub account that can create the tag."
           fi

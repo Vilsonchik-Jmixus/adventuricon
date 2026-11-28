@@ -54,6 +54,7 @@
           <button id="turn-actor" type="button" class="quiet" data-pixel-icon="clock" title="Перейти к участнику, чей сейчас ход"></button>
           <span id="turn-hp" data-pixel-icon="heart" aria-label="ХП текущего участника"></span>
           <span id="turn-conditions" aria-label="Состояния текущего участника" hidden></span>
+          <button id="end-combat" type="button" data-pixel-icon="stop">Завершить бой</button>
           <div class="quick-hp" role="group" aria-label="Быстрое изменение ХП">
             <button type="button" data-quick-hp="-5" title="Нанести 5 урона" aria-label="Нанести 5 урона">−5</button>
             <button type="button" data-quick-hp="-1" title="Нанести 1 урон" aria-label="Нанести 1 урон">−1</button>
@@ -114,11 +115,10 @@
           <button id="music-tracks-tab" type="button" aria-pressed="true" data-pixel-icon="music">Треки</button>
           <button id="sound-pad-tab" type="button" aria-pressed="false" data-pixel-icon="spark">Саундпад</button>
         </div>
-        <div id="quick-soundpad" role="group" aria-label="Быстрые звуки"></div>
         <div id="sound-pad" hidden>
           <div class="sound-category-bar">
             <select id="soundpad-profile" aria-label="Активный саундпад"></select>
-            <button id="configure-soundpad" type="button" data-pixel-icon="gear">Настроить</button>
+            <button id="configure-soundpad" type="button" data-pixel-icon="gear">Редактировать звуки</button>
             <button id="new-soundpad" type="button" data-pixel-icon="plus" title="Создать свой саундпад">Создать саундпад</button>
           </div>
           <div class="sound-category-bar">
@@ -150,6 +150,7 @@
     <button id="open-player-preview" type="button" class="icon-button" title="Предпросмотр экрана игроков" aria-label="Предпросмотр экрана игроков" data-pixel-icon="eye"></button>
   </div><div class="map-toolbar"><button id="import-map" class="small-button" title="Загрузить изображение на выбранную карту" data-pixel-icon="upload">Файл</button><button id="paste-map" class="quiet" title="Вставить изображение из буфера" data-paste-shortcut data-pixel-icon="clipboard">Ctrl+V</button><div class="zoom-controls"><button id="rotate-map-left" title="Повернуть карту влево на 90°" aria-label="Повернуть карту влево на 90°" data-pixel-icon="rotate-left"></button><button id="rotate-map-right" title="Повернуть карту вправо на 90°" aria-label="Повернуть карту вправо на 90°" data-pixel-icon="rotate-right"></button><button id="fit-map" title="Показать карту целиком" aria-label="Показать карту целиком" data-pixel-icon="fit"></button><button id="zoom-out" title="Уменьшить" data-pixel-icon="zoom-out" aria-label="Уменьшить"></button><span id="zoom-label">100%</span><button id="zoom-in" title="Увеличить" data-pixel-icon="zoom-in" aria-label="Увеличить"></button></div></div>
         <div id="map-player-status" aria-live="polite" hidden></div>
+        <div id="map-turn-order" aria-label="Очередь боя" hidden></div>
         <div id="terrain-toolbar" hidden aria-label="Редактор карты">
           <div class="terrain-tools" role="group" aria-label="Инструменты карты">
             <button type="button" data-terrain-tool="select" aria-pressed="true" data-pixel-icon="cursor">Выбор</button>
@@ -599,6 +600,7 @@
       <button id="delete-soundpad" type="button" data-pixel-icon="trash">Удалить саундпад</button>
     </form>
     <form id="soundpad-slot-form">
+      <p class="dialog-hint">Выбери кнопку, задай её название и звук. Затем нажми «Сохранить кнопку».</p>
       <div class="form-row">
         <label>Кнопка<select name="slot"></select></label>
         <label>Название звука<input name="name" maxlength="52" placeholder="Название на кнопке"></label>

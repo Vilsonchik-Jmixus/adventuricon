@@ -128,7 +128,8 @@ function windowState(owner, view = activeView(state)) {
     return {
       state: { activeMapId: view.activeMapId, map: view.map, tokens,
         mapCombatants: actors.get(hidden)[Number(shareHealth)],
-        visionOrigins: view.visionOrigins,
+        visionOrigins: view.visionOrigins, round: view.turn ? view.round : null,
+        order: publicTurnOrder(view.order, tokens), nextTurn: hidden.has(view.nextTurn) ? null : view.nextTurn,
         terrain: playerTerrain(view.terrain), drawings: view.drawings, templates: view.templates, fog: view.fog, turn: hidden.has(view.turn) ? null : view.turn },
       detached: ['map'], presentation, recentImages: [], mapCamera, campaignId: campaigns.index.active, playerBlackout, playerFrame: playerFrame()
     };
@@ -138,6 +139,14 @@ function windowState(owner, view = activeView(state)) {
     campaigns: campaigns.index.profiles, canUndoMap: !!mapHistory.get(state.activeMapId)?.length,
     recentImages: recentImages.map(resolveImage).filter(Boolean), mapCamera
   };
+}
+let lastPublicOrder;
+function publicTurnOrder(order, tokens) {
+  if (lastPublicOrder?.order === order && lastPublicOrder.tokens === tokens) return lastPublicOrder.visible;
+  const visibleIds = new Set(tokens.map(token => token.combatantId));
+  const visible = order.filter(id => visibleIds.has(id));
+  lastPublicOrder = { order, tokens, visible };
+  return visible;
 }
 let lastTokenProjection = { hidden: new Set(), tokens: [] };
 function playerTokens(tokens) {

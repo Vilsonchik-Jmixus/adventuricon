@@ -396,6 +396,7 @@ function renderMapTokens(zoom) {
   });
   const tokenLayer = $('map-tokens');
   renderCards(tokenLayer, tokens, 'token');
+  for (const node of tokenLayer.children) node.classList.toggle('next-turn', node.dataset.token === state.nextTurn && node.dataset.token !== state.turn);
   for (const [index, { col, row }] of tokens.entries()) {
     const node = tokenLayer.children[index];
     const previous = tokenPositions.get(node);
@@ -405,6 +406,7 @@ function renderMapTokens(zoom) {
   if (focusedToken) [...$('map-tokens').children].find(token => token.dataset.token === focusedToken)?.focus({ preventScroll: true });
   if (isPlayerMap) {
     const visibleIds = new Set([...$('map-tokens').children].map(button => button.dataset.token));
+    renderPlayerTurnOrder(visibleIds);
     const unique = new Map(state.mapCombatants.filter(c => visibleIds.has(c.id)).flatMap(c => c.effects.map(effect => [effect.badge, effect.name])));
     const legend = $('map-condition-legend');
     const content = [...unique].filter(([badge, name]) => badge !== name)
@@ -412,6 +414,21 @@ function renderMapTokens(zoom) {
     legend.hidden = !content;
     if (legend.innerHTML !== content) legend.innerHTML = content;
   }
+}
+function renderPlayerTurnOrder(visibleIds) {
+  const bar = $('map-turn-order');
+  bar.hidden = !state.round;
+  if (bar.hidden) return;
+  const order = state.order ?? [];
+  const index = Math.max(0, order.indexOf(state.turn));
+  const names = mapActors();
+  const chips = [...order.slice(index), ...order.slice(0, index)].filter(id => visibleIds.has(id)).map(id => {
+    const kind = id === state.turn ? 'current' : id === state.nextTurn ? 'next' : '';
+    const label = kind === 'current' ? 'Сейчас · ' : kind === 'next' ? 'Следующий · ' : '';
+    return `<span class="turn-chip ${kind}">${label}${escapeHTML(names.get(id)?.name)}</span>`;
+  }).join('');
+  const content = `<strong>Раунд ${state.round}</strong><div>${chips}</div>`;
+  if (bar.innerHTML !== content) bar.innerHTML = content;
 }
 let renderedMusic = {};
 function renderMusic() {
@@ -1236,6 +1253,9 @@ $('current-turn').addEventListener('click', event => {
   if (expression && state.turn) dispatch('combatant:hp', { id: state.turn, expression });
 });
 $('next-turn').onclick = () => dispatch('combat:next');
+$('end-combat').onclick = () => {
+  if (confirm('Завершить бой? Участники и их ХП сохранятся.')) dispatch('combat:end');
+};
 $('reset-order').onclick = () => dispatch('combat:sort');
 function renderInitiative() {
   for (const button of document.querySelectorAll('[data-roll-role]')) {
@@ -2375,7 +2395,7 @@ function applyWindowPatch(patch) {
   if (cancelEventCells && (campaignChanged || before.activeMapId !== next.activeMapId || before.activeBattleId !== next.activeBattleId)) cancelEventCells();
   const layoutChanged = updated('layout') || metadata('detached');
   if (!detachedPanel && metadata('detached') && detached.includes('music')) reportMusicPosition();
-  const tokensChanged = updated('tokens', 'mapCombatants', 'turn');
+  const tokensChanged = updated('tokens', 'mapCombatants', 'turn', 'nextTurn') || isPlayerMap && updated('order', 'round');
   let mapChanged = updated('activeMapId', 'map', 'terrain', 'drawings', 'templates', 'fog', 'visionOrigins', 'notePins') ||
     metadata('detached', 'playerFrame') || (!isPlayerMap && next.story.notes !== before.story.notes && next.notePins.length);
   if (!mapChanged && tokensChanged && boardLayout?.mode === 'follow' &&
