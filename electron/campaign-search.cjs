@@ -19,6 +19,8 @@ function searchCampaign(state, query) {
     for (const actor of battle.combatants) add('actor', actor, actor.name, battle.title, battle.id);
   }
   for (const item of state.story.notes) add('note', item, item.title, item.body);
+  for (const item of state.library ?? []) add('template', item, item.name);
+  for (const item of state.music?.tracks ?? []) add('track', item, item.title, item.folder);
   for (const session of state.journal.sessions) {
     add('session', session, session.title);
     for (const entry of session.entries) add('entry', entry, session.title, entry.body, session.id);

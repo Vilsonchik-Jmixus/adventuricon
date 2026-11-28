@@ -1,5 +1,15 @@
 const ambience = (() => {
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  const storageKey = 'dm-screen-appearance';
+  function readAppearance() {
+    try { return JSON.parse(localStorage.getItem(storageKey)); } catch { return null; }
+  }
+  function applyMotion(preferences) {
+    document.documentElement.toggleAttribute('data-reduced-motion', preferences?.motion === true);
+  }
+  const motionReduced = () => reducedMotion.matches || document.documentElement.hasAttribute('data-reduced-motion');
+  applyMotion(readAppearance());
+  addEventListener('storage', event => { if (event.key === storageKey) applyMotion(readAppearance()); });
   const tips = [
     'Shift + щелчок подсвечивает точку на карте игрокам.',
     'Правый щелчок по жетону открывает состояния бойца.',
@@ -13,30 +23,27 @@ const ambience = (() => {
   let previousCombat;
 
   function animate(element, frames, duration) {
-    if (!element || reducedMotion.matches || !element.getClientRects().length) return;
+    if (!element || motionReduced() || !element.getClientRects().length) return;
     element.animate(frames, { duration, easing: 'cubic-bezier(.2,.65,.3,1)' });
   }
 
   function combat(list, roster, battle, turn, round) {
     const previous = previousCombat;
     previousCombat = { roster, battle, turn, round };
-    if (!previous || previous.battle !== battle || reducedMotion.matches || !list.getClientRects().length) return;
+    if (!previous || previous.battle !== battle || motionReduced() || !list.getClientRects().length) return;
     if (round !== previous.round) {
-      animate(document.getElementById('round'), [{ color: '#fff1c2' }, {}], 650);
+      animate(document.getElementById('round'), [{ color: 'var(--mint)' }, {}], 260);
     }
     for (const card of list.querySelectorAll('.combat-card')) {
       const id = card.dataset.id;
       if (turn === id && turn !== previous.turn) {
-        animate(card, [{ backgroundColor: '#644328', borderColor: '#f2bf7d' }, {}], 530);
+        animate(card, [{ boxShadow: 'inset 5px 0 var(--mint)' }, {}], 230);
       }
       const before = previous.roster.get(id), after = roster.get(id);
       if (!before || (before.hp === after.hp && before.maxHp === after.maxHp)) continue;
-      animate(card.querySelector('.hp-bar > div'), [
-        { width: `${before.hp / before.maxHp * 100}%` }, {},
-      ], 375);
       animate(card.querySelector('.hp-readout'), [
         { backgroundColor: after.hp < before.hp ? '#874630' : '#4e6440', color: '#fff1d8' }, {},
-      ], 650);
+      ], 260);
     }
   }
 
@@ -54,10 +61,8 @@ const ambience = (() => {
     const jingle = get('welcome-jingle');
     const tip = get('screen-tip'), tipText = get('tip-text');
     const options = settings.querySelectorAll('[data-screen-option]');
-    const storageKey = 'dm-screen-appearance';
-    let saved;
-    try { saved = JSON.parse(localStorage.getItem(storageKey)); } catch {}
-    const preferences = { welcome: saved?.welcome !== false, sound: saved?.sound !== false, tips: saved?.tips !== false };
+    const saved = readAppearance();
+    const preferences = { welcome: saved?.welcome !== false, sound: saved?.sound !== false, tips: saved?.tips !== false, motion: saved?.motion === true };
     let tipIndex = 0, tipTimer, fadeTimer;
 
     function stopSound() {
@@ -82,7 +87,7 @@ const ambience = (() => {
 
     function scheduleTip() {
       clearTimeout(tipTimer);
-      if (!preferences.tips || document.hidden || reducedMotion.matches) return;
+      if (!preferences.tips || document.hidden || motionReduced()) return;
       tipTimer = setTimeout(() => {
         if (!tip.matches(':hover, :focus') && !document.querySelector('dialog[open]')) nextTip();
         scheduleTip();
@@ -101,6 +106,7 @@ const ambience = (() => {
     }
 
     function renderPreferences() {
+      applyMotion(preferences);
       options.forEach(input => { input.checked = preferences[input.dataset.screenOption]; });
       soundButton.setAttribute('aria-pressed', String(preferences.sound));
       get('welcome-sound-label').textContent = preferences.sound ? 'Звук вкл.' : 'Звук выкл.';
@@ -140,5 +146,5 @@ const ambience = (() => {
     if (showAtStart && preferences.welcome) showWelcome();
   }
 
-  return { combat, fadeImage, start };
+  return { combat, fadeImage, start, motionReduced };
 })();

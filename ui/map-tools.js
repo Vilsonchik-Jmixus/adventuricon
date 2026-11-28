@@ -85,7 +85,7 @@ function createMapTools({ viewport, getState, getLayout, pointAt, dispatch, cont
     <div id="map-tool-controls" hidden><output id="map-tool-hint"></output>
       <button type="button" id="map-tool-apply" data-pixel-icon="check">Применить</button>
       <button type="button" id="map-tool-close" data-pixel-icon="close" aria-label="Выйти из инструмента"></button></div>`;
-  viewport.before(bar);
+  viewport.parentElement.before(bar);
   const world = document.getElementById('map-world');
   const overlay = document.createElementNS(measurementSvg, 'svg');
   overlay.id = 'map-measure-overlay';

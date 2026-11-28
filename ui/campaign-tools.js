@@ -1,10 +1,11 @@
-function createCampaignTools({ getState, getContext, dispatch, search, eventMapDoors, pickEventCells, openDialog, closeDialog, askText, navigate }) {
+function createCampaignTools({ getState, getContext, dispatch, search, quickActions, eventMapDoors, pickEventCells, openDialog, closeDialog, askText, navigate }) {
   const get = id => document.getElementById(id);
   const searchDialog = get('campaign-search-dialog'), query = get('campaign-query'), results = get('campaign-search-results');
   const roundDialog = get('round-events-dialog'), eventForm = get('round-event-form'), eventButton = get('open-round-events');
   const saveEvent = get('save-round-event'), chooseCells = get('pick-round-cells');
   const journalDialog = get('journal-dialog'), journalForm = get('journal-form'), sessionSelect = get('journal-session');
-  const kinds = { scene: 'Сцена', map: 'Карта', battle: 'Бой', actor: 'Участник', note: 'Заметка', session: 'Сессия', entry: 'Журнал' };
+  const kinds = { action: 'Команда', sound: 'Звук', scene: 'Сцена', map: 'Карта', battle: 'Бой', actor: 'Участник',
+    template: 'Заготовка', track: 'Трек', note: 'Заметка', session: 'Сессия', entry: 'Журнал' };
   const date = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' });
   let searchRequest = 0, searchTimer, selectedResult = 0;
   let eventId = null, eventContext, lastEventBattle, lastEvents, pendingEvents = new Set(), doorRequest = 0;
@@ -29,19 +30,19 @@ function createCampaignTools({ getState, getContext, dispatch, search, eventMapD
     const revision = ++searchRequest, phrase = query.value.trim(), context = getContext();
     results.replaceChildren();
     const status = get('campaign-search-status');
-    status.textContent = phrase ? 'Поиск…' : 'Введи название или фразу из заметки.';
-    if (!phrase) return;
-    searchTimer = setTimeout(async () => {
-      const response = await search({ query: phrase, expectedCampaignId: context.expectedCampaignId });
-      if (revision !== searchRequest || !searchDialog.open || context.expectedCampaignId !== getContext().expectedCampaignId) return;
-      const matches = response?.matches ?? [];
-      status.textContent = response?.error || (matches.length ? '' : 'Совпадений нет.');
-      selectedResult = 0;
+    const normalize = value => value.toLocaleLowerCase('ru').replaceAll('ё', 'е');
+    const words = normalize(phrase).split(/\s+/).filter(Boolean);
+    const local = quickActions().filter(entry => words.length
+      ? words.every(word => normalize(`${entry.title} ${entry.detail ?? ''} ${entry.keywords ?? ''}`).includes(word))
+      : entry.suggested);
+    function show(matches, retainSelection = false) {
+      selectedResult = retainSelection ? Math.min(selectedResult, Math.max(0, matches.length - 1)) : 0;
       results.replaceChildren(...matches.map(entry => {
         const row = button('', null, () => {
           if (context.expectedCampaignId !== getContext().expectedCampaignId) return renderSearch();
           closeDialog(searchDialog);
-          if (entry.kind === 'session' || entry.kind === 'entry') openJournal(entry.parentId ?? entry.id, entry.kind === 'entry' ? entry.id : null);
+          if (entry.run) entry.run();
+          else if (entry.kind === 'session' || entry.kind === 'entry') openJournal(entry.parentId ?? entry.id, entry.kind === 'entry' ? entry.id : null);
           else navigate(entry);
         });
         row.className = 'campaign-result';
@@ -50,6 +51,18 @@ function createCampaignTools({ getState, getContext, dispatch, search, eventMapD
         return row;
       }));
       highlightResult();
+    }
+    show(local);
+    status.textContent = phrase ? 'Поиск в кампании…' : 'Быстрые команды';
+    if (!phrase) return;
+    searchTimer = setTimeout(async () => {
+      let response;
+      try { response = await search({ query: phrase, expectedCampaignId: context.expectedCampaignId }); }
+      catch { response = { error: 'Не удалось выполнить поиск по кампании.' }; }
+      if (revision !== searchRequest || !searchDialog.open || context.expectedCampaignId !== getContext().expectedCampaignId) return;
+      const matches = [...local, ...(response?.matches ?? [])];
+      status.textContent = response?.error || (matches.length ? '' : 'Совпадений нет.');
+      show(matches, true);
     }, 100);
   }
   function highlightResult(scroll = false) {

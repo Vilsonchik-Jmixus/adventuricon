@@ -1183,7 +1183,7 @@ app.whenReady().then(async () => {
         const allowed = ['index.html', 'app.js', 'map-geometry.js', 'map-terrain.js', 'styles.css', 'tavern.css', 'themes.js', 'themes.css',
           'ambience.css', 'ambience.js', 'scene.css', 'story.js', 'story.css', 'session.js', 'session.css', 'workspace.css', 'icons.css',
           'shortcuts.js', 'campaign-tools.js', 'campaign-tools.css', 'sound-library.js', 'retro-audio.js', 'sound-tools.js', 'sound-tools.css',
-          'dice.js', 'dice.css', 'portal-tools.js', 'token-style.js', 'map-tools.js', 'map-tools.css',
+          'dice.js', 'dice.css', 'portal-tools.js', 'token-style.js', 'map-tools.js', 'map-tools.css', 'map-artwork.js', 'map-artwork-worker.js',
           ...bundledAssets.map(asset => asset.slice(1))];
         const relative = u.pathname.slice(1) || 'index.html';
         if (!allowed.includes(relative)) return new Response('Not found', { status: 404 });
@@ -1191,7 +1191,7 @@ app.whenReady().then(async () => {
       }
       const result = await audioResponse(file, request) ?? await net.fetch(pathToFileURL(file).href, { headers: request.headers });
       const headers = new Headers(result.headers);
-      headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'");
+      headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'");
       return new Response(result.body, { status: result.status, headers });
     } catch { return new Response('Not found', { status: 404 }); }
   });

@@ -139,7 +139,7 @@ async function main() {
   await page.evaluate(() => dm.dispatch('layout:settings', { left: 28, middle: 42, top: 60 }));
   await expect.poll(() => page.locator('#workspace').evaluate(el => el.style.getPropertyValue('--middle'))).toBe('42%');
   await page.click('[data-workspace-mode="game"]');
-  await expect.poll(() => page.locator('#workspace').evaluate(el => el.style.getPropertyValue('--middle'))).toBe('34%');
+  await expect.poll(() => page.locator('#workspace').evaluate(el => el.style.getPropertyValue('--middle'))).toBe('43%');
   await page.click('[data-workspace-mode="preparation"]');
   await expect.poll(() => page.locator('#workspace').evaluate(el => el.style.getPropertyValue('--middle'))).toBe('42%');
   await page.click('[data-workspace-mode="game"]');

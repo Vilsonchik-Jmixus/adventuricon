@@ -118,6 +118,68 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .compact-label { display: none; }
 body.player-map .map { border: 0; border-radius: 0; box-shadow: none; }
 
+body:not(.detached) .workspace {
+  background: var(--bg);
+}
+.panel-head, [data-theme] .panel-head {
+  background: color-mix(in srgb, var(--panel), var(--wood) 42%);
+}
+.panel-title h1 {
+  letter-spacing: .015em;
+}
+.panel-tools button:not([aria-pressed="true"]), #workspace-modes button[aria-pressed="false"] {
+  border-color: transparent;
+}
+.panel-tools button:hover, #workspace-modes button:hover {
+  border-color: var(--line);
+}
+.slot-bar, .map-toolbar, #map-quick-tools {
+  background: var(--panel);
+  border-color: color-mix(in srgb, var(--line), transparent 35%);
+}
+#current-turn {
+  padding: 5px 7px;
+  background: color-mix(in srgb, var(--panel), var(--mint) 13%);
+  border-color: var(--mint);
+  border-inline-start-width: 3px;
+}
+#turn-hp, .hp-readout, #round { font-variant-numeric: tabular-nums; }
+#turn-conditions { display: flex; flex-wrap: wrap; gap: 3px; }
+#next-turn { background: var(--raised); border-color: var(--mint); }
+#map-player-status {
+  padding: 3px 8px;
+  color: var(--muted);
+  background: var(--panel);
+  font-size: 11px;
+}
+#map-player-status[data-live="true"] { color: var(--text); }
+#map-player-status[data-live="true"]::before { content: '• '; color: var(--mint); }
+#quick-soundpad {
+  display: flex;
+  gap: 4px;
+  padding: 4px 6px;
+}
+#quick-soundpad button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 3px 7px;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-color: var(--line);
+}
+#quick-soundpad button[aria-pressed="true"] { border-color: var(--mint); background: var(--raised); }
+#quick-soundpad:empty, body.detached #quick-soundpad, [data-mode="preparation"] #quick-soundpad { display: none; }
+#open-campaign-search { gap: 4px; }
+#campaign-query { min-height: 38px; }
+html[data-reduced-motion] *, html[data-reduced-motion] *::before, html[data-reduced-motion] *::after {
+  animation-duration: .001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: .001ms !important;
+  scroll-behavior: auto !important;
+}
+
 @media (max-width: 1080px) {
   #screen-tip { max-width: 25vw; margin-inline: 4px auto; }
   .map .slot-bar { flex-wrap: wrap; }
@@ -125,6 +187,13 @@ body.player-map .map { border: 0; border-radius: 0; box-shadow: none; }
   :is(.combat-toolbar, .map .slot-bar) .control-label { display: none; }
   .compact-label { display: inline; }
   .panel-tools button { min-width: 22px; }
+}
+@media (max-width: 1000px) {
+  #screen-tip { max-width: min(18vw, 145px); }
+  #screen-tip .tip-label { display: none; }
+  .appbar { gap: 5px; padding-inline: 8px; }
+  .app-actions { gap: 3px; }
+  .appbar button { padding-inline: 5px; }
 }
 
 @media (max-width: 1150px) {

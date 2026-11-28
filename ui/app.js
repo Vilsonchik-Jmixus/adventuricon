@@ -32,6 +32,7 @@ const workspaceTabs = { game: 'sheets', preparation: 'notes' };
 const workspaceMode = () => state?.layout.mode ?? 'game';
 const workspaceSizes = () => workspaceMode() === 'preparation' ? state.layout.preparation : state.layout;
 const assetURL = name => `dm://app/assets/${encodeURIComponent(name)}?campaign=${encodeURIComponent(campaignId ?? 'main')}`;
+const mapArtwork = createMapArtwork($('map-image'), () => { if (state) renderMap(); });
 const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 function toast(message) { $('toast').textContent = message; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 4500); }
 async function result(promise) { const value = await promise; if (value?.error) toast(value.error); return value; }
@@ -259,6 +260,8 @@ function renderCombat() {
     $('turn-actor').textContent = current.name;
     $('turn-actor').title = `Ходит ${current.name} · Перейти к карточке`;
     $('turn-hp').textContent = `${current.hp}/${current.maxHp}`;
+    $('turn-conditions').hidden = !current.effects.length;
+    $('turn-conditions').innerHTML = conditionChips(current, true);
     for (const button of $('current-turn').querySelectorAll('[data-quick-hp]')) {
       button.disabled = button.dataset.quickHp.startsWith('-') ? current.hp === 0 : current.hp === current.maxHp;
     }
@@ -293,29 +296,30 @@ function frameMarkup(id) {
   const [, , light, shade, shape, decoration] = TokenStyle.frame(id);
   return `<span class="pixel-token-frame" data-shape="${shape}" data-decoration="${decoration}" style="--frame-light:${light};--frame-shade:${shade}" aria-hidden="true"></span>`;
 }
+function mapWorldSize({ width, height }, mode) {
+  if (mode === 'follow') {
+    const actors = mapActors(), { grid, offsetX, offsetY } = state.map;
+    for (const token of state.tokens) {
+      const span = Math.max(1, TokenStyle.size(actors.get(token.combatantId)?.tokenSize)) + 1;
+      width = Math.max(width, (token.col + span) * grid + offsetX);
+      height = Math.max(height, (token.row + span) * grid + offsetY);
+    }
+  }
+  return { width, height };
+}
+const mapImageSize = () => mapArtwork.size() ?? { width: 1600, height: 1100 };
 function renderMap() {
+  if (detachedPanel && !isPlayerMap) return;
   const m = state.map;
   const img = $('map-image');
   const src = m.image ? assetURL(m.image) : m.demo === false ? null : new URL('assets/demo-map.svg', location.href).href;
-  if (src && img.src !== src) {
-    img.removeAttribute('src');
-    img.src = src;
-  } else if (!src && img.hasAttribute('src')) img.removeAttribute('src');
-  img.hidden = !src;
+  mapArtwork.setSource(src, Math.max(viewport.clientWidth, viewport.clientHeight) * devicePixelRatio);
   const zoom = mapDrawingZoom();
-  const width = (img.complete && img.naturalWidth) || 1600, height = (img.complete && img.naturalHeight) || 1100;
+  const dimensions = mapImageSize(), { width, height } = dimensions;
   const mode = mapMode();
-  let worldWidth = width, worldHeight = height;
-  if (mode === 'follow') {
-    const actors = mapActors();
-    for (const token of state.tokens) {
-      const span = Math.max(1, TokenStyle.size(actors.get(token.combatantId)?.tokenSize)) + 1;
-      worldWidth = Math.max(worldWidth, (token.col + span) * m.grid + m.offsetX);
-      worldHeight = Math.max(worldHeight, (token.row + span) * m.grid + m.offsetY);
-    }
-  }
+  const extent = mapWorldSize(dimensions, mode);
   boardLayout = {
-    width: worldWidth * zoom, height: worldHeight * zoom,
+    width: extent.width * zoom, height: extent.height * zoom,
     rotation: (isPlayerMap ? m.playerRotation : null) ?? m.rotation ?? 0, mode, zoom
   };
   img.style.width = `${width * zoom}px`; img.style.height = `${height * zoom}px`;
@@ -328,7 +332,7 @@ function renderMap() {
   world.style.setProperty('--grid-opacity', m.visible ? m.opacity : 0);
   $('zoom-label').textContent = mode === 'follow' ? `${Math.round(zoom * 100)}%` : 'Авто';
   $('fit-map').setAttribute('aria-pressed', String(mode === 'fit'));
-  $('token-count').textContent = state.tokens.length;
+  syncMapTokenControls();
   $('player-settings').hidden = !!detachedPanel || !detached.some(id => id === 'map' || id === 'preview');
   $('undo-map').disabled = !canUndoMap;
   layoutMap();
@@ -338,13 +342,7 @@ function renderMap() {
   renderMapTokens(zoom);
   mapTemplates.render(state.templates ?? [], m.grid, boardLayout);
   mapTools?.render();
-  if (mapTools) {
-    const count = hiddenEnemies().length;
-    const reveal = $('reveal-hidden-enemies');
-    reveal.hidden = count === 0;
-    if (count) reveal.textContent = `Раскрыть врагов (${count})`;
-  }
-  if (restoreMapCamera && img.complete) {
+  if (restoreMapCamera && (mapArtwork.size() || !src)) {
     restoreMapCamera = false;
     if (mapCamera && mode === 'follow') centerMapCamera(mapCamera);
     else viewport.scrollTo(0, 0);
@@ -352,6 +350,24 @@ function renderMap() {
   }
   if (isPlayerMap) paintPlayerMap();
 }
+function syncMapTokenControls() {
+  $('token-count').textContent = state.tokens.length;
+  if (!mapTools) return;
+  const count = hiddenEnemies().length;
+  const reveal = $('reveal-hidden-enemies');
+  reveal.hidden = count === 0;
+  if (count) reveal.textContent = `Раскрыть врагов (${count})`;
+}
+function syncPlayerMapStatus() {
+  if (detachedPanel) return;
+  const indicator = $('map-player-status');
+  const live = detached.includes('map');
+  indicator.hidden = !live && !detached.includes('preview');
+  const text = playerBlackout ? 'Экран скрыт' : presentation?.image ? 'Игрокам показана иллюстрация' : live ? 'Карта видна игрокам' : 'Предпросмотр карты';
+  if (indicator.textContent !== text) indicator.textContent = text;
+  indicator.dataset.live = String(live && !playerBlackout);
+}
+const tokenPositions = new WeakMap(), tokenMarkup = new WeakMap();
 function renderMapTokens(zoom) {
   if (draggingToken) return;
   const m = state.map;
@@ -362,8 +378,12 @@ function renderMapTokens(zoom) {
     const c = actors.get(t.combatantId); if (!c) return [];
     const size = TokenStyle.size(c.tokenSize);
     if (isPlayerMap && !mapScene.tokenVisible(t.combatantId === previewToken?.id ? previewToken : t, size)) return [];
+    const active = state.turn === c.id, selected = selectedToken === c.id;
+    const hidden = !!t.hidden, elevation = TokenStyle.elevation(t.elevation);
+    const previous = tokenMarkup.get(c);
+    if (previous?.active === active && previous.selected === selected && previous.hidden === hidden && previous.elevation === elevation &&
+        previous.campaignId === campaignId) return [{ id: c.id, html: previous.html, col: t.col, row: t.row }];
     const hp = Number.isFinite(c.hp) ? `${c.hp}/${c.maxHp}` : '';
-    const elevation = TokenStyle.elevation(t.elevation);
     const height = elevation ? `${elevation > 0 ? '+' : '−'}${Math.abs(elevation)} фут.` : '';
     const details = [c.name, hp && `${hp} ХП`, height, ...c.effects.map(effect => effect.name)].filter(Boolean).join(' · ');
     const html = `<button class="token ${c.hp === 0 ? 'dead' : ''} ${state.turn === c.id ? 'active-turn' : ''} ${selectedToken === c.id ? 'selected-token' : ''}" data-token="${c.id}" data-size="${size}" title="${escapeHTML(details + (t.hidden ? ' · Скрыт от игроков' : ''))}" aria-label="${escapeHTML(c.name)}">
@@ -371,12 +391,16 @@ function renderMapTokens(zoom) {
       ${height ? `<span class="token-elevation">${height}</span>` : ''}
       ${c.effects.length ? `<span class="token-conditions">${conditionChips(c, true)}</span>` : ''}</span>
     </button>`;
+    tokenMarkup.set(c, { active, selected, hidden, elevation, campaignId, html });
     return [{ id: c.id, html, col: t.col, row: t.row }];
   });
   const tokenLayer = $('map-tokens');
   renderCards(tokenLayer, tokens, 'token');
   for (const [index, { col, row }] of tokens.entries()) {
-    positionToken(tokenLayer.children[index], m, col, row, zoom);
+    const node = tokenLayer.children[index];
+    const previous = tokenPositions.get(node);
+    if (previous?.col !== col || previous.row !== row || previous.zoom !== zoom ||
+        previous.grid !== m.grid || previous.x !== m.offsetX || previous.y !== m.offsetY) positionToken(node, m, col, row, zoom);
   }
   if (focusedToken) [...$('map-tokens').children].find(token => token.dataset.token === focusedToken)?.focus({ preventScroll: true });
   if (isPlayerMap) {
@@ -519,11 +543,13 @@ function renderLayout() {
   }
   renderDetachedPanels();
 }
-$('workspace-modes').addEventListener('click', async event => {
-  const mode = event.target.closest('[data-workspace-mode]')?.dataset.workspaceMode;
+async function changeWorkspace(mode) {
   if (!mode || mode === workspaceMode()) return;
   if (expanded) await expandPanel(expanded);
   await dispatch('layout:mode', { mode });
+}
+$('workspace-modes').addEventListener('click', event => {
+  changeWorkspace(event.target.closest('[data-workspace-mode]')?.dataset.workspaceMode);
 });
 function renderAll() {
   if (isPlayerMap) {
@@ -630,7 +656,7 @@ async function expandPanel(id) {
   panel.classList.toggle('expanded', opening); $('workspace').classList.toggle('has-expanded', opening);
   if (wasMap || expanded === 'map') renderMap();
   const after = panel.getBoundingClientRect(); animating = true; syncRemoteBounds();
-  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  if (!ambience.motionReduced()) {
     await panel.animate([{ transformOrigin: '0 0', transform: `translate(${before.x - after.x}px,${before.y - after.y}px) scale(${before.width / after.width},${before.height / after.height})`, opacity: 0.8 }, { transformOrigin: '0 0', transform: 'none', opacity: 1 }], { duration: 220, easing: 'cubic-bezier(.2,.75,.25,1)' }).finished.catch(() => {});
   }
   animating = false; syncRemoteBounds();
@@ -799,9 +825,16 @@ const sessionTools = createSessionTools({
 });
 const campaignTools = createCampaignTools({
   getState: () => state, getContext: currentContext, dispatch, search: api.campaignSearch,
+  quickActions: quickSearchActions,
   eventMapDoors: api.eventMapDoors, pickEventCells: detachedPanel ? null : pickEventCells,
   openDialog, closeDialog, askText,
   async navigate(entry) {
+    if (entry.kind === 'track') return dispatch('music:play', { id: entry.id });
+    if (entry.kind === 'template') {
+      const item = state.library.find(template => template.id === entry.id);
+      if (item) openCombatantEditor(item, true);
+      return;
+    }
     if (entry.kind === 'scene') return sessionTools.openScene(state.scenes.find(scene => scene.id === entry.id));
     if (entry.kind === 'note') {
       const sent = !detachedPanel && detached.includes('characters') &&
@@ -821,6 +854,31 @@ const campaignTools = createCampaignTools({
     }
   }
 });
+function quickSearchActions() {
+  const actions = [
+    [state.fog.enabled ? 'Рассеять туман войны' : 'Включить туман войны', 'обзор fog', () => runShortcut('fog'), true],
+    ['Следующий ход', 'бой очередь раунд', () => runShortcut('next-turn'), true],
+    ['Экран игроков', 'показать карту второй монитор', () => document.querySelector('[data-detach="map"]').click(), true],
+    ['Бросить кубики', 'кости d20', () => runShortcut('dice'), true],
+    ['Настроить сетку', 'клетки масштаб', () => $('map-settings').click()],
+    ['Открыть заметки', 'сюжет доска', () => showWorkspaceNotes()],
+    ['Открыть заготовки', 'библиотека персонажи мобы', () => $('open-library').click()],
+    ['Режим «Ведение»', 'бой карта', () => changeWorkspace('game')],
+    ['Режим «Подготовка»', 'раскладка кампания', () => changeWorkspace('preparation')],
+    ['Воспроизвести музыку или поставить на паузу', 'трек музыка', () => runShortcut('music')],
+    ['Остановить фоновые звуки', 'саундпад стоп', () => soundTools?.trigger('stop-ambient')],
+  ];
+  return [
+    ...actions.map(([title, keywords, run, suggested]) => ({ kind: 'action', title, keywords, run, suggested })),
+    ...(soundTools?.entries() ?? []).map(sound => ({ kind: 'sound', title: sound.title,
+      detail: [sound.category, sound.loop && 'Цикл'].filter(Boolean).join(' · '), run: () => soundTools.trigger(sound.id) })),
+  ];
+}
+async function showWorkspaceNotes() {
+  if (expanded && expanded !== 'characters') await expandPanel(expanded);
+  selectCharacters('notes');
+  $('story-viewport').focus({ preventScroll: true });
+}
 function selectedGalleryImage() {
   return state.gallery.find(item => item.id === selectedImage);
 }
@@ -1625,7 +1683,7 @@ function centerMapCamera(camera) {
 function paintPlayerMap() {
   if (!state) return;
   const zoom = mapDrawingZoom();
-  layoutMap();
+  if (!boardProjection) layoutMap();
   if (mapMode() === 'follow' && mapCamera) centerMapCamera(mapCamera);
   if (!previewToken) return;
   const token = [...$('map-tokens').children].find(button => button.dataset.token === previewToken.id);
@@ -1646,8 +1704,7 @@ function mapDrawingZoom() {
   return mapMode() === 'follow' ? state.map.zoom : 1;
 }
 function mapMode() {
-  const image = $('map-image');
-  if (!image.complete || !image.naturalWidth) return 'follow';
+  if (!mapArtwork.size()) return 'follow';
   if (isPlayerMap) return state.map.playerFit ?? 'fill';
   if (expanded === 'map') return expandedMapMode;
   return masterAutoFit ? 'fit' : 'follow';
@@ -1656,6 +1713,9 @@ function layoutMap() {
   if (!boardLayout || !viewport.clientWidth || !viewport.clientHeight) return;
   const frame = $('map-frame');
   boardProjection = MapGeometry.project({ ...boardLayout, viewportWidth: viewport.clientWidth, viewportHeight: viewport.clientHeight });
+  const [a, b, c, d] = boardProjection.matrix;
+  const { width, height } = mapImageSize();
+  mapArtwork.setDetail(Math.max(width * Math.hypot(a, b), height * Math.hypot(c, d)) * boardLayout.zoom * devicePixelRatio);
   frame.style.width = boardProjection.width + 'px';
   frame.style.height = boardProjection.height + 'px';
   $('map-world').style.transform = `matrix(${boardProjection.matrix.join(',')})`;
@@ -1673,11 +1733,13 @@ function positionToken(token, map, col, row, zoom = map.zoom) {
   token.style.left = `${map.offsetX * zoom + (col + inset) * unit}px`;
   token.style.top = `${map.offsetY * zoom + (row + inset) * unit}px`;
   token.style.setProperty('--token-span', `${unit * size}px`);
+  tokenPositions.set(token, { col, row, zoom, grid: map.grid, x: map.offsetX, y: map.offsetY });
 }
 viewport.addEventListener('scroll', queueMapCamera, { passive: true });
 new ResizeObserver(() => {
+  layoutMap();
   if (isPlayerMap) paintPlayerMap();
-  else { layoutMap(); queueMapCamera(); }
+  else queueMapCamera();
 }).observe(viewport);
 let zoomRequest = 0;
 async function changeZoom(factor, anchorX = viewport.clientWidth / 2, anchorY = viewport.clientHeight / 2) {
@@ -1876,6 +1938,7 @@ function runShortcut(command) {
     'new-combatant': 'add-combatant', 'round-events': 'open-round-events', music: 'play-pause', scenes: 'open-session-scenes' };
   if (controls[command]) return $(controls[command]).click();
   if (command === 'shortcut-help') return openShortcutSettings();
+  if (command === 'workspace') return changeWorkspace(workspaceMode() === 'game' ? 'preparation' : 'game');
   if (command === 'fullscreen') return result(api.fullscreen());
   if (command === 'fog') return mapScene.toggleFog();
   if (command === 'blackout' && detached.includes('map')) {
@@ -2297,6 +2360,7 @@ function readWindowState(value) {
   }
   detached = value.detached;
   presentation = value.presentation;
+  syncPlayerMapStatus();
   recentImages = value.recentImages;
   windowSnapshot = value;
 }
@@ -2311,8 +2375,26 @@ function applyWindowPatch(patch) {
   if (cancelEventCells && (campaignChanged || before.activeMapId !== next.activeMapId || before.activeBattleId !== next.activeBattleId)) cancelEventCells();
   const layoutChanged = updated('layout') || metadata('detached');
   if (!detachedPanel && metadata('detached') && detached.includes('music')) reportMusicPosition();
-  const mapChanged = updated('activeMapId', 'map', 'tokens', 'terrain', 'drawings', 'templates', 'fog', 'visionOrigins', 'mapCombatants', 'turn', 'notePins') ||
-    metadata('detached', 'canUndoMap', 'playerFrame') || (!isPlayerMap && next.story.notes !== before.story.notes && next.notePins.length);
+  const tokensChanged = updated('tokens', 'mapCombatants', 'turn');
+  let mapChanged = updated('activeMapId', 'map', 'terrain', 'drawings', 'templates', 'fog', 'visionOrigins', 'notePins') ||
+    metadata('detached', 'playerFrame') || (!isPlayerMap && next.story.notes !== before.story.notes && next.notePins.length);
+  if (!mapChanged && tokensChanged && boardLayout?.mode === 'follow' &&
+      (next.tokens !== before.tokens || next.mapCombatants.some((actor, index) => actor.tokenSize !== before.mapCombatants[index]?.tokenSize))) {
+    const { width, height } = mapWorldSize(mapImageSize(), 'follow');
+    mapChanged = width * boardLayout.zoom !== boardLayout.width || height * boardLayout.zoom !== boardLayout.height;
+  }
+  if (!mapChanged && tokensChanged && boardLayout) {
+    const visionChanged = next.fog.enabled &&
+      (next.tokens !== before.tokens || next.mapCombatants.some((actor, index) => actor.visionFeet !== before.mapCombatants[index]?.visionFeet ||
+        actor.tokenSize !== before.mapCombatants[index]?.tokenSize));
+    if (visionChanged) {
+      mapScene.previewFog(next, boardLayout, previewToken);
+    }
+    renderMapTokens(boardLayout.zoom);
+    if (isPlayerMap && previewToken) paintPlayerMap();
+    syncMapTokenControls();
+  }
+  if (metadata('canUndoMap')) $('undo-map').disabled = !canUndoMap;
   if (isPlayerMap) {
     if (mapChanged) renderMap();
     if (metadata('presentation')) renderPresentation();

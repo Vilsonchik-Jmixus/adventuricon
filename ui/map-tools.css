@@ -63,6 +63,38 @@
   white-space: nowrap;
 }
 #map-quick-tools [hidden], #map-measure-overlay[hidden], #map-measure-label[hidden] { display: none; }
+.map-view { position: relative; display: flex; flex: 1 1 0; min-height: 0; min-width: 0; }
+.map-view > .map-viewport { min-width: 0; }
+.map-gold-frame {
+  position: absolute;
+  inset: 2px;
+  z-index: 15;
+  border: 1px solid #a478456b;
+  pointer-events: none;
+}
+.map-gold-frame i {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  background: linear-gradient(135deg, #ffe5ab, #e2b16b 30%, #815029 69%, #e4b574);
+  clip-path: polygon(0 0, 100% 0, 100% 8.33%, 41.67% 8.33%, 41.67% 16.67%, 33.33% 16.67%,
+    33.33% 25%, 25% 25%, 25% 33.33%, 16.67% 33.33%, 16.67% 41.67%, 8.33% 41.67%, 8.33% 100%, 0 100%);
+}
+.map-gold-frame i:nth-child(1) { inset: -1px auto auto -1px; }
+.map-gold-frame i:nth-child(2) { inset: -1px -1px auto auto; transform: scaleX(-1); }
+.map-gold-frame i:nth-child(3) { inset: auto auto -1px -1px; transform: scaleY(-1); }
+.map-gold-frame i:nth-child(4) { inset: auto -1px -1px auto; transform: scale(-1); }
+.map-gold-frame i::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 2px;
+  height: 2px;
+  background: #a36c34;
+  box-shadow: 2px 0 #fadc8d, 4px 0 #fff1b7, 0 2px #fadc8d, 0 4px #fff1b7;
+}
+body.player-map .map-gold-frame { display: none; }
 .token {
   width: var(--token-span, var(--grid-size));
   height: var(--token-span, var(--grid-size));

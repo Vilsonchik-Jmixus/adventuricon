@@ -65,6 +65,7 @@ jobs:
           node tests/welcome-smoke.cjs
           node tests/session-smoke.cjs
           node tests/workspace-smoke.cjs
+          node tests/workspace-600-smoke.cjs
           node tests/browser-zoom-smoke.cjs
           node tests/campaign-tools-smoke.cjs
       - name: Install native Debian packager

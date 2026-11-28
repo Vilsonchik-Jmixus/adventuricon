@@ -28,10 +28,10 @@
     <div class="brand"><strong>Адвентурикон</strong></div>
     <div id="workspace-modes" role="group" aria-label="Раскладка ширмы" hidden>
       <button type="button" data-workspace-mode="preparation" data-pixel-icon="scroll" aria-pressed="false">Подготовка</button>
-      <button type="button" data-workspace-mode="game" data-pixel-icon="swords" aria-pressed="true">Игра</button>
+      <button type="button" data-workspace-mode="game" data-pixel-icon="swords" aria-pressed="true">Ведение</button>
     </div>
     <div class="campaign-tools">
-      <button id="open-campaign-search" type="button" class="icon-button" data-pixel-icon="search" aria-label="Поиск по кампании"></button>
+      <button id="open-campaign-search" type="button" class="icon-button" data-pixel-icon="search" aria-label="Быстрый поиск и команды">Поиск</button>
       <button id="open-journal" type="button" class="icon-button" data-pixel-icon="scroll" aria-label="Журнал сессий"></button>
     </div>
     <button id="screen-tip" class="quiet" type="button" hidden>
@@ -53,6 +53,7 @@
         <div id="current-turn" hidden>
           <button id="turn-actor" type="button" class="quiet" data-pixel-icon="clock" title="Перейти к участнику, чей сейчас ход"></button>
           <span id="turn-hp" data-pixel-icon="heart" aria-label="ХП текущего участника"></span>
+          <span id="turn-conditions" aria-label="Состояния текущего участника" hidden></span>
           <div class="quick-hp" role="group" aria-label="Быстрое изменение ХП">
             <button type="button" data-quick-hp="-5" title="Нанести 5 урона" aria-label="Нанести 5 урона">−5</button>
             <button type="button" data-quick-hp="-1" title="Нанести 1 урон" aria-label="Нанести 1 урон">−1</button>
@@ -113,6 +114,7 @@
           <button id="music-tracks-tab" type="button" aria-pressed="true" data-pixel-icon="music">Треки</button>
           <button id="sound-pad-tab" type="button" aria-pressed="false" data-pixel-icon="spark">Саундпад</button>
         </div>
+        <div id="quick-soundpad" role="group" aria-label="Быстрые звуки"></div>
         <div id="sound-pad" hidden>
           <div class="sound-category-bar">
             <select id="soundpad-profile" aria-label="Активный саундпад"></select>
@@ -147,6 +149,7 @@
     <button id="undo-map" type="button" class="icon-button" title="Отменить действие на карте" aria-label="Отменить действие на карте" data-pixel-icon="undo"></button>
     <button id="open-player-preview" type="button" class="icon-button" title="Предпросмотр экрана игроков" aria-label="Предпросмотр экрана игроков" data-pixel-icon="eye"></button>
   </div><div class="map-toolbar"><button id="import-map" class="small-button" title="Загрузить изображение на выбранную карту" data-pixel-icon="upload">Файл</button><button id="paste-map" class="quiet" title="Вставить изображение из буфера" data-paste-shortcut data-pixel-icon="clipboard">Ctrl+V</button><div class="zoom-controls"><button id="rotate-map-left" title="Повернуть карту влево на 90°" aria-label="Повернуть карту влево на 90°" data-pixel-icon="rotate-left"></button><button id="rotate-map-right" title="Повернуть карту вправо на 90°" aria-label="Повернуть карту вправо на 90°" data-pixel-icon="rotate-right"></button><button id="fit-map" title="Показать карту целиком" aria-label="Показать карту целиком" data-pixel-icon="fit"></button><button id="zoom-out" title="Уменьшить" data-pixel-icon="zoom-out" aria-label="Уменьшить"></button><span id="zoom-label">100%</span><button id="zoom-in" title="Увеличить" data-pixel-icon="zoom-in" aria-label="Увеличить"></button></div></div>
+        <div id="map-player-status" aria-live="polite" hidden></div>
         <div id="terrain-toolbar" hidden aria-label="Редактор карты">
           <div class="terrain-tools" role="group" aria-label="Инструменты карты">
             <button type="button" data-terrain-tool="select" aria-pressed="true" data-pixel-icon="cursor">Выбор</button>
@@ -177,8 +180,11 @@
           <button type="button" id="terrain-remove" hidden data-pixel-icon="trash">Удалить</button>
           <button type="button" id="close-terrain" class="small-button" data-pixel-icon="check">Готово</button>
         </div>
+        <div class="map-view">
         <div id="map-viewport" class="map-viewport" tabindex="0" aria-label="Карта: вставьте изображение из буфера"><div id="map-frame"><div id="map-world" class="map-world"><img id="map-image" draggable="false" alt="Карта приключения" src="assets/demo-map.svg"><div id="map-lights" aria-hidden="true"></div><div id="map-grid" class="map-grid"></div><svg id="map-drawings" preserveAspectRatio="none" aria-hidden="true"><g id="map-strokes"></g><path id="map-draft-stroke"></path></svg><canvas id="terrain-preview" aria-hidden="true" hidden></canvas><div id="map-doors"></div><div id="map-items"></div><div id="map-tokens" class="map-tokens"></div><canvas id="map-fog" aria-hidden="true" hidden></canvas><div id="map-note-pins"></div><div id="map-portals"></div></div></div>
           <div id="movement-ruler" hidden><svg aria-hidden="true"><polyline></polyline></svg><output></output></div>
+        </div>
+        <div class="map-gold-frame" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
         </div><div id="placement-hint" role="status" hidden></div></div>
       <div id="map-condition-legend" class="condition-legend" aria-label="Обозначения состояний" hidden></div><div id="player-art" hidden><img id="presented-image" alt=""></div><div id="player-blackout" hidden></div><button class="resize-grip" title="Потяните для изменения размера"></button>
     </section>
@@ -437,6 +443,7 @@
       <label><input type="checkbox" data-screen-option="welcome"> Приветствие при запуске</label>
       <label><input type="checkbox" data-screen-option="sound"> Джингл приветствия</label>
       <label><input type="checkbox" data-screen-option="tips"> Советы в шапке</label>
+      <label><input type="checkbox" data-screen-option="motion"> Уменьшить анимацию</label>
     </div>
     <button type="button" id="preview-welcome" class="small-button" data-pixel-icon="eye">Показать приветствие</button>
     <fieldset id="sound-options">
@@ -546,8 +553,8 @@
     </form>
   </dialog>
   <dialog id="campaign-search-dialog" class="session-dialog wide-dialog" aria-labelledby="campaign-search-title">
-    <div class="dialog-heading"><h2 id="campaign-search-title" data-pixel-icon="search">Поиск по кампании</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
-    <label class="search-field">Что ищем?<input id="campaign-query" type="search" maxlength="160" autocomplete="off" autofocus placeholder="Заметка, карта, сцена, персонаж…"></label>
+    <div class="dialog-heading"><h2 id="campaign-search-title" data-pixel-icon="search">Быстрый поиск</h2><button type="button" data-close-dialog class="icon-button" aria-label="Закрыть" data-pixel-icon="close"></button></div>
+    <label class="search-field">Действие, звук или материал кампании<input id="campaign-query" type="search" maxlength="160" autocomplete="off" autofocus placeholder="Туман, гоблин, костёр…"></label>
     <p id="campaign-search-status" class="dialog-hint" role="status"></p>
     <div id="campaign-search-results" class="tool-list"></div>
   </dialog>
@@ -632,6 +639,7 @@
   </div>
   <script src="themes.js"></script>
   <script src="map-geometry.js"></script>
+  <script src="map-artwork.js"></script>
   <script src="map-terrain.js"></script>
   <script src="ambience.js"></script>
   <script src="story.js"></script>

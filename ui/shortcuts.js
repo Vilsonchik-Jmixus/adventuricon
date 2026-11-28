@@ -1,6 +1,6 @@
 (function () {
   const definitions = [
-    ['search', 'K', 'Поиск по кампании'],
+    ['search', 'K', 'Быстрый поиск и команды'],
     ['reference-address', 'L', 'Поле поиска в справочнике'],
     ['reference-new', 'T', 'Новая вкладка в справочнике'],
     ['reference-close', 'W', 'Закрыть вкладку справочника'],
@@ -14,15 +14,17 @@
     ['fog', 'F', 'Включить или выключить туман войны'],
     ['fullscreen', 'P', 'Полноэкранный режим'],
     ['shortcut-help', 'H', 'Настройки горячих клавиш'],
-    ['dice', 'D', 'Меню бросков']
+    ['dice', 'D', 'Меню бросков'],
+    ['workspace', 'G', 'Переключить «Ведение» и «Подготовку»']
   ];
   const defaults = Object.fromEntries(definitions.map(([id, letter]) => [id, letter]));
   function restoreShortcuts(value) {
     const saved = Object.fromEntries(definitions.filter(([id]) => Object.hasOwn(value ?? {}, id)).map(([id]) => [id, value[id]]));
-    if (!Object.hasOwn(saved, 'dice')) {
-      const { dice, ...older } = { ...defaults, ...saved };
-      const used = new Set(Object.values(older));
-      saved.dice = [defaults.dice, ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].find(letter => !used.has(letter));
+    const used = new Set(Object.values(saved));
+    for (const [id, preferred] of definitions) {
+      if (Object.hasOwn(saved, id)) continue;
+      saved[id] = [preferred, ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].find(letter => !used.has(letter));
+      used.add(saved[id]);
     }
     return validateShortcuts({ ...defaults, ...saved }) ?? defaults;
   }
