@@ -90,10 +90,12 @@ function createMapTools({ viewport, getState, getLayout, pointAt, dispatch, cont
   const overlay = document.createElementNS(measurementSvg, 'svg');
   overlay.id = 'map-measure-overlay';
   overlay.setAttribute('aria-hidden', 'true');
+  overlay.setAttribute('hidden', '');
   const path = document.createElementNS(overlay.namespaceURI, 'path');
   overlay.append(path);
   const label = document.createElement('output');
   label.id = 'map-measure-label';
+  label.hidden = true;
   world.append(overlay, label);
   const controls = bar.querySelector('#map-tool-controls');
   const hint = bar.querySelector('#map-tool-hint');
@@ -109,7 +111,9 @@ function createMapTools({ viewport, getState, getLayout, pointAt, dispatch, cont
     if (frame) { cancelAnimationFrame(frame); frame = 0; }
     if (!getLayout()) return;
     const { zoom, width, height } = getLayout();
-    overlay.hidden = label.hidden = !measure;
+    // SVG elements need the attribute for the CSS selector to hide the preview.
+    overlay.toggleAttribute('hidden', !measure);
+    label.hidden = !measure;
     apply.hidden = !draft && !measure;
     apply.textContent = draft ? 'Применить' : 'Оставить на карте';
     if (draft) {
@@ -121,7 +125,10 @@ function createMapTools({ viewport, getState, getLayout, pointAt, dispatch, cont
       world.style.setProperty('--grid-opacity', Math.max(.4, draft.opacity));
       hint.value = `Тяни сетку · Колесо меняет клетку · Alt + колесо сдвигает сетку · Esc отменяет · ${grid} px · X ${offsetX}, Y ${offsetY}`;
     }
-    if (!measure) return;
+    if (!measure) {
+      path.removeAttribute('d');
+      return;
+    }
     const { grid } = getState().map;
     const { x, y, feet } = measure;
     overlay.setAttribute('viewBox', `0 0 ${width / zoom} ${height / zoom}`);
@@ -225,7 +232,7 @@ function createMapTools({ viewport, getState, getLayout, pointAt, dispatch, cont
       if (event.altKey) {
         const axis = event.shiftKey ? 'offsetY' : 'offsetX';
         draft[axis] = clamp(draft[axis] + direction, -512, 512);
-      } else draft.grid = clamp(draft.grid + direction * (event.shiftKey ? 8 : 1), 16, 256);
+      } else draft.grid = clamp(draft.grid + direction * (event.shiftKey ? 8 : 1), 16, 512);
     } else {
       measure ??= { ...worldPoint(event), feet: 15, angle: 0 };
       measure.feet = clamp((measure.ruleFeet ?? measure.feet) + (event.deltaY < 0 ? 5 : -5), 5, 500);

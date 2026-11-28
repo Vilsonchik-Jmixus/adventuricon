@@ -829,7 +829,7 @@ function reducer(state, action) {
       board.fog.explored = [];
       break;
     case 'map:settings':
-      for (const [key, min, max] of [['grid', 16, 256], ['offsetX', -512, 512], ['offsetY', -512, 512], ['opacity', 0, 1], ['zoom', 0.01, 24]])
+      for (const [key, min, max] of [['grid', 16, 512], ['offsetX', -512, 512], ['offsetY', -512, 512], ['opacity', 0, 1], ['zoom', 0.01, 24]])
         if (key in p) board.map[key] = clamp(finite(p[key], board.map[key]), min, max);
       if (typeof p.visible === 'boolean') board.map.visible = p.visible;
       if (typeof p.playerHealth === 'boolean') board.map.playerHealth = p.playerHealth;
