@@ -11,7 +11,7 @@ const newStory = () => ({ notes: [], links: [], strokes: [] });
 const newJournal = () => ({ active: null, sessions: [] });
 const journalEntry = (body, kind = 'note') => ({ id: randomUUID(), body, kind, date: new Date().toISOString() });
 const storyCoordinate = n => clamp(Math.round(finite(n, 0)), -1000000, 1000000);
-const gameSizes = { left: 30, middle: 43, top: 65 };
+const gameSizes = { left: 30, middle: 43, top: 60 };
 const preparationSizes = { left: 25, middle: 47, top: 53 };
 function restoreLayout(saved = {}) {
   return { ...gameSizes, windows: {}, ...saved, mode: saved.mode === 'preparation' ? 'preparation' : 'game',

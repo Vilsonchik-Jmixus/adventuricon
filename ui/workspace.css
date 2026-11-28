@@ -91,6 +91,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .workspace[data-mode="preparation"] .map { grid-area: 1 / 3 / 2 / 4; }
 .workspace[data-mode="preparation"] .map .panel-head { height: auto; flex-wrap: wrap; padding-block: 3px; gap: 3px; }
 .workspace[data-mode="preparation"] .reference-tabs button { white-space: nowrap; }
+.info #reference-links {
+  max-height: 54px;
+  overflow-y: auto;
+  justify-content: start;
+  align-content: start;
+  scrollbar-width: thin;
+}
 #preparation-scenes { flex: none; }
 #current-turn {
   display: flex;

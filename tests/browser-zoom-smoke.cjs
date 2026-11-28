@@ -80,8 +80,18 @@ async function main() {
     const poll = read => expect.poll(read, { timeout: 15_000 });
     await poll(() => read(info)).toMatchObject({ visible: true, zoom: 1 });
     await poll(() => read(sheets)).toMatchObject({ visible: true, zoom: 1 });
-
     const initialWidth = (await read(sheets)).width;
+    const originalSize = await app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      const size = window.getSize();
+      window.setSize(940, 640);
+      return size;
+    });
+    await expect.poll(() => page.evaluate(() => innerHeight)).toBeLessThanOrEqual(640);
+    await poll(() => read(info)).toMatchObject({ visible: true });
+    await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setSize(...size), originalSize);
+    await poll(async () => (await read(sheets)).width).toBe(initialWidth);
+
     await wheel(sheets, 120);
     await poll(async () => (await read(sheets)).width).toBeLessThan(initialWidth);
     expect((await read(info)).zoom).toBe(1);
